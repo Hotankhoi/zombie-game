@@ -149,7 +149,7 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: bắt đầu 1a (lõi chơi)
+  - A: đang làm 1a (lõi chơi) — nhánh `a/1a-core-gameplay`
   - B: có thể bắt đầu 1b (sinh map) — dùng `Rng` trong `shared/util/rng.ts`
 - Ghi chú:
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
