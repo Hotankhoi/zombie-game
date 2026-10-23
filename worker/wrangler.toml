@@ -1,6 +1,0 @@
-# Cloudflare Worker phát mật khẩu TURN — không có khóa bí mật nào trong file này.
-# Khóa đặt bằng: npx wrangler@4 secret put TURN_KEY_ID --config worker/wrangler.toml
-name = "zombie-turn"
-main = "turn.ts"
-compatibility_date = "2026-10-01"
-workers_dev = true

@@ -8,18 +8,18 @@ Dự án do 2 người làm: **A** dùng Claude Code (Claude Desktop), **B** dù
 
 ## 1. Công nghệ
 
-| Phần               | Lựa chọn                                                          |
-| ------------------ | ----------------------------------------------------------------- |
-| Ngôn ngữ           | TypeScript (strict) cho toàn bộ dự án                             |
-| Build              | Vite                                                              |
-| Engine 2D          | Phaser 3 (WebGL)                                                  |
-| Mạng               | WebRTC DataChannel qua **Trystero** (P2P, host là một người chơi) |
-| Relay khi NAT chặn | Cloudflare Realtime TURN (gói free) + STUN `stun.cloudflare.com`  |
-| Lưu thế giới       | IndexedDB trên trình duyệt host + xuất/nhập file save             |
-| Âm thanh           | Howler.js                                                         |
-| Test               | Vitest                                                            |
-| Hosting web        | GitHub Pages, tự deploy mỗi lần merge vào `main` (GitHub Actions) |
-| Dự phòng server    | Cloudflare Durable Objects (free plan) – chỉ làm nếu P2P không đủ |
+| Phần               | Lựa chọn                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| Ngôn ngữ           | TypeScript (strict) cho toàn bộ dự án                                              |
+| Build              | Vite                                                                               |
+| Engine 2D          | Phaser 3 (WebGL)                                                                   |
+| Mạng               | WebRTC DataChannel qua **Trystero** (P2P, host là một người chơi)                  |
+| Relay khi NAT chặn | Metered Open Relay TURN (free 20 GB/tháng, không thẻ) + STUN `stun.cloudflare.com` |
+| Lưu thế giới       | IndexedDB trên trình duyệt host + xuất/nhập file save                              |
+| Âm thanh           | Howler.js                                                                          |
+| Test               | Vitest                                                                             |
+| Hosting web        | GitHub Pages, tự deploy mỗi lần merge vào `main` (GitHub Actions)                  |
+| Dự phòng server    | Cloudflare Durable Objects (free plan) – chỉ làm nếu P2P không đủ                  |
 
 Cấu trúc thư mục:
 
@@ -99,7 +99,7 @@ Mỗi việc: lên kế hoạch trước, chờ người dùng duyệt, làm, t�
 | 4   | **Zombie, đêm, tiếng ồn**: ngày/đêm, tầm nhìn nón, đèn pin, tiếng ồn, giảm thanh, đủ loại zombie                                                | A                                                                                                                             | Ban đêm phải tính trước mỗi phát súng                                                             |
 | 5   | **Căn cứ & đợt tràn**: xây/gia cố, bẫy, tháp súng, chế tạo, rương chung, giường, đếm ngày, horde director, Boss, lưu IndexedDB + xuất/nhập save | A (đợt tràn, lưu) + B (xây dựng, chế tạo)                                                                                     | Phòng thủ trọn một đợt tràn 500 zombie; tải lại trang vẫn còn căn cứ                              |
 | 6   | **Hợp tác nâng cao & sự kiện**                                                                                                                  | B (ping, câu nói nhanh, sự kiện, thương nhân, radio, thời tiết) + A (hành động 2 người, kéo người gục, đồng đội thành zombie) | Mọi tính năng "Hợp tác & định vị" chạy online                                                     |
-| 7   | **Hoàn thiện & phát hành**: âm thanh, hiệu ứng, menu, cài đặt phím, hướng dẫn (B); bot 4 người, đo tải, tối ưu, TURN Cloudflare (A)             | A + B                                                                                                                         | Bạn bè mở link là vào chơi được, kể cả trên 4G                                                    |
+| 7   | **Hoàn thiện & phát hành**: âm thanh, hiệu ứng, menu, cài đặt phím, hướng dẫn (B); bot 4 người, đo tải, tối ưu, kiểm tra TURN trên 4G (A)       | A + B                                                                                                                         | Bạn bè mở link là vào chơi được, kể cả trên 4G                                                    |
 
 ---
 
@@ -153,6 +153,7 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
 - Ghi chú:
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
   - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
+  - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
   - Asset Kenney chưa tải (máy dựng GĐ 0 không truy cập được kenney.nl) — tải ở GĐ 1a/1b.
   - GitHub Pages miễn phí yêu cầu repo **public**.
   - Trễ ở bảng F3 chỉ cộng vào gói **gửi đi** của tab đó: đặt 150ms ở 1 tab → ping +150ms; ở cả 2 tab → +300ms.

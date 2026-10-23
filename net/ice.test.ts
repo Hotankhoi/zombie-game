@@ -16,6 +16,12 @@ describe('loadIceServers', () => {
     expect(servers).toEqual([...STUN_SERVERS, turn]);
   });
 
+  it('đọc được kiểu trả về dạng mảng của Metered', async () => {
+    const turn = { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'u', credential: 'c' };
+    const servers = await loadIceServers(URL, async () => jsonResponse([turn]));
+    expect(servers).toEqual([...STUN_SERVERS, { ...turn, urls: [turn.urls] }]);
+  });
+
   it('bỏ các URL cổng 53', async () => {
     const turn = {
       urls: [
