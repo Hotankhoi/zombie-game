@@ -10,4 +10,4 @@
 
 Giữ nguyên tilesheet gốc, không chỉnh sửa: 592×448 px, 37 cột × 28 hàng, mỗi tile 16×16 px, không có khoảng cách trong bản **packed**. Chỉ đưa tilesheet và giấy phép vào repo.
 
-Ánh xạ TileId → frame nằm trong `client/render/mapRenderer.ts`: cỏ 963, đường 750, vỉa hè 741, sàn 743, tường 190, cửa 653 (index bắt đầu từ 0, theo hàng). Logic và va chạm không phụ thuộc index hình ảnh. Có thể thay tile mà không thay dữ liệu bản đồ hoặc MAP_VERSION.
+Ánh xạ TileId → frame nằm trong `client/render/mapRenderer.ts`: cỏ 963, đường 787, vỉa hè 741, sàn 743, tường 190, cửa 654 (index bắt đầu từ 0, theo hàng). Logic và va chạm không phụ thuộc index hình ảnh. Có thể thay tile mà không thay dữ liệu bản đồ hoặc MAP_VERSION.
