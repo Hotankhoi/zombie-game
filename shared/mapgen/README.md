@@ -3,3 +3,27 @@
 Việc 1b. Dùng `Rng` trong `shared/util/rng.ts` (`new Rng(seed).fork('chunk:x,y')` cho mỗi chunk)
 để cùng seed luôn ra cùng bản đồ trên mọi máy. Không import Phaser ở đây — chỉ sinh dữ liệu;
 phần vẽ nằm ở `/client`.
+
+## API bản đồ v1
+
+- `generateChunk(seed, cx, cy)`: sinh dữ liệu thuần, chunk 32×32 tile; tile 16px khi vẽ. Nhận tọa độ chunk nguyên trong ±1.000.000. Cùng seed, tọa độ và phiên bản luôn cho cùng kết quả, không phụ thuộc thứ tự tải.
+- `WorldMap(seed, capacity = 64)`: cache LRU có giới hạn; `getChunk(cx, cy)` và `tileAt(tileX, tileY)`. Xem dữ liệu trả về là chỉ đọc; thay đổi cửa/rương phải lưu riêng theo thế giới, không sửa map gốc.
+- `tileToChunk(x, y)`: tọa độ tile sang chunk và vị trí trong chunk; dùng floor nên hỗ trợ tọa độ âm.
+- `isSolid(tile)`: tường và cửa đóng là vật cản nền. A ghép va chạm, mở/phá cửa và trạng thái thay đổi trong `/shared/sim`; 1b chưa làm các hành vi đó.
+- `worldSeedForRoom(room)`: seed thống nhất từ mã phòng chuẩn hóa cho giai đoạn phòng chờ. Khi có save/host ở giai đoạn sau, host cung cấp seed và `MAP_VERSION` của thế giới; không phụ thuộc người chơi nào làm host.
+
+Mỗi chunk có đường chữ thập và vỉa hè liên thông với chunk bên cạnh. Các khu 2×2 chunk gồm dân cư, siêu thị, bệnh viện, cảnh sát và quân sự. Công trình có ID ổn định trong một thế giới, kích thước và cửa theo tọa độ tile toàn cục. Mỗi cửa có lối nối ra đường. Chỉ định loại công trình để các giai đoạn sau ghép loot; chưa sinh vật phẩm.
+
+## Ghép vào client
+
+`client/ui/worldView.ts` chỉ vẽ các chunk trong vùng camera; giải phóng tilemap ngoài vùng xem. `client/ui/mapPanel.ts` mở màn hình khám phá từ nút **Xem bản đồ**, có kéo chuột/chạm, phím mũi tên và minimap 5×5 chunk. Khung trắng là vùng camera, không phải vị trí người chơi. Phòng chờ và vòng tick mạng được duy trì khi xem map.
+
+`client/main.ts` chỉ thêm import và lời gọi `mountMapPanel`; không sửa scene phòng chờ của A. Khi ghép 1a, A có thể dùng `WorldMap` với camera nhân vật và thay giao diện khám phá. Không cần thêm dependency hay đổi hợp đồng `/shared/types`.
+
+## Kiểm thử
+
+`npm run check` và `npm run build`. Test gồm mẫu kết quả v1 cố định (đối chiếu cả Node/Chromium), thứ tự tải khác nhau, seed khác nhau, biên chunk, tọa độ âm, đủ loại khu, đường từ cửa ra phố và giới hạn cache. Khi đổi thuật toán có chủ ý, phải xét tăng `MAP_VERSION` và tương thích save; không cập nhật mẫu chỉ để làm test qua.
+
+## Asset tạm
+
+Kenney `https://kenney.nl/assets/roguelike-modern-city` bị proxy môi trường trả 403 khi triển khai. Atlas `world-placeholder-v1` được vẽ bằng code trong `worldView.ts`, là hình tạm nguyên bản, không phải asset Kenney. Cần thay bằng tile Kenney có giấy phép được kiểm tra khi tải được; giữ riêng ánh xạ hình ảnh và TileId của logic. Chưa hoàn tất phần gắn tile Kenney của 1b.
