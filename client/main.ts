@@ -8,6 +8,7 @@ import { TrysteroTransport } from '@net/trystero';
 import { LobbyScene } from './scenes/LobbyScene';
 import { mountDebugPanel } from './ui/debugPanel';
 import { mountLobbyPanel } from './ui/lobbyPanel';
+import { mountMapPanel } from './ui/mapPanel';
 
 // ---- Mã phòng: lấy từ link (?room=XXXXXX) hoặc tạo mới ----
 const url = new URL(window.location.href);
@@ -61,6 +62,7 @@ const lobby = mountLobbyPanel(hud, {
   },
 });
 mountDebugPanel(hud, net);
+mountMapPanel(hud, game, room, () => session.tick());
 
 function render() {
   lobby.update(session, netError);
