@@ -1,11 +1,9 @@
 # Ghi công
 
-| Asset     | Tác giả | Giấy phép | Nguồn |
-| --------- | ------- | --------- | ----- |
-| (chưa có) |         |           |       |
+| Asset                                 | Tác giả | Giấy phép | Nguồn                                          |
+| ------------------------------------- | ------- | --------- | ---------------------------------------------- |
+| Roguelike Modern City 2.0 (tilesheet) | Kenney  | CC0       | https://kenney.nl/assets/roguelike-modern-city |
 
 Thư viện: Phaser (MIT), Trystero (MIT), Vite (MIT).
 
-## Tile bản đồ tạm (1b)
-
-Atlas `world-placeholder-v1` trong `client/render/mapRenderer.ts` được vẽ bằng code cho dự án, không sử dụng hình ảnh bên thứ ba. Asset Kenney chưa được tải do hạn chế mạng; sẽ bổ sung nguồn và giấy phép khi thay atlas.
+Giấy phép và thông tin nguồn của tilesheet được giữ tại `assets/kenney/roguelike-modern-city/`. Hình ảnh được đóng gói cùng game, không tải từ dịch vụ bên ngoài lúc chơi.

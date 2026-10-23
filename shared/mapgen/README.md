@@ -16,9 +16,11 @@ Mỗi chunk có đường chữ thập và vỉa hè liên thông với chunk b�
 
 ## Ghép vào client
 
-`client/render/mapRenderer.ts` xuất `MapRenderer(scene)`. Gọi `renderer.sync(visibleChunks)` với toàn bộ các chunk đang nhìn thấy; renderer tự tạo tilemap và giải phóng chunk ra khỏi tập này. Renderer không điều khiển camera, nhập phím, vòng tick mạng hay trạng thái người chơi. Có `destroy()` và tự dọn khi scene shutdown. Dữ liệu đầu vào là map nền tĩnh; A ghép thay đổi cửa/nhà vào mô phỏng sau.
+`client/render/mapRenderer.ts` xuất `preloadMapTiles(scene)` (gọi trong `preload()`) và `MapRenderer(scene)` (tạo trong `create()`). Gọi `renderer.sync(visibleChunks)` với toàn bộ các chunk đang nhìn thấy; renderer tự tạo tilemap và giải phóng chunk ra khỏi tập này. Renderer không điều khiển camera, nhập phím, vòng tick mạng hay trạng thái người chơi. Có `destroy()` và tự dọn khi scene shutdown. Dữ liệu đầu vào là map nền tĩnh; A ghép thay đổi cửa/nhà vào mô phỏng sau.
 
 ```ts
+// Trong scene.preload(): preloadMapTiles(this);
+// Trong scene.create():
 const world = new WorldMap(seed);
 const renderer = new MapRenderer(scene);
 renderer.sync([world.getChunk(0, 0), world.getChunk(1, 0)]);
@@ -33,6 +35,6 @@ Mở `?map=1&room=MAP001` để xem thử bằng `client/scenes/MapPreviewScene.
 
 `npm run check` và `npm run build`. Test gồm mẫu kết quả v1 cố định (đối chiếu cả Node/Chromium), thứ tự tải khác nhau, seed khác nhau, biên chunk, tọa độ âm, đủ loại khu, đường từ cửa ra phố và giới hạn cache. Khi đổi thuật toán có chủ ý, phải xét tăng `MAP_VERSION` và tương thích save; không cập nhật mẫu chỉ để làm test qua.
 
-## Asset tạm
+## Asset
 
-Kenney `https://kenney.nl/assets/roguelike-modern-city` bị proxy môi trường trả 403 khi triển khai. Atlas `world-placeholder-v1` được vẽ bằng code trong `client/render/mapRenderer.ts`, là hình tạm nguyên bản, không phải asset Kenney. Cần thay bằng tile Kenney có giấy phép được kiểm tra khi tải được; giữ riêng ánh xạ hình ảnh và TileId của logic. Chưa hoàn tất phần gắn tile Kenney của 1b.
+Tilesheet Kenney **Roguelike Modern City 2.0**, giấy phép CC0, được lưu nguyên bản trong `assets/kenney/roguelike-modern-city/` cùng giấy phép và thông tin nguồn. `preloadMapTiles(scene)` nạp ảnh nội bộ; Vite đóng gói URL tương thích GitHub Pages. Renderer ánh xạ TileId logic sang index tile của Kenney, nên thay hình không ảnh hưởng dữ liệu map/va chạm. Minimap dùng bảng màu riêng để dễ đọc.

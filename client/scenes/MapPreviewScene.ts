@@ -7,7 +7,7 @@ import {
   worldSeedForRoom,
   type Chunk,
 } from '@shared/mapgen/world';
-import { MapRenderer } from '../render/mapRenderer';
+import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 import { mountMapPanel } from '../ui/mapPanel';
 
 /** Isolated visual check for 1b. A owns the real world scene and player movement. */
@@ -19,6 +19,10 @@ export class MapPreviewScene extends Phaser.Scene {
 
   constructor() {
     super('map-preview');
+  }
+
+  preload() {
+    preloadMapTiles(this);
   }
 
   create() {
