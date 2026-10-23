@@ -1,18 +1,15 @@
-import type Phaser from 'phaser';
-import { CHUNK_SIZE, TILE_SIZE, worldSeedForRoom, type WorldMap } from '@shared/mapgen/world';
-import { DISTRICT_NAMES, TILE_COLORS, WorldView } from './worldView';
+import { CHUNK_SIZE, TILE_SIZE, type WorldMap } from '@shared/mapgen/world';
+import { DISTRICT_NAMES, TILE_COLORS } from '../render/mapRenderer';
 import './mapPanel.css';
 
-export function mountMapPanel(parent: HTMLElement, game: Phaser.Game, room: string, tick: () => void) {
+export function mountMapPanel(parent: HTMLElement) {
   const root = document.createElement('section');
   root.className = 'map-panel';
   root.setAttribute('aria-label', 'Bản đồ thế giới');
   const button = document.createElement('button');
-  button.textContent = 'Xem bản đồ';
-  button.setAttribute('aria-expanded', 'false');
+  button.textContent = 'Về phòng chờ';
   const details = document.createElement('div');
   details.className = 'map-details';
-  details.hidden = true;
   const help = document.createElement('p');
   help.textContent =
     'Phím mũi tên hoặc kéo bản đồ để khám phá. Khung trắng trên bản đồ nhỏ là vùng đang xem.';
@@ -31,10 +28,8 @@ export function mountMapPanel(parent: HTMLElement, game: Phaser.Game, room: stri
   terrain.width = terrain.height = canvas.width;
   const terrainCtx = terrain.getContext('2d')!;
   let lastChunk = '';
-  let open = false;
   let originX = 0;
   let originY = 0;
-  const lobby = parent.querySelector<HTMLElement>('.panel:not(.debug)');
 
   function onView(world: WorldMap, x: number, y: number, width: number, height: number) {
     const cx = Math.floor((x + width / 2) / TILE_SIZE / CHUNK_SIZE);
@@ -68,22 +63,10 @@ export function mountMapPanel(parent: HTMLElement, game: Phaser.Game, room: stri
     ctx.strokeRect(x / TILE_SIZE - originX, y / TILE_SIZE - originY, width / TILE_SIZE, height / TILE_SIZE);
   }
 
-  game.scene.add('world-map', WorldView, false);
   button.addEventListener('click', () => {
-    open = !open;
-    button.textContent = open ? 'Về phòng chờ' : 'Xem bản đồ';
-    button.setAttribute('aria-expanded', String(open));
-    details.hidden = !open;
-    if (lobby) lobby.hidden = open;
-    if (open) {
-      lastChunk = '';
-      game.scene.sleep('lobby');
-      game.scene.getScene('lobby').scene.setVisible(false);
-      game.scene.start('world-map', { seed: worldSeedForRoom(room), tick, onView });
-    } else {
-      game.scene.stop('world-map');
-      game.scene.wake('lobby');
-      game.scene.getScene('lobby').scene.setVisible(true);
-    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('map');
+    window.location.assign(url.toString());
   });
+  return { update: onView, destroy: () => root.remove() };
 }

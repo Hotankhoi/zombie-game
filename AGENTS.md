@@ -149,8 +149,9 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
   - A: chuẩn bị 1a (lõi chơi)
-  - B: có thể bắt đầu 1b (sinh map) — dùng `Rng` trong `shared/util/rng.ts`
+  - B: đang làm 1b trên `b/map-generator`: sinh map theo seed/chunk, renderer riêng và minimap; chờ tile Kenney và review PR.
 - Ghi chú:
+  - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts` nhận scene và các chunk, không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
   - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).

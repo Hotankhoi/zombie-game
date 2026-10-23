@@ -1,7 +1,7 @@
 .map-panel {
   position: absolute;
   top: 16px;
-  right: 16px;
+  left: 16px;
   max-width: min(240px, calc(100vw - 32px));
   pointer-events: auto;
   text-align: right;
@@ -17,10 +17,6 @@
   max-height: calc(100dvh - 80px);
   overflow: auto;
 }
-.map-panel:has(.map-details:not([hidden])) {
-  left: 16px;
-  right: auto;
-}
 .map-details p {
   margin: 0 0 10px;
   color: var(--muted);
@@ -33,10 +29,4 @@
   height: 160px;
   max-width: 100%;
   image-rendering: pixelated;
-}
-@media (max-width: 640px) {
-  .map-panel:has(.map-details[hidden]) {
-    top: auto;
-    bottom: 16px;
-  }
 }

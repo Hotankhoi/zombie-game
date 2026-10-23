@@ -99,4 +99,17 @@ describe('world generation v1', () => {
     expect(world.tileAt(-1, -1)).toBe(generateChunk('cache', -1, -1).tiles[1023]);
     expect(() => new WorldMap('x', 0)).toThrow(RangeError);
   });
+  it('exposes solid walls/closed doors and walkable floors/roads in world coordinates', () => {
+    const world = new WorldMap('collision');
+    for (const [cx, cy] of [
+      [0, 0],
+      [-2, -3],
+    ]) {
+      const b = world.getChunk(cx!, cy!).buildings[0]!;
+      expect(world.isSolid(b.x, b.y)).toBe(true);
+      expect(world.isSolid(b.door.x, b.door.y)).toBe(true);
+      expect(world.isSolid(b.x + 1, b.y + 1)).toBe(false);
+      expect(world.isSolid(cx! * CHUNK_SIZE + 15, cy! * CHUNK_SIZE + 15)).toBe(false);
+    }
+  });
 });

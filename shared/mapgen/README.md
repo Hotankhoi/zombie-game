@@ -9,16 +9,25 @@ phần vẽ nằm ở `/client`.
 - `generateChunk(seed, cx, cy)`: sinh dữ liệu thuần, chunk 32×32 tile; tile 16px khi vẽ. Nhận tọa độ chunk nguyên trong ±1.000.000. Cùng seed, tọa độ và phiên bản luôn cho cùng kết quả, không phụ thuộc thứ tự tải.
 - `WorldMap(seed, capacity = 64)`: cache LRU có giới hạn; `getChunk(cx, cy)` và `tileAt(tileX, tileY)`. Xem dữ liệu trả về là chỉ đọc; thay đổi cửa/rương phải lưu riêng theo thế giới, không sửa map gốc.
 - `tileToChunk(x, y)`: tọa độ tile sang chunk và vị trí trong chunk; dùng floor nên hỗ trợ tọa độ âm.
-- `isSolid(tile)`: tường và cửa đóng là vật cản nền. A ghép va chạm, mở/phá cửa và trạng thái thay đổi trong `/shared/sim`; 1b chưa làm các hành vi đó.
+- `WorldMap.isSolid(tileX, tileY)`: tra vật cản theo tọa độ tile toàn cục (có hỗ trợ âm); `isSolid(tile)` dùng khi đã có TileId. Tường và cửa đóng là vật cản nền. A ghép va chạm, mở/phá cửa và trạng thái thay đổi trong `/shared/sim`; 1b chưa làm các hành vi đó.
 - `worldSeedForRoom(room)`: seed thống nhất từ mã phòng chuẩn hóa cho giai đoạn phòng chờ. Khi có save/host ở giai đoạn sau, host cung cấp seed và `MAP_VERSION` của thế giới; không phụ thuộc người chơi nào làm host.
 
 Mỗi chunk có đường chữ thập và vỉa hè liên thông với chunk bên cạnh. Các khu 2×2 chunk gồm dân cư, siêu thị, bệnh viện, cảnh sát và quân sự. Công trình có ID ổn định trong một thế giới, kích thước và cửa theo tọa độ tile toàn cục. Mỗi cửa có lối nối ra đường. Chỉ định loại công trình để các giai đoạn sau ghép loot; chưa sinh vật phẩm.
 
 ## Ghép vào client
 
-`client/ui/worldView.ts` chỉ vẽ các chunk trong vùng camera; giải phóng tilemap ngoài vùng xem. `client/ui/mapPanel.ts` mở màn hình khám phá từ nút **Xem bản đồ**, có kéo chuột/chạm, phím mũi tên và minimap 5×5 chunk. Khung trắng là vùng camera, không phải vị trí người chơi. Phòng chờ và vòng tick mạng được duy trì khi xem map.
+`client/render/mapRenderer.ts` xuất `MapRenderer(scene)`. Gọi `renderer.sync(visibleChunks)` với toàn bộ các chunk đang nhìn thấy; renderer tự tạo tilemap và giải phóng chunk ra khỏi tập này. Renderer không điều khiển camera, nhập phím, vòng tick mạng hay trạng thái người chơi. Có `destroy()` và tự dọn khi scene shutdown. Dữ liệu đầu vào là map nền tĩnh; A ghép thay đổi cửa/nhà vào mô phỏng sau.
 
-`client/main.ts` chỉ thêm import và lời gọi `mountMapPanel`; không sửa scene phòng chờ của A. Khi ghép 1a, A có thể dùng `WorldMap` với camera nhân vật và thay giao diện khám phá. Không cần thêm dependency hay đổi hợp đồng `/shared/types`.
+```ts
+const world = new WorldMap(seed);
+const renderer = new MapRenderer(scene);
+renderer.sync([world.getChunk(0, 0), world.getChunk(1, 0)]);
+const blocked = world.isSolid(tileX, tileY);
+```
+
+Mở `?map=1&room=MAP001` để xem thử bằng `client/scenes/MapPreviewScene.ts`: kéo chuột/chạm hoặc phím mũi tên để di chuyển camera; minimap hiển thị 5×5 chunk và khung vùng đang xem. Nút **Về phòng chờ** bỏ tham số `map`, giữ mã phòng và các tham số khác. Đây là scene kiểm tra bản đồ độc lập, không khởi tạo kết nối mạng hay giả lập vị trí người chơi.
+
+`index.html` trỏ tới `client/bootstrap.ts`: có `map=1` thì nạp preview, còn lại nạp nguyên `client/main.ts` của A. Không sửa `client/main.ts` và `client/scenes/LobbyScene.ts` so với main mới nhất; không thêm dependency hay đổi `/shared/types`. A dùng renderer với scene/camera thật ở 1a. WorldMap dùng được cả phía host lẫn client, không phụ thuộc preview.
 
 ## Kiểm thử
 
@@ -26,4 +35,4 @@ Mỗi chunk có đường chữ thập và vỉa hè liên thông với chunk b�
 
 ## Asset tạm
 
-Kenney `https://kenney.nl/assets/roguelike-modern-city` bị proxy môi trường trả 403 khi triển khai. Atlas `world-placeholder-v1` được vẽ bằng code trong `worldView.ts`, là hình tạm nguyên bản, không phải asset Kenney. Cần thay bằng tile Kenney có giấy phép được kiểm tra khi tải được; giữ riêng ánh xạ hình ảnh và TileId của logic. Chưa hoàn tất phần gắn tile Kenney của 1b.
+Kenney `https://kenney.nl/assets/roguelike-modern-city` bị proxy môi trường trả 403 khi triển khai. Atlas `world-placeholder-v1` được vẽ bằng code trong `client/render/mapRenderer.ts`, là hình tạm nguyên bản, không phải asset Kenney. Cần thay bằng tile Kenney có giấy phép được kiểm tra khi tải được; giữ riêng ánh xạ hình ảnh và TileId của logic. Chưa hoàn tất phần gắn tile Kenney của 1b.

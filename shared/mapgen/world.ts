@@ -138,4 +138,9 @@ export class WorldMap {
     const p = tileToChunk(x, y);
     return this.getChunk(p.chunkX, p.chunkY).tiles[p.localY * CHUNK_SIZE + p.localX]!;
   }
+
+  /** World tile coordinates. Runtime door overrides belong to the simulation. */
+  isSolid(tileX: number, tileY: number): boolean {
+    return isSolid(this.tileAt(tileX, tileY));
+  }
 }
