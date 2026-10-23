@@ -41,3 +41,5 @@ Chọn ô nguồn, nhập số lượng hoặc bấm **Một nửa**, rồi ch�
 ## Kiểm tra
 
 `npm run check`, `npm run build`. Test gồm stack đầy, túi gần đầy, chuyển/tách/gộp/đổi chỗ, rarity khác nhau, số lượng và chỉ số không hợp lệ, từ chối revision cũ, thu nhỏ balo không mất đồ, snapshot bất biến và 1000 thao tác hỗn hợp bảo toàn tổng số lượng từng item/rarity. Bảng dữ liệu là giá trị khởi đầu cho túi đồ, chưa khẳng định cân bằng gameplay.
+
+Kiểm tra trình duyệt đã thực hiện trên bản production: tách/gộp/đổi chỗ; từ chối gộp vượt stack và số lượng không hợp lệ; khóa thao tác khi chờ; giữ focus bàn phím sau xác nhận; nâng balo rồi từ chối thu nhỏ túi đầy; snapshot mới thắng response cũ; xử lý lỗi kết nối; hủy panel khi còn request; bỏ qua snapshot cùng revision. Kiểm tra viewport 390×844, chạm chọn ô và không tràn ngang. Kiểm tra lại các luồng này khi ghép transport thật; fixture 150ms chỉ kiểm tra callback UI.
