@@ -143,7 +143,10 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
 
 ## 8. Trạng thái
 
-- Giai đoạn hiện tại: **0 – xong phần code**, chờ xác nhận 2 máy khác nhau kết nối được qua link GitHub Pages.
+- Giai đoạn hiện tại: **0 – xong**. Bắt đầu 1a (A) và 1b (B).
+- Repo: https://github.com/Hotankhoi/zombie-game · Game: https://hotankhoi.github.io/zombie-game/
+  - Đã kiểm tra: 2 tab cùng `?room=` thấy nhau, có ping/pong; trễ 150ms ở cả 2 tab → ping ≈ 300ms.
+  - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
   - A: chuẩn bị 1a (lõi chơi)
   - B: có thể bắt đầu 1b (sinh map) — dùng `Rng` trong `shared/util/rng.ts`
@@ -152,3 +155,5 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
   - Asset Kenney chưa tải (máy dựng GĐ 0 không truy cập được kenney.nl) — tải ở GĐ 1a/1b.
   - GitHub Pages miễn phí yêu cầu repo **public**.
+  - Trễ ở bảng F3 chỉ cộng vào gói **gửi đi** của tab đó: đặt 150ms ở 1 tab → ping +150ms; ở cả 2 tab → +300ms.
+  - Tab bị ẩn thì trình duyệt dừng vòng lặp game nên tab đó hiện "đang đo…" — bình thường, không phải lỗi mạng.
