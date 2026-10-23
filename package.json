@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "worker:deploy": "npx wrangler@4 deploy --config worker/wrangler.toml"
   },
   "dependencies": {
     "@trystero-p2p/nostr": "^0.26.0",
