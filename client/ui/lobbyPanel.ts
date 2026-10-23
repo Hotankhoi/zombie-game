@@ -29,6 +29,10 @@ export function mountLobbyPanel(root: HTMLElement, opts: LobbyOptions) {
     <div class="status"></div>`;
   root.appendChild(el);
 
+  if (new URLSearchParams(window.location.search).get('inventory') === '1') {
+    void import('./inventory/preview').then(({ mountInventoryPreview }) => mountInventoryPreview(root));
+  }
+
   const code = el.querySelector<HTMLDivElement>('.code')!;
   const input = el.querySelector<HTMLInputElement>('input')!;
   const list = el.querySelector<HTMLUListElement>('.peers')!;
