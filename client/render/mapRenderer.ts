@@ -15,7 +15,7 @@ export const DISTRICT_NAMES: Record<District, string> = {
 const ATLAS = 'kenney-modern-city-v2';
 const TILE_FRAMES: Record<TileId, number> = {
   [Tile.Grass]: 963,
-  [Tile.Road]: 787,
+  [Tile.Road]: 714,
   [Tile.Pavement]: 741,
   [Tile.Floor]: 743,
   [Tile.Wall]: 190,
