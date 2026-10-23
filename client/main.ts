@@ -6,7 +6,8 @@ import { loadIceServers } from '@net/ice';
 import { newRoomCode, normalizeRoomCode } from '@net/roomCode';
 import { Session } from '@net/session';
 import { TrysteroTransport } from '@net/trystero';
-import { LobbyScene } from './scenes/LobbyScene';
+import { HudScene } from './scenes/HudScene';
+import { WorldScene } from './scenes/WorldScene';
 import { mountDebugPanel } from './ui/debugPanel';
 import { mountLobbyPanel } from './ui/lobbyPanel';
 
@@ -18,6 +19,13 @@ if (!room) {
   url.searchParams.set('room', room);
   window.history.replaceState(null, '', url);
 }
+
+// ---- Số zombie (thử tải): ?zombies=N ----
+const zombiesParam = url.searchParams.get('zombies');
+const zombieCount =
+  zombiesParam !== null && Number.isFinite(Number(zombiesParam))
+    ? Math.max(0, Math.min(1000, Math.floor(Number(zombiesParam))))
+    : undefined;
 
 // ---- Tên người chơi (nhớ trong trình duyệt) ----
 const NAME_KEY = 'zg.name';
@@ -46,7 +54,8 @@ const game = new Phaser.Game({
   scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight },
   scene: [],
 });
-game.scene.add('lobby', LobbyScene, true, { session, name, color });
+game.scene.add('world', WorldScene, true, { session, name, color, seed: room, zombieCount });
+game.scene.add('hud', HudScene, true);
 
 // ---- Giao diện HTML ----
 const hud = document.getElementById('hud')!;
@@ -58,7 +67,7 @@ const lobby = mountLobbyPanel(hud, {
     name = n;
     safeSet(NAME_KEY, n);
     session.setMe(name, color);
-    (game.scene.getScene('lobby') as LobbyScene | null)?.setMe(name, color);
+    (game.scene.getScene('world') as WorldScene | null)?.setMe(name, color);
   },
   newRoom: () => {
     const u = new URL(window.location.href);
