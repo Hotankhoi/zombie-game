@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+.claude/worktrees
+.commit-msg.txt
+.github-info.txt
+.claude/settings.local.json

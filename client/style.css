@@ -1,0 +1,164 @@
+:root {
+  --bg: #0e1110;
+  --panel: rgba(18, 22, 20, 0.92);
+  --line: #2a312d;
+  --text: #e6ebe7;
+  --muted: #8d9891;
+  --accent: #9ccc65;
+  --danger: #ef5350;
+  --font: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  overflow: hidden;
+}
+#game {
+  position: fixed;
+  inset: 0;
+}
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.panel {
+  pointer-events: auto;
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: min(360px, calc(100vw - 32px));
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  backdrop-filter: blur(6px);
+}
+.panel h1 {
+  margin: 0 0 2px;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+}
+.panel h1 span {
+  color: var(--accent);
+}
+.sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+label {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 72px;
+}
+input[type='text'] {
+  flex: 1;
+  background: #0b0d0c;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 14px;
+}
+.code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: var(--accent);
+  flex: 1;
+}
+button {
+  background: #1d2420;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+.peers {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  border-top: 1px solid var(--line);
+}
+.peers li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+.peers .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.peers .ping {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+.peers .bad {
+  color: var(--danger);
+}
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.debug {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 260px;
+  top: auto;
+  left: auto;
+  padding: 12px;
+  font-size: 12px;
+}
+.debug h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.debug input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.debug .val {
+  width: 52px;
+  text-align: right;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.hidden {
+  display: none;
+}
