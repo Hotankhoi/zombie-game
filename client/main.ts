@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { MAX_PLAYERS, PLAYER_COLORS } from '@shared/types';
 import { hashString } from '@shared/util/rng';
 import { ConditionedTransport } from '@net/conditions';
+import { loadIceServers } from '@net/ice';
 import { newRoomCode, normalizeRoomCode } from '@net/roomCode';
 import { Session } from '@net/session';
 import { TrysteroTransport } from '@net/trystero';
@@ -25,9 +26,14 @@ let name = safeGet(NAME_KEY) ?? `Người sống sót ${Math.floor(Math.random()
 
 // ---- Mạng ----
 let netError: string | null = null;
+const iceServers = await loadIceServers();
 const net = new ConditionedTransport(
-  new TrysteroTransport(room, (e) => {
-    netError = e;
+  new TrysteroTransport(room, {
+    iceServers,
+    forceRelay: url.searchParams.get('relay') === '1',
+    onError: (e) => {
+      netError = e;
+    },
   }),
 );
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;

@@ -26,6 +26,9 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npx vite build
+        env:
+          # https://<app>.metered.live/api/v1/turn/credentials?apiKey=... (TURN miễn phí, xem net/ice.ts)
+          VITE_TURN_URL: ${{ secrets.VITE_TURN_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

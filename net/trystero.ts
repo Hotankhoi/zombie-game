@@ -1,5 +1,6 @@
 import { joinRoom, selfId as trysteroSelfId, type Room } from '@trystero-p2p/nostr';
 import type { PeerId, RoomCode } from '@shared/types';
+import { STUN_SERVERS } from './ice';
 import { Emitter, type SendOptions, type Transport } from './transport';
 
 /**
@@ -11,12 +12,13 @@ import { Emitter, type SendOptions, type Transport } from './transport';
  */
 export const APP_ID = 'zombie-coop-game-v1';
 
-const ICE_SERVERS: RTCIceServer[] = [
-  // STUN miễn phí, không giới hạn của Cloudflare
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:stun.l.google.com:19302' },
-  // TURN (relay khi 4G/NAT chặn kết nối thẳng) sẽ thêm ở giai đoạn 7 — xem AGENTS.md
-];
+export interface TrysteroOptions {
+  /** STUN + TURN, lấy bằng loadIceServers() trong ./ice. */
+  iceServers?: RTCIceServer[];
+  /** Chỉ đi qua TURN (link ?relay=1) — để thử relay ngay trên một máy. */
+  forceRelay?: boolean;
+  onError?: (message: string) => void;
+}
 
 export class TrysteroTransport implements Transport {
   readonly selfId: PeerId = trysteroSelfId;
@@ -27,10 +29,15 @@ export class TrysteroTransport implements Transport {
   private leaveE = new Emitter<[PeerId]>();
   private known = new Set<PeerId>();
 
-  constructor(code: RoomCode, onError?: (message: string) => void) {
+  constructor(
+    code: RoomCode,
+    { iceServers = STUN_SERVERS, forceRelay = false, onError }: TrysteroOptions = {},
+  ) {
+    const rtcConfig: RTCConfiguration = { iceServers };
+    if (forceRelay) rtcConfig.iceTransportPolicy = 'relay';
     this.room = joinRoom(
       // password = mã phòng → người ngoài không biết mã thì không đọc được gói tìm nhau
-      { appId: APP_ID, password: `zg:${code}`, rtcConfig: { iceServers: ICE_SERVERS } },
+      { appId: APP_ID, password: `zg:${code}`, rtcConfig },
       code,
       { onJoinError: (e) => onError?.(e.error) },
     );
