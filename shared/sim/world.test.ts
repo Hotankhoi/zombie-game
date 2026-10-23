@@ -21,7 +21,10 @@ function simulate(seed: string, ticks: number, inputSeed = 'inputs'): SimWorld {
           moveX: r.int(-1, 1),
           moveY: r.int(-1, 1),
           aim: r.int(0, 255),
-          buttons: (r.chance(0.3) ? Btn.Sprint : 0) | (r.chance(0.5) ? Btn.Attack : 0) | (r.chance(0.1) ? Btn.Interact : 0),
+          buttons:
+            (r.chance(0.3) ? Btn.Sprint : 0) |
+            (r.chance(0.5) ? Btn.Attack : 0) |
+            (r.chance(0.1) ? Btn.Interact : 0),
         });
       }
     }
@@ -61,7 +64,9 @@ describe('SimWorld', () => {
     expect(w.zombies).toHaveLength(40);
     for (const z of w.zombies) {
       expect(w.blocked(Math.floor(z.x), Math.floor(z.y))).toBe(false);
-      expect(Math.hypot(z.x - w.map.spawn.x, z.y - w.map.spawn.y)).toBeGreaterThanOrEqual(ZOMBIE_NORMAL.spawnMinDist);
+      expect(Math.hypot(z.x - w.map.spawn.x, z.y - w.map.spawn.y)).toBeGreaterThanOrEqual(
+        ZOMBIE_NORMAL.spawnMinDist,
+      );
     }
     expect(new Set(w.zombies.map((z) => z.id)).size).toBe(40);
   });

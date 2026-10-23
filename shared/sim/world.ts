@@ -183,7 +183,16 @@ export class SimWorld {
     this.events.push({ type: 'swing', player: p.id, x: p.x, y: p.y, facing: p.facing });
     if (!res.hit) return;
     const { zombie: z, killed, assassination, silent } = res.hit;
-    this.events.push({ type: 'hit', player: p.id, zombie: z.id, x: z.x, y: z.y, killed, assassination, silent });
+    this.events.push({
+      type: 'hit',
+      player: p.id,
+      zombie: z.id,
+      x: z.x,
+      y: z.y,
+      killed,
+      assassination,
+      silent,
+    });
   }
 
   private bite(z: ZombieState, p: PlayerState): void {
