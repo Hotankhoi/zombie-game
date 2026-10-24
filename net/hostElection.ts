@@ -173,26 +173,28 @@ const SENIORITY_TIE_MS = 1000;
 /** Lệch điểm dưới mức này coi như bằng nhau (ping dao động) → dùng id để mọi máy chọn giống nhau. */
 const SCORE_TIE = 15;
 
+/**
+ * Hai hàm chọn dưới đây chỉ phụ thuộc TẬP ứng viên, không phụ thuộc thứ tự duyệt (mọi máy chọn giống nhau):
+ * lấy mốc tốt nhất của cả tập, coi ai lệch dưới ngưỡng so với mốc đó là ngang nhau, rồi lấy id nhỏ nhất.
+ * (So từng cặp theo ngưỡng thì không bắc cầu: a=100 thắng b=90 theo id, b thắng z=80 theo id, z thắng a.)
+ */
 function pickHost(cands: Candidate[]): PeerId | null {
-  let best: Candidate | null = null;
-  for (const c of cands) {
-    if (best === null || c.hostedMs > best.hostedMs + SENIORITY_TIE_MS) best = c;
-    else if (Math.abs(c.hostedMs - best.hostedMs) <= SENIORITY_TIE_MS && better(c, best)) best = c;
+  if (cands.length === 0) return null;
+  const top = Math.max(...cands.map((c) => c.hostedMs));
+  return pickBest(cands.filter((c) => c.hostedMs >= top - SENIORITY_TIE_MS));
+}
+
+export function pickBest(cands: { id: PeerId; score: number }[]): PeerId | null {
+  if (cands.length === 0) return null;
+  const known = cands.filter((c) => Number.isFinite(c.score));
+  let pool = cands;
+  if (known.length > 0) {
+    const low = Math.min(...known.map((c) => c.score));
+    pool = known.filter((c) => c.score <= low + SCORE_TIE);
   }
-  return best?.id ?? null;
-}
-
-function pickBest(cands: { id: PeerId; score: number }[]): PeerId | null {
-  let best: { id: PeerId; score: number } | null = null;
-  for (const c of cands) if (best === null || better(c, best)) best = c;
-  return best?.id ?? null;
-}
-
-/** a tốt hơn b: điểm thấp hơn rõ rệt; điểm gần bằng nhau (hoặc cùng chưa biết) thì id nhỏ hơn. */
-function better(a: { id: PeerId; score: number }, b: { id: PeerId; score: number }): boolean {
-  const bothUnknown = !Number.isFinite(a.score) && !Number.isFinite(b.score);
-  if (!bothUnknown && Math.abs(a.score - b.score) > SCORE_TIE) return a.score < b.score;
-  return a.id < b.id;
+  let best = pool[0] as { id: PeerId };
+  for (const c of pool) if (c.id < best.id) best = c;
+  return best.id;
 }
 
 const MAX_SCORE = 0xffff;
