@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "loadtest": "vitest run --config tools/vitest.config.ts"
   },
   "dependencies": {
     "@trystero-p2p/nostr": "^0.26.0",
