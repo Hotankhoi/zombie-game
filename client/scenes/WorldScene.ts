@@ -27,6 +27,7 @@ const KIND_COLORS: Record<ZombieKind, [number, number]> = {
   spitter: [0x4f8a7f, 0x62b3a2],
   hider: [0x3f4a42, 0x5a6b5e],
   giant: [0x6e4a3e, 0x93604c],
+  boss: [0x7f1d1d, 0xc62828],
 };
 const zombieTex = (kind: ZombieKind, state: 'wander' | 'chase' | 'flash') => `zombie-${kind}-${state}`;
 /** Tối đa bao nhiêu tick chạy bù trong 1 frame (tab bị treo lâu thì bỏ, không chạy dồn). */
