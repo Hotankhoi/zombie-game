@@ -2,13 +2,26 @@ import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
 import type { Transport } from '@net/transport';
+import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
+import { INTEREST_RADIUS } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
 import { MapgenSource } from '@shared/sim/mapgenSource';
+import type { WorldState } from '@shared/sim/world';
 import type { PeerId } from '@shared/types';
+import { measureSimMs } from './benchmark';
 
 export type NetRole = 'host' | 'client' | 'waiting';
+
+export interface NetGameOptions {
+  zombieCount?: number;
+  /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
+  rttOf?: (id: PeerId) => number | null;
+}
+
+/** Điểm làm host = ping trung bình + hệ số × thời gian chạy thử 20 tick mô phỏng (ms). */
+const SIM_MS_WEIGHT = 4;
 
 /**
  * Ghép trận online trên trình duyệt (GĐ 2a): chọn host, nếu mình là host thì chạy HostServer
@@ -24,20 +37,41 @@ export class NetGame {
   hostStats: HostStats | null = null;
   /** Số lần đổi host từ lúc vào phòng (trừ lần chọn đầu). */
   migrations = 0;
+  /** Thời gian chạy thử 20 tick mô phỏng trên máy này (ms) — đo 1 lần lúc vào. */
+  readonly simBenchMs: number;
+  /** Bản sao lưu thế giới mới nhất từ host (≤10s tuổi) — dùng khi mình phải lên làm host. */
+  backup: WorldState | null = null;
   private worker: Worker | null = null;
   private timer: ReturnType<typeof setInterval>;
+  private zombieCount: number | undefined;
 
   constructor(
     private transport: Transport,
     room: string,
-    private zombieCount?: number,
+    opts: NetGameOptions = {},
   ) {
     this.seed = worldSeedForRoom(room);
+    this.zombieCount = opts.zombieCount;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
-    this.election = new HostElection(transport);
+    this.simBenchMs = measureSimMs();
+    const rttOf = opts.rttOf ?? (() => null);
+    this.election = new HostElection(transport, undefined, {
+      getScore: () => {
+        const rtts = transport
+          .peers()
+          .map(rttOf)
+          .filter((r): r is number => r !== null);
+        const avg = rtts.length > 0 ? rtts.reduce((a, b) => a + b, 0) / rtts.length : 0;
+        return avg + SIM_MS_WEIGHT * this.simBenchMs;
+      },
+    });
     this.election.changed.on((h) => this.onHostChanged(h));
     transport.onMessage((data, from) => this.onMessage(data, from));
+    transport.onMessage((data, from) => {
+      if (data[0] === WORLD_BACKUP_MSG && from === this.election.hostId)
+        this.backup = decodeBackup(data) ?? this.backup;
+    });
     transport.onPeerLeave((id) => this.toWorker({ t: 'leave', peer: id }));
     // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm
     this.timer = setInterval(() => this.election.tick(), 250);
@@ -93,9 +127,13 @@ export class NetGame {
   private startHost(): void {
     if (this.worker) return;
     const self = this.transport.selfId;
-    // lên thay host cũ: dựng tiếp thế giới từ snapshot cuối mình nhận được
+    // lên thay host cũ: bản sao lưu toàn thế giới (≤10s) ghép với snapshot mới nhất quanh mình
+    const keep = new Set([self, ...this.transport.peers()]);
+    const latest = this.sync.latest;
+    const area = latest ? { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS } : null;
     const restore =
-      this.sync.toWorldState(this.seed, new Set([self, ...this.transport.peers()])) ?? undefined;
+      mergeBackup(this.backup, this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
+    this.backup = null;
     const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e: MessageEvent<FromWorker>) => {
       const m = e.data;
