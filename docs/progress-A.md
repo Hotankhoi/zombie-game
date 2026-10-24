@@ -11,7 +11,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Thứ tự merge (xếp chồng)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `7b (relay)`
+`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `#14 (7b relay)`
 
 ## Các giai đoạn
 
@@ -26,7 +26,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | 5   | `a/5-horde` (base `a/4-night-noise`)          | #11 | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
 | 6   | `a/6-turned` (base `a/5-horde`)               | #12 | Xong phần độc lập, chờ merge; hành động 2 người: cần báo B trước                                             |
 | 7   | `a/7-bots-perf` (base `a/6-turned`)           | #13 | Xong phần A (bot, đo tải, tối ưu); TURN trên 4G: người dùng tự thử                                           |
-| 7b  | `a/7b-relay` (base `a/7-bots-perf`)           | PR  | Xong code + test với `wrangler dev`; deploy Cloudflare: người dùng thêm secret (docs/relay.md)               |
+| 7b  | `a/7b-relay` (base `a/7-bots-perf`)           | #14 | Xong code + test với `wrangler dev`; deploy Cloudflare: người dùng thêm secret (docs/relay.md)               |
 
 ## Việc treo
 
