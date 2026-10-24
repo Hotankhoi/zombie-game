@@ -1,0 +1,405 @@
+import type { PlayerInput } from '@shared/sim/input';
+
+/**
+ * Gói tin trong trận (GĐ 2a), nhị phân + lượng tử hóa (AGENTS.md mục 2.8). Byte đầu = loại gói,
+ * đánh số từ 16 để không trùng gói phòng chờ ở codec.ts (Hello/Ping/Pong).
+ * Người chơi trong gói được gọi bằng slot (0..255) thay vì PeerId dài — bảng slot gửi qua Roster.
+ */
+export const enum GameMsg {
+  Input = 16,
+  Snapshot = 17,
+  Events = 18,
+  Roster = 19,
+  HostClaim = 20,
+}
+
+/** Tọa độ zombie gửi dạng int16 theo 1/64 ô, so với gốc của gói → phạm vi ±512 ô quanh người nhận. */
+export const POS_SCALE = 64;
+
+export interface WirePlayer {
+  slot: number;
+  x: number;
+  y: number;
+  /** Góc ngắm 0..255 — hướng nhìn người chơi luôn suy ra từ đây nên gửi 1 byte vẫn chính xác. */
+  aim: number;
+  hp: number;
+  stamina: number;
+  staminaIdle: number;
+  attackCd: number;
+  respawnIn: number;
+  exhausted: boolean;
+  sprinting: boolean;
+  prevButtons: number;
+}
+
+export interface WireZombie {
+  /** 16 bit thấp của id zombie. */
+  id: number;
+  x: number;
+  y: number;
+  facing: number;
+  chasing: boolean;
+}
+
+export interface SnapshotMsg {
+  type: GameMsg.Snapshot;
+  tick: number;
+  /** seq của input cuối cùng host đã chạy cho người nhận. */
+  ack: number;
+  originX: number;
+  originY: number;
+  players: WirePlayer[];
+  zombies: WireZombie[];
+  /** Ô cửa đang mở quanh người nhận (tọa độ ô tuyệt đối). */
+  doors: { x: number; y: number }[];
+}
+
+export type WireEvent =
+  | { kind: 'swing'; slot: number; x: number; y: number; facing: number }
+  | {
+      kind: 'hit';
+      slot: number;
+      zombie: number;
+      x: number;
+      y: number;
+      killed: boolean;
+      assassination: boolean;
+      silent: boolean;
+    }
+  | { kind: 'bite'; zombie: number; slot: number; x: number; y: number }
+  | { kind: 'door'; x: number; y: number; open: boolean }
+  | { kind: 'death'; slot: number }
+  | { kind: 'respawn'; slot: number };
+
+export type GameMessage =
+  | { type: GameMsg.Input; inputs: PlayerInput[] }
+  | SnapshotMsg
+  | { type: GameMsg.Events; tick: number; events: WireEvent[] }
+  | { type: GameMsg.Roster; slots: { slot: number; id: string }[] }
+  /** hostedMs: đã làm host bao lâu — hai host cùng lúc thì ai làm lâu hơn giữ quyền. */
+  | { type: GameMsg.HostClaim; hostedMs: number };
+
+const EV = { swing: 1, hit: 2, bite: 3, door: 4, death: 5, respawn: 6 } as const;
+const TAU = Math.PI * 2;
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+const angleToByte = (a: number) => Math.round((((a % TAU) + TAU) % TAU) * (256 / TAU)) & 255;
+const byteToAngle = (b: number) => (b / 256) * TAU;
+const clampI16 = (v: number) => Math.max(-32768, Math.min(32767, Math.round(v)));
+
+/** Ghi tuần tự vào bộ đệm tự nới rộng. */
+class Writer {
+  private buf = new Uint8Array(256);
+  private view = new DataView(this.buf.buffer);
+  len = 0;
+
+  private need(n: number) {
+    if (this.len + n <= this.buf.length) return;
+    let size = this.buf.length * 2;
+    while (size < this.len + n) size *= 2;
+    const next = new Uint8Array(size);
+    next.set(this.buf.subarray(0, this.len));
+    this.buf = next;
+    this.view = new DataView(next.buffer);
+  }
+  u8(v: number) {
+    this.need(1);
+    this.view.setUint8(this.len, v);
+    this.len += 1;
+  }
+  i8(v: number) {
+    this.need(1);
+    this.view.setInt8(this.len, v);
+    this.len += 1;
+  }
+  u16(v: number) {
+    this.need(2);
+    this.view.setUint16(this.len, v);
+    this.len += 2;
+  }
+  i16(v: number) {
+    this.need(2);
+    this.view.setInt16(this.len, v);
+    this.len += 2;
+  }
+  u32(v: number) {
+    this.need(4);
+    this.view.setUint32(this.len, v >>> 0);
+    this.len += 4;
+  }
+  i32(v: number) {
+    this.need(4);
+    this.view.setInt32(this.len, v);
+    this.len += 4;
+  }
+  f32(v: number) {
+    this.need(4);
+    this.view.setFloat32(this.len, v);
+    this.len += 4;
+  }
+  f64(v: number) {
+    this.need(8);
+    this.view.setFloat64(this.len, v);
+    this.len += 8;
+  }
+  bytes(b: Uint8Array) {
+    this.need(b.length);
+    this.buf.set(b, this.len);
+    this.len += b.length;
+  }
+  done(): Uint8Array {
+    return this.buf.slice(0, this.len);
+  }
+}
+
+/** Đọc tuần tự; đọc quá cuối gói thì ném lỗi (decode bắt lại và trả null). */
+class Reader {
+  private view: DataView;
+  pos = 0;
+  constructor(private buf: Uint8Array) {
+    this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+  private at(n: number) {
+    const p = this.pos;
+    if (p + n > this.buf.length) throw new RangeError('gói ngắn');
+    this.pos += n;
+    return p;
+  }
+  u8 = () => this.view.getUint8(this.at(1));
+  i8 = () => this.view.getInt8(this.at(1));
+  u16 = () => this.view.getUint16(this.at(2));
+  i16 = () => this.view.getInt16(this.at(2));
+  u32 = () => this.view.getUint32(this.at(4));
+  i32 = () => this.view.getInt32(this.at(4));
+  f32 = () => this.view.getFloat32(this.at(4));
+  f64 = () => this.view.getFloat64(this.at(8));
+  bytes = (n: number) => {
+    const p = this.at(n);
+    return this.buf.subarray(p, p + n);
+  };
+}
+
+export function encodeGame(msg: GameMessage): Uint8Array {
+  const w = new Writer();
+  w.u8(msg.type);
+  switch (msg.type) {
+    case GameMsg.Input:
+      w.u8(msg.inputs.length);
+      for (const i of msg.inputs) {
+        w.u32(i.seq);
+        w.i8(i.moveX);
+        w.i8(i.moveY);
+        w.u8(i.aim);
+        w.u8(i.buttons);
+      }
+      break;
+    case GameMsg.Snapshot:
+      w.u32(msg.tick);
+      w.u32(msg.ack);
+      w.i32(msg.originX);
+      w.i32(msg.originY);
+      w.u8(msg.players.length);
+      for (const p of msg.players) {
+        w.u8(p.slot);
+        w.f64(p.x);
+        w.f64(p.y);
+        w.u8(p.aim);
+        w.f32(p.hp);
+        w.f32(p.stamina);
+        w.f32(p.staminaIdle);
+        w.f32(p.attackCd);
+        w.f32(p.respawnIn);
+        w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0));
+        w.u8(p.prevButtons);
+      }
+      w.u16(msg.zombies.length);
+      for (const z of msg.zombies) {
+        w.u16(z.id & 0xffff);
+        w.i16(clampI16((z.x - msg.originX) * POS_SCALE));
+        w.i16(clampI16((z.y - msg.originY) * POS_SCALE));
+        w.u8(angleToByte(z.facing));
+        w.u8(z.chasing ? 1 : 0);
+      }
+      w.u8(msg.doors.length);
+      for (const d of msg.doors) {
+        w.i16(clampI16(d.x - msg.originX));
+        w.i16(clampI16(d.y - msg.originY));
+      }
+      break;
+    case GameMsg.Events:
+      w.u32(msg.tick);
+      w.u16(msg.events.length);
+      for (const e of msg.events) writeEvent(w, e);
+      break;
+    case GameMsg.Roster:
+      w.u8(msg.slots.length);
+      for (const s of msg.slots) {
+        const id = enc.encode(s.id).subarray(0, 255);
+        w.u8(s.slot);
+        w.u8(id.length);
+        w.bytes(id);
+      }
+      break;
+    case GameMsg.HostClaim:
+      w.u32(Math.max(0, Math.min(0xffffffff, Math.floor(msg.hostedMs))));
+      break;
+  }
+  return w.done();
+}
+
+function writeEvent(w: Writer, e: WireEvent) {
+  w.u8(EV[e.kind]);
+  switch (e.kind) {
+    case 'swing':
+      w.u8(e.slot);
+      w.f32(e.x);
+      w.f32(e.y);
+      w.u8(angleToByte(e.facing));
+      break;
+    case 'hit':
+      w.u8(e.slot);
+      w.u16(e.zombie & 0xffff);
+      w.f32(e.x);
+      w.f32(e.y);
+      w.u8((e.killed ? 1 : 0) | (e.assassination ? 2 : 0) | (e.silent ? 4 : 0));
+      break;
+    case 'bite':
+      w.u16(e.zombie & 0xffff);
+      w.u8(e.slot);
+      w.f32(e.x);
+      w.f32(e.y);
+      break;
+    case 'door':
+      w.i32(e.x);
+      w.i32(e.y);
+      w.u8(e.open ? 1 : 0);
+      break;
+    case 'death':
+    case 'respawn':
+      w.u8(e.slot);
+      break;
+  }
+}
+
+/** Giải mã. Gói hỏng/lạ/không phải gói trong trận → null (không bao giờ ném lỗi vì dữ liệu từ mạng). */
+export function decodeGame(buf: Uint8Array): GameMessage | null {
+  if (buf.length < 1) return null;
+  try {
+    const r = new Reader(buf);
+    const type = r.u8();
+    switch (type) {
+      case GameMsg.Input: {
+        const n = r.u8();
+        const inputs: PlayerInput[] = [];
+        for (let i = 0; i < n; i++) {
+          inputs.push({ seq: r.u32(), moveX: r.i8(), moveY: r.i8(), aim: r.u8(), buttons: r.u8() });
+        }
+        return { type, inputs };
+      }
+      case GameMsg.Snapshot: {
+        const tick = r.u32();
+        const ack = r.u32();
+        const originX = r.i32();
+        const originY = r.i32();
+        const players: WirePlayer[] = [];
+        for (let i = 0, n = r.u8(); i < n; i++) {
+          const slot = r.u8();
+          const x = r.f64();
+          const y = r.f64();
+          const aim = r.u8();
+          const hp = r.f32();
+          const stamina = r.f32();
+          const staminaIdle = r.f32();
+          const attackCd = r.f32();
+          const respawnIn = r.f32();
+          const flags = r.u8();
+          const prevButtons = r.u8();
+          players.push({
+            slot,
+            x,
+            y,
+            aim,
+            hp,
+            stamina,
+            staminaIdle,
+            attackCd,
+            respawnIn,
+            exhausted: (flags & 1) !== 0,
+            sprinting: (flags & 2) !== 0,
+            prevButtons,
+          });
+        }
+        const zombies: WireZombie[] = [];
+        for (let i = 0, n = r.u16(); i < n; i++) {
+          const id = r.u16();
+          const x = originX + r.i16() / POS_SCALE;
+          const y = originY + r.i16() / POS_SCALE;
+          const facing = byteToAngle(r.u8());
+          zombies.push({ id, x, y, facing, chasing: (r.u8() & 1) !== 0 });
+        }
+        const doors: { x: number; y: number }[] = [];
+        for (let i = 0, n = r.u8(); i < n; i++) doors.push({ x: originX + r.i16(), y: originY + r.i16() });
+        return { type, tick, ack, originX, originY, players, zombies, doors };
+      }
+      case GameMsg.Events: {
+        const tick = r.u32();
+        const events: WireEvent[] = [];
+        for (let i = 0, n = r.u16(); i < n; i++) {
+          const e = readEvent(r);
+          if (!e) return null;
+          events.push(e);
+        }
+        return { type, tick, events };
+      }
+      case GameMsg.Roster: {
+        const slots: { slot: number; id: string }[] = [];
+        for (let i = 0, n = r.u8(); i < n; i++) {
+          const slot = r.u8();
+          slots.push({ slot, id: dec.decode(r.bytes(r.u8())) });
+        }
+        return { type, slots };
+      }
+      case GameMsg.HostClaim:
+        return { type, hostedMs: r.u32() };
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function readEvent(r: Reader): WireEvent | null {
+  switch (r.u8()) {
+    case EV.swing:
+      return { kind: 'swing', slot: r.u8(), x: r.f32(), y: r.f32(), facing: byteToAngle(r.u8()) };
+    case EV.hit: {
+      const slot = r.u8();
+      const zombie = r.u16();
+      const x = r.f32();
+      const y = r.f32();
+      const f = r.u8();
+      return {
+        kind: 'hit',
+        slot,
+        zombie,
+        x,
+        y,
+        killed: (f & 1) !== 0,
+        assassination: (f & 2) !== 0,
+        silent: (f & 4) !== 0,
+      };
+    }
+    case EV.bite:
+      return { kind: 'bite', zombie: r.u16(), slot: r.u8(), x: r.f32(), y: r.f32() };
+    case EV.door:
+      return { kind: 'door', x: r.i32(), y: r.i32(), open: r.u8() === 1 };
+    case EV.death:
+      return { kind: 'death', slot: r.u8() };
+    case EV.respawn:
+      return { kind: 'respawn', slot: r.u8() };
+    default:
+      return null;
+  }
+}
