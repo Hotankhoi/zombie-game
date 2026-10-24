@@ -6,8 +6,9 @@ import { angleDiff, hasLineOfSight, moveCircle, type BlockedFn } from './collisi
 import type { FlowField } from './flowField';
 import { isAlive, isUp, type PlayerState } from './player';
 import { countdown } from './timer';
+import { BOSS } from './tuning/horde';
 import { NOISE, ZOMBIE_NIGHT } from './tuning/night';
-import { KIND, SPECIAL, type ZombieKind } from './tuning/zombieKinds';
+import { KIND, SPECIAL, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
 
 /** wander: lang thang · investigate: đi tới chỗ có tiếng ồn · chase: đuổi người. */
 export type ZombieMode = 'wander' | 'investigate' | 'chase';
@@ -37,6 +38,11 @@ export interface ZombieState {
   burstFor: number;
   /** Zombie phun axit: hồi chiêu (giây). */
   spitCd: number;
+  /** Zombie của đợt tràn (GĐ 5): không bỏ đuổi vì xa, được dẫn tới người chơi, không tính vào dân số thường. */
+  horde: boolean;
+  /** Boss: hồi chiêu đập đất / gầm (giây). */
+  slamCd: number;
+  roarCd: number;
 }
 
 const DEG = Math.PI / 180;
@@ -66,6 +72,9 @@ export function createZombie(
     hidden: kind === 'hider',
     burstFor: 0,
     spitCd: 0,
+    horde: false,
+    slamCd: 0,
+    roarCd: 0,
   };
 }
 
@@ -125,8 +134,10 @@ export interface ZombieStepCtx {
   darkness: number;
   /** Zombie cắn người → báo cho SimWorld trừ máu. */
   onBite: (z: ZombieState, p: PlayerState) => void;
-  /** Zombie thét vừa phát hiện người → SimWorld phát tiếng ồn lớn. */
-  onScream: (z: ZombieState) => void;
+  /** Zombie phát tiếng ồn (thét khi phát hiện người, Boss gầm) → SimWorld cho zombie khác nghe. */
+  onNoise: (x: number, y: number, radius: number) => void;
+  /** Boss đập đất quanh mình. */
+  onSlam: (z: ZombieState) => void;
   /** Zombie phun axit vào điểm (x, y). */
   onSpit: (z: ZombieState, x: number, y: number) => void;
 }
@@ -136,6 +147,8 @@ export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
   z.biteCd = countdown(z.biteCd, dt);
   z.spitCd = countdown(z.spitCd, dt);
   z.burstFor = countdown(z.burstFor, dt);
+  z.slamCd = countdown(z.slamCd, dt);
+  z.roarCd = countdown(z.roarCd, dt);
 
   if (z.hidden) {
     // nấp: chỉ lộ ra khi có người đứng được tới sát
@@ -154,14 +167,15 @@ export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
     for (const p of ctx.players) {
       if (canDetect(z, p, blocked, ctx.darkness)) {
         startChase(z, p.id);
-        if (z.kind === 'screamer') ctx.onScream(z);
+        if (z.kind === 'screamer') ctx.onNoise(z.x, z.y, NOISE.scream);
         break;
       }
     }
   }
 
   let target = z.mode === 'chase' ? ctx.players.find((p) => p.id === z.target) : undefined;
-  if (z.mode === 'chase' && (!target || !isAlive(target) || dist(z, target) > Z.loseRange)) {
+  const tooFar = !z.horde && target !== undefined && dist(z, target) > Z.loseRange;
+  if (z.mode === 'chase' && (!target || !isAlive(target) || tooFar)) {
     z.mode = 'wander';
     z.target = null;
     target = undefined;
@@ -175,6 +189,16 @@ export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
 
   const r = radiusOf(z);
   const d = dist(z, target);
+  if (z.kind === 'boss') {
+    if (z.roarCd === 0) {
+      z.roarCd = BOSS.roarEverySec;
+      ctx.onNoise(z.x, z.y, BOSS.roarRadius);
+    }
+    if (z.slamCd === 0 && d - r <= BOSS.slamRange) {
+      z.slamCd = BOSS.slamCooldownSec;
+      ctx.onSlam(z);
+    }
+  }
   if (z.kind === 'spitter' && z.spitCd === 0 && d >= SPECIAL.spit.minRange && d <= SPECIAL.spit.maxRange) {
     if (hasLineOfSight(z, target, blocked)) {
       z.spitCd = SPECIAL.spit.cooldownSec;
@@ -203,9 +227,10 @@ export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
   let goal: { x: number; y: number } | null = hasLineOfSight(z, target, blocked)
     ? target
     : ctx.flow.nextStep(z, blocked);
-  // khổng lồ không có đường (bị cửa đóng chặn) thì đi thẳng tới, phá cửa
-  const moveBlocked = z.kind === 'giant' ? ctx.wallsOnly : blocked;
-  if (!goal && z.kind === 'giant') goal = target;
+  // khổng lồ/Boss không có đường (bị cửa đóng chặn) thì đi thẳng tới, phá cửa
+  const smash = breaksDoors(z.kind);
+  const moveBlocked = smash ? ctx.wallsOnly : blocked;
+  if (!goal && smash) goal = target;
   if (!goal) return;
   walkToward(z, goal.x, goal.y, speed * dt, r, moveBlocked);
 }

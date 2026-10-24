@@ -4,7 +4,17 @@
  * TẠM ở vùng A (cam kết không sửa `/shared/data` lúc làm GĐ 4) → B chuyển vào `/shared/data` khi tiện.
  * Boss của đợt tràn: GĐ 5.
  */
-export const ZOMBIE_KINDS = ['normal', 'runner', 'screamer', 'bloater', 'spitter', 'hider', 'giant'] as const;
+/** Thứ tự cố định (gửi qua mạng bằng chỉ số 0..7) — chỉ thêm vào cuối. */
+export const ZOMBIE_KINDS = [
+  'normal',
+  'runner',
+  'screamer',
+  'bloater',
+  'spitter',
+  'hider',
+  'giant',
+  'boss',
+] as const;
 export type ZombieKind = (typeof ZOMBIE_KINDS)[number];
 
 export interface KindStats {
@@ -31,7 +41,14 @@ export const KIND: Record<ZombieKind, KindStats> = {
   hider: { hp: 0.9, speed: 1.1, radius: 0.95, biteDamage: 1.3, weightDay: 6, weightNight: 6 },
   /** Khổng lồ: rất nhiều máu, cắn đau, phá cửa đóng. Phá tường: chưa làm (phải đồng bộ thay đổi map). */
   giant: { hp: 6, speed: 0.7, radius: 1.75, biteDamage: 3, weightDay: 4, weightNight: 5 },
+  /** Boss đợt tràn (GĐ 5): chỉ đợt tràn sinh ra. Đập đất + gầm gọi bầy (tuning/horde.ts), phá cửa. */
+  boss: { hp: 40, speed: 0.8, radius: 2.4, biteDamage: 4, weightDay: 0, weightNight: 0 },
 };
+
+/** Loại phá được cửa đóng (đi xuyên cửa). */
+export function breaksDoors(kind: ZombieKind): boolean {
+  return kind === 'giant' || kind === 'boss';
+}
 
 export const SPECIAL = {
   /** Phình nổ: vũng độc. */
