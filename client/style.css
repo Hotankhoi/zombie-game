@@ -138,7 +138,7 @@ button:hover {
   position: absolute;
   right: 16px;
   bottom: 16px;
-  width: 260px;
+  width: 300px;
   top: auto;
   left: auto;
   padding: 12px;
@@ -158,6 +158,14 @@ button:hover {
   width: 52px;
   text-align: right;
   font-family: ui-monospace, Consolas, monospace;
+}
+.debug .stats {
+  margin: 8px 0 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--muted);
 }
 .hidden {
   display: none;
