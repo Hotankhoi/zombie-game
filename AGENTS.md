@@ -150,8 +150,9 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
   - A: bắt đầu 1a (lõi chơi)
-  - B: có thể bắt đầu 1b (sinh map) — dùng `Rng` trong `shared/util/rng.ts`
+  - B: 1b đã có PR #3 chờ review; đã triển khai phần đầu GĐ 3 (vật phẩm và túi đồ) trên `b/inventory-core`, chờ review.
 - Ghi chú:
+  - Túi đồ (B): bảng vật phẩm ở `shared/data/items.ts`, reducer ở `shared/inventory`, UI ở `client/ui/inventory`. Xem mẫu bằng `?inventory=1`; authority/mạng ghép sau GĐ 2. Chưa có hiệu ứng dùng/trang bị/trao đồ.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
   - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
