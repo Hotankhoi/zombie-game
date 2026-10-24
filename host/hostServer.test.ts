@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
+import { decodeRoomFull } from '@net/roomFull';
 import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
 import { arenaMap } from '@shared/sim/grid';
 import { Btn, type PlayerInput } from '@shared/sim/input';
@@ -256,5 +257,29 @@ describe('ClientSync – ngoại suy khi thiếu snapshot', () => {
     now = 30 * SIM_TICK_MS + c.interpDelayMs;
     expect(c.sample().zombies[0]!.x).toBeCloseTo(7.5, 1);
     expect(c.extrapolated).toBeGreaterThan(0);
+  });
+});
+
+describe('HostServer – giới hạn 4 người', () => {
+  it('người thứ 5 bị từ chối (không vào thế giới, được báo phòng đầy); có người rời thì vào được', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const syncs = new Map(ids.map((id) => [id, new ClientSync(id, arenaMap())]));
+    const send = (id: string, seq: number) =>
+      host.receive(id, syncs.get(id)!.tick({ seq, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    for (const id of ids) send(id, 1);
+    const out = host.tick();
+    expect(host.clientCount).toBe(4);
+    expect(host.world.players.has('e')).toBe(false);
+    const full = out.filter((o) => o.to === 'e' && decodeRoomFull(o.data) !== null);
+    expect(full).toHaveLength(1);
+    expect(decodeRoomFull(full[0]!.data)).toBe(4);
+    // gửi tiếp ngay: không báo lặp mỗi gói
+    send('e', 2);
+    expect(host.tick().filter((o) => o.to === 'e')).toHaveLength(0);
+    host.removePeer('a');
+    send('e', 3);
+    host.tick();
+    expect(host.world.players.has('e')).toBe(true);
   });
 });

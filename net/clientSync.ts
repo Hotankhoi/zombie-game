@@ -38,7 +38,13 @@ export interface RemotePlayerView {
   x: number;
   y: number;
   facing: number;
+  /** Còn trong trận (kể cả đang gục). */
   alive: boolean;
+  hp: number;
+  /** > 0 = đang gục, còn bấy nhiêu giây trước khi chết hẳn. */
+  downedFor: number;
+  /** Đang được cứu: đã giữ R bao lâu (giây). */
+  reviveProgress: number;
 }
 
 export interface ZombieView {
@@ -183,6 +189,9 @@ export class ClientSync {
         y: pa && !far ? pa.y + (pb.y - pa.y) * alpha : pb.y,
         facing: pa ? lerpAngle(aimToRad(pa.aim), fb, alpha) : fb,
         alive: pb.respawnIn <= 0,
+        hp: pb.hp,
+        downedFor: pb.respawnIn <= 0 ? pb.downedFor : 0,
+        reviveProgress: pb.reviveProgress,
       });
     }
     return { zombies, others };
@@ -319,6 +328,9 @@ export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
     attackCd: w.attackCd,
     prevButtons: w.prevButtons,
     respawnIn: w.respawnIn,
+    downedFor: w.downedFor,
+    reviveProgress: w.reviveProgress,
+    dragging: w.dragging,
   };
 }
 

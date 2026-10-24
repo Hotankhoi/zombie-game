@@ -1,10 +1,11 @@
 import { decodeGame, encodeGame, GameMsg, type WireEvent, type WirePlayer } from '@net/gameCodec';
+import { encodeRoomFull } from '@net/roomFull';
 import { encodeBackup } from '@net/worldBackup';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
-import type { Channel, PeerId } from '@shared/types';
+import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -53,6 +54,8 @@ export class HostServer {
   private clients = new Map<PeerId, Client>();
   private out: Outgoing[] = [];
   private rosterDirty = false;
+  /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
+  private rejectedAt = new Map<PeerId, number>();
 
   constructor(opts: HostServerOptions) {
     this.world = new SimWorld({
@@ -68,6 +71,7 @@ export class HostServer {
     const msg = decodeGame(data);
     if (!msg || msg.type !== GameMsg.Input) return;
     const c = this.client(from);
+    if (!c) return;
     // gói kèm 3 input gần nhất → lấy những cái chưa chạy và chưa có, chèn đúng thứ tự seq
     // (gói tới sai thứ tự vẫn ghép lại được; input cũ hơn cái đã chạy thì bỏ)
     for (const i of msg.inputs) {
@@ -81,6 +85,7 @@ export class HostServer {
   }
 
   removePeer(id: PeerId): void {
+    this.rejectedAt.delete(id);
     if (!this.clients.delete(id)) return;
     this.world.removePlayer(id);
     this.rosterDirty = true;
@@ -113,8 +118,18 @@ export class HostServer {
     return out;
   }
 
-  private client(id: PeerId): Client {
+  /** Người chơi đã vào trận, hoặc thêm mới; phòng đủ MAX_PLAYERS thì từ chối (null) và báo cho họ. */
+  private client(id: PeerId): Client | null {
     let c = this.clients.get(id);
+    if (!c && this.clients.size >= MAX_PLAYERS) {
+      // báo tối đa mỗi 2 giây (họ gửi input 20 lần/giây)
+      const last = this.rejectedAt.get(id) ?? -Infinity;
+      if (this.world.tick - last >= 40) {
+        this.rejectedAt.set(id, this.world.tick);
+        this.out.push({ to: id, data: encodeRoomFull(MAX_PLAYERS), channel: 'reliable' });
+      }
+      return null;
+    }
     if (!c) {
       const used = new Set([...this.clients.values()].map((x) => x.slot));
       let slot = 0;
@@ -260,5 +275,8 @@ function wirePlayer(slot: number, p: PlayerState): WirePlayer {
     exhausted: p.exhausted,
     sprinting: p.sprinting,
     prevButtons: p.prevButtons,
+    downedFor: p.downedFor,
+    reviveProgress: p.reviveProgress,
+    dragging: p.dragging,
   };
 }
