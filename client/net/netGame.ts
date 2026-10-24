@@ -17,6 +17,8 @@ export type NetRole = 'host' | 'client' | 'waiting';
 
 export interface NetGameOptions {
   zombieCount?: number;
+  /** Chỉ host dùng: thế giới mới bắt đầu ở tick này (thử ban đêm). */
+  startTick?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
 }
@@ -47,6 +49,7 @@ export class NetGame {
   private worker: Worker | null = null;
   private timer: ReturnType<typeof setInterval>;
   private zombieCount: number | undefined;
+  private startTick: number | undefined;
 
   constructor(
     private transport: Transport,
@@ -55,6 +58,7 @@ export class NetGame {
   ) {
     this.seed = worldSeedForRoom(room);
     this.zombieCount = opts.zombieCount;
+    this.startTick = opts.startTick;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
     this.simBenchMs = measureSimMs();
@@ -155,7 +159,13 @@ export class NetGame {
     };
     w.onerror = (e) => console.error('[host] worker lỗi:', e.message);
     this.worker = w;
-    this.toWorker({ t: 'init', seed: this.seed, zombieCount: this.zombieCount, restore });
+    this.toWorker({
+      t: 'init',
+      seed: this.seed,
+      zombieCount: this.zombieCount,
+      startTick: this.startTick,
+      restore,
+    });
   }
 
   private stopHost(): void {

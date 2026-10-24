@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { PLAYER } from '@shared/data/player';
 import { MAX_PLAYERS, type PeerId } from '@shared/types';
+import { dayClock } from '@shared/sim/dayNight';
 import { isAlive, isDowned } from '@shared/sim/player';
+import { VISION } from '@shared/sim/tuning/night';
 import { PARTY } from '@shared/sim/tuning/party';
 import type { WorldScene } from './WorldScene';
 
@@ -28,6 +30,10 @@ export class HudScene extends Phaser.Scene {
   private teamTexts: Phaser.GameObjects.Text[] = [];
   private fpsShown = 0;
   private fpsAt = 0;
+  /** Lớp bóng tối + nón tầm nhìn (GĐ 4): tô tối cả màn hình rồi "khoét" phần nhìn thấy. */
+  private vision!: Phaser.GameObjects.RenderTexture;
+  private visionShape!: Phaser.GameObjects.Graphics;
+  private clockText!: Phaser.GameObjects.Text;
 
   constructor() {
     super('hud');
@@ -35,6 +41,11 @@ export class HudScene extends Phaser.Scene {
 
   create() {
     this.world = this.scene.get('world') as WorldScene;
+    const { width, height } = this.scale;
+    // tạo trước để nằm dưới mọi chữ/thanh của HUD
+    this.vision = this.add.renderTexture(0, 0, width, height).setOrigin(0, 0);
+    this.visionShape = this.make.graphics({}, false);
+    this.scale.on('resize', (size: Phaser.Structs.Size) => this.vision.resize(size.width, size.height));
     this.gfx = this.add.graphics();
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
     this.fpsText = this.add.text(0, 0, '', { ...style, fontFamily: 'Consolas, monospace' }).setOrigin(1, 0);
@@ -42,7 +53,7 @@ export class HudScene extends Phaser.Scene {
     this.hintText = this.add.text(
       0,
       0,
-      'WASD đi · Shift chạy · Chuột trái chém · E mở/đóng cửa · R cứu · G kéo người gục · F3 mạng',
+      'WASD đi · Shift chạy · Chuột trái chém · E mở/đóng cửa · F đèn pin · R cứu · G kéo người gục · F3 mạng',
       { ...style, fontSize: '12px', color: '#8d9891' },
     );
     this.respawnText = this.add
@@ -55,6 +66,9 @@ export class HudScene extends Phaser.Scene {
         strokeThickness: 4,
       })
       .setOrigin(0.5);
+    this.clockText = this.add
+      .text(0, 10, '', { ...style, fontSize: '14px', fontStyle: 'bold', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(0.5, 0);
     this.subText = this.add
       .text(0, 0, '', { ...style, fontSize: '15px', stroke: '#000', strokeThickness: 3 })
       .setOrigin(0.5);
@@ -87,6 +101,16 @@ export class HudScene extends Phaser.Scene {
       .setPosition(width - 16, 12);
 
     const others = net ? net.sync.sample().others : [];
+    const clock = dayClock(net ? net.sync.serverTick() : 0);
+    this.drawVision(clock.darkness, others);
+    const hh = Math.floor(clock.time * 24);
+    const mm = Math.floor((clock.time * 24 - hh) * 60);
+    this.clockText
+      .setText(
+        `Ngày ${clock.day} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${clock.night ? ' · Đêm' : ''}`,
+      )
+      .setColor(clock.night ? '#9fa8da' : '#ffe082')
+      .setPosition(width / 2, 10);
     this.drawTeam(g, others, me ? { x: me.x, y: me.y } : null);
 
     if (!me) {
@@ -133,6 +157,52 @@ export class HudScene extends Phaser.Scene {
     } else {
       this.respawnText.setVisible(false);
     }
+  }
+
+  /**
+   * Tầm nhìn hình nón + đèn pin (AGENTS.md mục 3): ngoài nón bị tô tối — ban ngày mờ nhẹ, ban đêm gần như đen.
+   * Đêm không đèn chỉ thấy rất gần; bật đèn (F) soi xa trong nón hẹp. Đèn của đồng đội cũng soi sáng.
+   * Chưa tính tường che khuất (tia nhìn xuyên tường) — để sau.
+   */
+  private drawVision(
+    darkness: number,
+    others: readonly { x: number; y: number; facing: number; alive: boolean; flashlight: boolean }[],
+  ) {
+    const rt = this.vision;
+    rt.clear();
+    const view = this.world.myView();
+    const me = this.world.me();
+    if (!view || !me || !isAlive(me)) return;
+    const cam = this.world.cameras.main;
+    const wv = cam.worldView;
+    const px = 16 * cam.zoom; // pixel màn hình mỗi ô
+    const toScreen = (x: number, y: number) => ({
+      x: (x * 16 - wv.x) * cam.zoom,
+      y: (y * 16 - wv.y) * cam.zoom,
+    });
+    const lerp = (a: number, b: number) => a + (b - a) * darkness;
+
+    rt.fill(0x05070c, lerp(VISION.dimDay, VISION.dimNight));
+    const g = this.visionShape;
+    g.clear();
+    g.fillStyle(0xffffff, 1);
+    const cone = (x: number, y: number, facing: number, range: number, halfDeg: number) => {
+      const s = toScreen(x, y);
+      const half = (halfDeg * Math.PI) / 180;
+      g.slice(s.x, s.y, range * px, facing - half, facing + half, false);
+      g.fillPath();
+    };
+    const lit = me.flashlight && darkness > 0.05;
+    cone(view.x, view.y, view.facing, lerp(VISION.dayRange, VISION.nightRange), VISION.coneHalfDeg);
+    if (lit) cone(view.x, view.y, view.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
+    const s = toScreen(view.x, view.y);
+    g.fillCircle(s.x, s.y, lerp(VISION.aroundDay, VISION.aroundNight) * px);
+    for (const o of others) {
+      if (o.alive && o.flashlight && darkness > 0.05) {
+        cone(o.x, o.y, o.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
+      }
+    }
+    rt.erase(g);
   }
 
   /** Khung trạng thái đội (góc dưới trái, trên thanh máu) + mũi tên chỉ đồng đội ngoài màn hình. */

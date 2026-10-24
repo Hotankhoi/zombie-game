@@ -7,6 +7,7 @@ import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
 import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
 import { PARTY } from '@shared/sim/tuning/party';
+import { KIND, ZOMBIE_KINDS, type ZombieKind } from '@shared/sim/tuning/zombieKinds';
 import type { SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
 import type { NetGame } from '../net/netGame';
@@ -17,7 +18,17 @@ export { TILE_SIZE };
 const ZOOM = 3;
 /** Texture zombie vẽ to gấp bấy nhiêu lần rồi thu nhỏ lại → nét khi zoom. */
 const TEX_SCALE = ZOOM;
-const ZOMBIE_TEX = { wander: 'zombie-wander', chase: 'zombie-chase', flash: 'zombie-flash' } as const;
+/** Màu thân zombie theo loại (lang thang / đang đuổi) — hình tạm, thay bằng sprite sau. */
+const KIND_COLORS: Record<ZombieKind, [number, number]> = {
+  normal: [0x5e7560, 0x7d9a5c],
+  runner: [0x8a9a5b, 0xa9bd6c],
+  screamer: [0x7a5c8a, 0xa070bb],
+  bloater: [0x9aa84a, 0xbccb57],
+  spitter: [0x4f8a7f, 0x62b3a2],
+  hider: [0x3f4a42, 0x5a6b5e],
+  giant: [0x6e4a3e, 0x93604c],
+};
+const zombieTex = (kind: ZombieKind, state: 'wander' | 'chase' | 'flash') => `zombie-${kind}-${state}`;
 /** Tối đa bao nhiêu tick chạy bù trong 1 frame (tab bị treo lâu thì bỏ, không chạy dồn). */
 const MAX_CATCHUP_TICKS = 5;
 
@@ -72,6 +83,10 @@ export class WorldScene extends Phaser.Scene {
   >;
   /** R cứu, G kéo người gục (GĐ 2c) — đăng ký riêng, không đụng phím E. */
   private partyKeys!: Record<'R' | 'G', Phaser.Input.Keyboard.Key>;
+  /** F bật/tắt đèn pin (GĐ 4). */
+  private lightKey!: Phaser.Input.Keyboard.Key;
+  /** Vũng độc/axit (vẽ lại mỗi frame). */
+  private gfxPools!: Phaser.GameObjects.Graphics;
   /** Bấm nhanh giữa 2 tick vẫn được tính. */
   private attackQueued = false;
   private interactQueued = false;
@@ -112,6 +127,7 @@ export class WorldScene extends Phaser.Scene {
     // map của B ở depth 0 (nhãn tòa nhà depth 1); hình động vẽ đè lên
     this.gfxDecals = this.add.graphics().setDepth(2);
     this.gfxDoors = this.add.graphics().setDepth(3);
+    this.gfxPools = this.add.graphics().setDepth(2.5);
     this.gfxDyn = this.add.graphics().setDepth(4);
     this.makeZombieTextures();
 
@@ -135,6 +151,7 @@ export class WorldScene extends Phaser.Scene {
       if (!isTyping()) this.interactQueued = true;
     });
     this.partyKeys = kb.addKeys('R,G', false) as typeof this.partyKeys;
+    this.lightKey = kb.addKey('F', false);
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -209,6 +226,7 @@ export class WorldScene extends Phaser.Scene {
     if (!typing) {
       if (this.partyKeys.R.isDown) buttons |= Btn.Revive;
       if (this.partyKeys.G.isDown) buttons |= Btn.Drag;
+      if (this.lightKey.isDown) buttons |= Btn.Flashlight;
     }
     this.attackQueued = false;
     this.interactQueued = false;
@@ -258,6 +276,7 @@ export class WorldScene extends Phaser.Scene {
     const T = TILE_SIZE;
 
     this.drawDoors();
+    this.drawPools();
 
     const { zombies, others } = this.net.sync.sample();
     for (let i = 0; i < zombies.length; i++) {
@@ -266,13 +285,13 @@ export class WorldScene extends Phaser.Scene {
       let img = this.zombieSprites[i];
       if (!img) {
         img = this.add
-          .image(0, 0, ZOMBIE_TEX.wander)
+          .image(0, 0, zombieTex('normal', 'wander'))
           .setDepth(3.5)
           .setScale(1 / TEX_SCALE);
         this.zombieSprites.push(img);
       }
       img
-        .setTexture(flash ? ZOMBIE_TEX.flash : z.chasing ? ZOMBIE_TEX.chase : ZOMBIE_TEX.wander)
+        .setTexture(zombieTex(z.kind, flash ? 'flash' : z.chasing ? 'chase' : 'wander'))
         .setPosition(z.x * T, z.y * T)
         .setRotation(z.facing)
         .setVisible(true);
@@ -310,6 +329,13 @@ export class WorldScene extends Phaser.Scene {
     return this.session.peers.get(id)?.color ?? 0xcccccc;
   }
 
+  /** Chỗ vẽ + hướng nhìn của mình (ô) — HUD vẽ nón tầm nhìn. */
+  myView(): { x: number; y: number; facing: number } | null {
+    if (!this.me()) return null;
+    const pos = this.myDrawPos(this.acc / SIM_TICK_MS);
+    return { x: pos.x, y: pos.y, facing: (this.myAim / 256) * Math.PI * 2 };
+  }
+
   /** Tên + màu của một người (HUD vẽ mũi tên/khung đội). */
   peerInfo(id: PeerId): { name: string; color: number } {
     const p = this.session.peers.get(id);
@@ -339,22 +365,44 @@ export class WorldScene extends Phaser.Scene {
    * phóng to TEX_SCALE lần cho nét khi camera zoom; sprite xoay theo hướng nhìn.
    */
   private makeZombieTextures() {
-    const r = ZOMBIE_NORMAL.radius * TILE_SIZE * TEX_SCALE;
-    const size = Math.ceil(r * 2 + 2);
-    const c = size / 2;
-    const variants: [string, number, number][] = [
-      [ZOMBIE_TEX.wander, 0x5e7560, 0x2c3a2e],
-      [ZOMBIE_TEX.chase, 0x7d9a5c, 0xff5252],
-      [ZOMBIE_TEX.flash, 0xffffff, 0xffffff],
-    ];
-    for (const [key, body, eye] of variants) {
-      if (this.textures.exists(key)) continue;
-      const g = this.make.graphics({}, false);
-      g.fillStyle(body).fillCircle(c, c, r);
-      g.fillStyle(eye);
-      for (const side of [-1, 1]) g.fillCircle(c + r * 0.55, c + side * r * 0.35, TEX_SCALE);
-      g.generateTexture(key, size, size);
-      g.destroy();
+    for (const kind of ZOMBIE_KINDS) {
+      const r = ZOMBIE_NORMAL.radius * KIND[kind].radius * TILE_SIZE * TEX_SCALE;
+      const size = Math.ceil(r * 2 + 2);
+      const c = size / 2;
+      const [wander, chase] = KIND_COLORS[kind];
+      const variants: [string, number, number][] = [
+        [zombieTex(kind, 'wander'), wander, 0x2c3a2e],
+        [zombieTex(kind, 'chase'), chase, 0xff5252],
+        [zombieTex(kind, 'flash'), 0xffffff, 0xffffff],
+      ];
+      for (const [key, body, eye] of variants) {
+        if (this.textures.exists(key)) continue;
+        const g = this.make.graphics({}, false);
+        g.fillStyle(body).fillCircle(c, c, r);
+        if (kind === 'bloater') g.fillStyle(0xd4e157, 0.6).fillCircle(c - r * 0.2, c, r * 0.45); // bụng phình
+        if (kind === 'giant') g.lineStyle(TEX_SCALE, 0x3e2723, 1).strokeCircle(c, c, r - TEX_SCALE);
+        g.fillStyle(eye);
+        for (const side of [-1, 1]) g.fillCircle(c + r * 0.55, c + side * r * 0.35, TEX_SCALE);
+        g.generateTexture(key, size, size);
+        g.destroy();
+      }
+    }
+  }
+
+  /** Vũng độc (xanh lá) và axit (vàng xanh); axit còn đang bay thì chỉ là vòng cảnh báo. */
+  private drawPools() {
+    const g = this.gfxPools;
+    g.clear();
+    const T = TILE_SIZE;
+    for (const p of this.net.sync.latest?.pools ?? []) {
+      const fade = Math.min(1, p.ttl / 1.5);
+      if (p.arming) {
+        g.lineStyle(1.5, 0xc6ff00, 0.9).strokeCircle(p.x * T, p.y * T, p.radius * T);
+        continue;
+      }
+      const color = p.kind === 'acid' ? 0xc6ff00 : 0x66bb6a;
+      g.fillStyle(color, 0.35 * fade).fillCircle(p.x * T, p.y * T, p.radius * T);
+      g.lineStyle(1, color, 0.6 * fade).strokeCircle(p.x * T, p.y * T, p.radius * T);
     }
   }
 
