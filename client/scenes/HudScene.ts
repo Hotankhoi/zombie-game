@@ -33,7 +33,11 @@ export class HudScene extends Phaser.Scene {
   private fpsShown = 0;
   private fpsAt = 0;
   /** Lớp bóng tối + nón tầm nhìn (GĐ 4): tô tối cả màn hình rồi "khoét" phần nhìn thấy. */
-  private vision!: Phaser.GameObjects.RenderTexture;
+  /**
+   * Lớp tối phủ cả màn hình, che bằng mặt nạ hình học đảo ngược (stencil GPU): phần nón tầm nhìn bị "khoét".
+   * Rẻ hơn hẳn RenderTexture (đo GĐ 7: RenderTexture tô + xóa cả màn hình mỗi frame tốn ~11 ms).
+   */
+  private vision!: Phaser.GameObjects.Rectangle;
   private visionShape!: Phaser.GameObjects.Graphics;
   private clockText!: Phaser.GameObjects.Text;
   /** Trời đỏ dần trước đợt tràn (GĐ 5). */
@@ -51,10 +55,11 @@ export class HudScene extends Phaser.Scene {
     this.world = this.scene.get('world') as WorldScene;
     const { width, height } = this.scale;
     // tạo trước để nằm dưới mọi chữ/thanh của HUD
-    this.vision = this.add.renderTexture(0, 0, width, height).setOrigin(0, 0);
+    this.vision = this.add.rectangle(0, 0, width, height, 0x05070c, 0).setOrigin(0, 0);
     this.visionShape = this.make.graphics({}, false);
+    this.vision.setMask(this.visionShape.createGeometryMask().setInvertAlpha(true));
     this.sky = this.add.graphics();
-    this.scale.on('resize', (size: Phaser.Structs.Size) => this.vision.resize(size.width, size.height));
+    this.scale.on('resize', (size: Phaser.Structs.Size) => this.vision.setSize(size.width, size.height));
     this.gfx = this.add.graphics();
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
     this.fpsText = this.add.text(0, 0, '', { ...style, fontFamily: 'Consolas, monospace' }).setOrigin(1, 0);
@@ -183,11 +188,12 @@ export class HudScene extends Phaser.Scene {
     darkness: number,
     others: readonly { x: number; y: number; facing: number; alive: boolean; flashlight: boolean }[],
   ) {
-    const rt = this.vision;
-    rt.clear();
     const view = this.world.myView();
     const me = this.world.me();
-    if (!view || !me || !isAlive(me)) return;
+    if (!view || !me || !isAlive(me)) {
+      this.vision.setVisible(false);
+      return;
+    }
     const cam = this.world.cameras.main;
     const wv = cam.worldView;
     const px = 16 * cam.zoom; // pixel màn hình mỗi ô
@@ -197,7 +203,7 @@ export class HudScene extends Phaser.Scene {
     });
     const lerp = (a: number, b: number) => a + (b - a) * darkness;
 
-    rt.fill(0x05070c, lerp(VISION.dimDay, VISION.dimNight));
+    this.vision.setVisible(true).setFillStyle(0x05070c, lerp(VISION.dimDay, VISION.dimNight));
     const g = this.visionShape;
     g.clear();
     g.fillStyle(0xffffff, 1);
@@ -217,7 +223,6 @@ export class HudScene extends Phaser.Scene {
         cone(o.x, o.y, o.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
       }
     }
-    rt.erase(g);
   }
 
   /**
