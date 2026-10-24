@@ -153,7 +153,8 @@ describe('các loại zombie', () => {
     const a = make();
     const counts = new Map<string, number>();
     for (const z of a.zombies) counts.set(z.kind, (counts.get(z.kind) ?? 0) + 1);
-    for (const k of ZOMBIE_KINDS) expect(counts.get(k) ?? 0).toBeGreaterThan(0);
+    // Boss chỉ đợt tràn (GĐ 5) sinh ra
+    for (const k of ZOMBIE_KINDS) expect(counts.get(k) ?? 0)[k === 'boss' ? 'toBe' : 'toBeGreaterThan'](0);
     expect(counts.get('normal')!).toBeGreaterThan(counts.get('giant')!);
     expect(make().hash()).toBe(a.hash());
     expect(a.zombies.find((z) => z.kind === 'giant')!.hp).toBe(Z.maxHp * KIND.giant.hp);
@@ -178,7 +179,14 @@ describe('các loại zombie', () => {
     w.addPlayer('q').x = 30; // có đồng đội → hết máu thì gục
     p.x = 10;
     p.y = 10.5;
-    const b = testZombie(1, 10.8, 10.5, { kind: 'bloater', facing: Math.PI, hp: 1, mode: 'chase', target: 'p', biteCd: 9 });
+    const b = testZombie(1, 10.8, 10.5, {
+      kind: 'bloater',
+      facing: Math.PI,
+      hp: 1,
+      mode: 'chase',
+      target: 'p',
+      biteCd: 9,
+    });
     w.zombies.push(b);
     w.step(new Map([['p', { ...idle, aim: radToAim(0), buttons: Btn.Attack }]]));
     expect(w.zombies).toHaveLength(0);
@@ -232,7 +240,12 @@ describe('các loại zombie', () => {
     const p = w.addPlayer('p');
     p.x = DOOR.x + 3;
     p.y = DOOR.y + 0.5;
-    const g = testZombie(1, DOOR.x - 2.5, DOOR.y + 0.5, { kind: 'giant', mode: 'chase', target: 'p', facing: 0 });
+    const g = testZombie(1, DOOR.x - 2.5, DOOR.y + 0.5, {
+      kind: 'giant',
+      mode: 'chase',
+      target: 'p',
+      facing: 0,
+    });
     w.zombies.push(g);
     for (let i = 0; i < 4 * TPS && !w.doors.isOpen(DOOR.x, DOOR.y); i++) w.step(new Map());
     expect(w.doors.isOpen(DOOR.x, DOOR.y)).toBe(true);

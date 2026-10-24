@@ -4,7 +4,7 @@ import { ZOMBIE_NORMAL as Z } from '@shared/data/zombies';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Rng, hashString } from '@shared/util/rng';
 import { pushOut, type BlockedFn } from './collision';
-import { dayClock } from './dayNight';
+import { dayClock, tickOfDay } from './dayNight';
 import { meleeAttack } from './combat';
 import { Doors, circleOverlapsTile, nearestDoor } from './doors';
 import { FlowField } from './flowField';
@@ -12,9 +12,10 @@ import type { MapSource } from './grid';
 import { Btn, hasBtn, type PlayerInput } from './input';
 import { createPlayer, isAlive, isDowned, isUp, stepPlayer, type PlayerState } from './player';
 import { moveCircle } from './collision';
-import { NOISE } from './tuning/night';
+import { BOSS, HORDE } from './tuning/horde';
+import { DAY, NOISE } from './tuning/night';
 import { PARTY } from './tuning/party';
-import { KIND, SPECIAL, ZOMBIE_KINDS, type ZombieKind } from './tuning/zombieKinds';
+import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
 import { countdown } from './timer';
 import { createZombie, hearNoise, radiusOf, stepZombie, type ZombieState } from './zombie';
 
@@ -31,6 +32,30 @@ export interface Pool {
   armIn: number;
   /** Sát thương mỗi giây. */
   dps: number;
+}
+
+/**
+ * Đợt tràn (GĐ 5) đang diễn ra hoặc vừa xong. Mỗi 15 ngày, từ lúc tối hẳn ngày 15k tới sáng hẳn hôm sau,
+ * hoặc tới khi giết hết. Thắng = còn ít nhất 1 người chưa chết hẳn lúc kết thúc.
+ */
+export interface HordeState {
+  /** Đợt thứ mấy (1, 2, …). */
+  number: number;
+  active: boolean;
+  startTick: number;
+  endTick: number;
+  /** Số zombie thường của đợt (chưa tính Boss) và đã sinh bao nhiêu. */
+  quota: number;
+  spawned: number;
+  bosses: number;
+  bossesSpawned: number;
+  /** Phần lẻ "zombie cần sinh" dồn qua các tick. */
+  spawnBudget: number;
+  /** Kết quả khi xong: true = sống sót, false = cả đội chết; null = đang diễn ra. */
+  survived: boolean | null;
+  /** Bảng thành tích đội: số zombie giết / số lần gục trong đợt, theo người. */
+  kills: Record<PeerId, number>;
+  downs: Record<PeerId, number>;
 }
 
 /** Tiếng ồn chờ zombie nghe (tick sau). */
@@ -76,6 +101,8 @@ export interface WorldState {
   /** Cửa bị khổng lồ phá: mở mãi, không đóng lại được. */
   brokenDoors?: Vec2[];
   noises?: Noise[];
+  /** GĐ 5. */
+  horde?: HordeState | null;
 }
 
 export interface SimWorldOptions {
@@ -118,6 +145,8 @@ export class SimWorld {
   private brokenDoors = new Set<string>();
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
+  /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
+  horde: HordeState | null = null;
 
   /** Ô chặn: tường, hoặc cửa đang đóng. */
   readonly blocked: BlockedFn = (tx, ty) =>
@@ -147,6 +176,7 @@ export class SimWorld {
     this.nextPoolId = s.nextPoolId ?? 1;
     for (const d of s.brokenDoors ?? []) this.brokenDoors.add(`${d.x},${d.y}`);
     this.noises = (s.noises ?? []).map((n) => ({ ...n }));
+    this.horde = s.horde ? structuredCopy(s.horde) : null;
   }
 
   /** Chụp trạng thái (bản sao) — ngược với `restore`. */
@@ -170,6 +200,7 @@ export class SimWorld {
         return { x: x as number, y: y as number };
       }),
       noises: this.noises.map((n) => ({ ...n })),
+      horde: this.horde ? structuredCopy(this.horde) : null,
     };
   }
 
@@ -245,12 +276,14 @@ export class SimWorld {
       players,
       darkness: this.darkness,
       onBite: (z: ZombieState, p: PlayerState) => this.bite(z, p),
-      onScream: (z: ZombieState) => this.emitNoise(z.x, z.y, NOISE.scream),
+      onNoise: (x: number, y: number, r: number) => this.emitNoise(x, y, r),
+      onSlam: (z: ZombieState) => this.slam(z),
       onSpit: (z: ZombieState, x: number, y: number) => this.spit(x, y),
     };
     for (const z of this.zombies) stepZombie(z, ctx);
     this.smashDoors();
     this.separate(alive);
+    this.directHorde(alive);
     this.refillZombies();
     this.tick++;
   }
@@ -314,10 +347,134 @@ export class SimWorld {
     this.pools = this.pools.filter((p) => p.ttl > 0);
   }
 
-  /** Khổng lồ chồng lên cửa đóng → cửa vỡ (mở mãi), tiếng ồn lớn. */
+  /** Boss đập đất: mọi người đứng được trong tầm mất máu (hết máu thì gục như bị cắn). */
+  private slam(z: ZombieState): void {
+    const reach = radiusOf(z) + BOSS.slamRange;
+    for (const p of this.sortedPlayers()) {
+      if (!isUp(p) || Math.hypot(p.x - z.x, p.y - z.y) > reach) continue;
+      p.hp = Math.max(0, p.hp - BOSS.slamDamage);
+      this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
+      if (p.hp === 0) this.down(p);
+    }
+  }
+
+  /**
+   * Horde director (GĐ 5): bắt đầu đợt tràn khi tối hẳn ngày 15k, sinh dồn từng ít một quanh người chơi
+   * (zombie đợt tràn biết người chơi ở đâu — được dẫn tới chỗ người gần nhất), thêm Boss giữa chừng,
+   * kết thúc khi trời sáng hẳn hoặc giết hết.
+   */
+  private directHorde(alive: readonly PlayerState[]): void {
+    const clock = dayClock(this.tick);
+    const due = clock.day % HORDE.everyDays === 0 && clock.time >= DAY.nightStart;
+    const number = Math.floor(clock.day / HORDE.everyDays);
+    if (due && (!this.horde || this.horde.number < number) && alive.length > 0) {
+      const quota = Math.min(HORDE.maxCount, HORDE.baseCount + HORDE.perHorde * (number - 1));
+      const endTick =
+        tickOfDay(clock.day + 1) + Math.round((DAY.dawnEnd * DAY.lengthSec * 1000) / SIM_TICK_MS);
+      this.horde = {
+        number,
+        active: true,
+        startTick: this.tick,
+        endTick,
+        quota,
+        spawned: 0,
+        bosses: Math.min(HORDE.maxBosses, number),
+        bossesSpawned: 0,
+        spawnBudget: 0,
+        survived: null,
+        kills: {},
+        downs: {},
+      };
+    }
+    const h = this.horde;
+    if (!h?.active) return;
+
+    if (alive.length > 0) {
+      h.spawnBudget += HORDE.spawnPerSec * DT;
+      while (h.spawnBudget >= 1 && h.spawned < h.quota) {
+        h.spawnBudget -= 1;
+        if (this.spawnHordeZombie(alive, this.pickHordeKind())) h.spawned++;
+      }
+      while (h.bossesSpawned < h.bosses && h.spawned >= h.quota * HORDE.bossAt) {
+        if (!this.spawnHordeZombie(alive, 'boss')) break;
+        h.bossesSpawned++;
+      }
+      // dẫn đường: zombie đợt tràn không đuổi ai thì được chỉ tới chỗ người gần nhất
+      if (this.tick % Math.round(HORDE.homingSec / DT) === 0) {
+        for (const z of this.zombies) {
+          if (!z.horde || z.mode === 'chase') continue;
+          const p = nearestOf(alive, z);
+          if (!p) continue;
+          z.mode = 'investigate';
+          z.goalX = p.x;
+          z.goalY = p.y;
+          z.investigateFor = HORDE.homingSec + 1;
+        }
+      }
+    }
+
+    const left = this.zombies.some((z) => z.horde);
+    const allSpawned = h.spawned >= h.quota && h.bossesSpawned >= h.bosses;
+    const wiped = this.players.size > 0 && [...this.players.values()].every((p) => !isAlive(p));
+    if (this.tick >= h.endTick || (allSpawned && !left) || wiped) {
+      h.active = false;
+      h.survived = [...this.players.values()].some(isAlive);
+      // zombie còn lại thành zombie thường (lang thang, không được dẫn đường nữa)
+      for (const z of this.zombies) z.horde = false;
+    }
+  }
+
+  /** Còn bao nhiêu zombie của đợt tràn (chưa sinh + đang sống). */
+  hordeRemaining(): number {
+    const h = this.horde;
+    if (!h?.active) return 0;
+    const alive = this.zombies.reduce((n, z) => n + (z.horde ? 1 : 0), 0);
+    return h.quota - h.spawned + (h.bosses - h.bossesSpawned) + alive;
+  }
+
+  private spawnHordeZombie(alive: readonly PlayerState[], kind: ZombieKind): boolean {
+    for (let tries = 0; tries < SPAWN_TRIES; tries++) {
+      const a = this.rng.pick(alive);
+      const ang = this.rng.next() * Math.PI * 2;
+      const r = HORDE.spawnMinDist + this.rng.next() * (HORDE.spawnMaxDist - HORDE.spawnMinDist);
+      const tx = Math.floor(a.x + Math.cos(ang) * r);
+      const ty = Math.floor(a.y + Math.sin(ang) * r);
+      if (this.blocked(tx, ty)) continue;
+      const x = tx + 0.5;
+      const y = ty + 0.5;
+      if (alive.some((p) => Math.hypot(p.x - x, p.y - y) < HORDE.spawnMinDist)) continue;
+      const z = createZombie(this.nextZombieId++, x, y, this.rng, kind);
+      z.horde = true;
+      z.hidden = false;
+      const target = nearestOf(alive, z);
+      if (target) {
+        z.mode = 'investigate';
+        z.goalX = target.x;
+        z.goalY = target.y;
+        z.investigateFor = HORDE.homingSec + 1;
+      }
+      this.zombies.push(z);
+      return true;
+    }
+    return false;
+  }
+
+  private pickHordeKind(): ZombieKind {
+    const w = HORDE.kindWeights as Record<string, number>;
+    let total = 0;
+    for (const k of ZOMBIE_KINDS) total += w[k] ?? 0;
+    let roll = this.rng.next() * total;
+    for (const k of ZOMBIE_KINDS) {
+      roll -= w[k] ?? 0;
+      if (roll < 0) return k;
+    }
+    return 'normal';
+  }
+
+  /** Khổng lồ/Boss chồng lên cửa đóng → cửa vỡ (mở mãi), tiếng ồn lớn. */
   private smashDoors(): void {
     for (const z of this.zombies) {
-      if (z.kind !== 'giant') continue;
+      if (!breaksDoors(z.kind)) continue;
       const r = radiusOf(z);
       for (let ty = Math.floor(z.y - r); ty <= Math.floor(z.y + r); ty++) {
         for (let tx = Math.floor(z.x - r); tx <= Math.floor(z.x + r); tx++) {
@@ -407,6 +564,7 @@ export class SimWorld {
       this.die(p);
       return;
     }
+    if (this.horde?.active) this.horde.downs[p.id] = (this.horde.downs[p.id] ?? 0) + 1;
     p.hp = 0;
     p.downedFor = PARTY.downedSec;
     p.reviveProgress = 0;
@@ -450,7 +608,8 @@ export class SimWorld {
       parts.push(
         `z${z.id}:${z.kind},${f(z.x)},${f(z.y)},${f(z.facing)},${f(z.hp)},${z.mode},${z.target ?? ''},` +
           `${f(z.wanderIn)},${b(z.wanderMoving)},${f(z.biteCd)},${f(z.goalX)},${f(z.goalY)},` +
-          `${f(z.investigateFor)},${b(z.hidden)},${f(z.burstFor)},${f(z.spitCd)}`,
+          `${f(z.investigateFor)},${b(z.hidden)},${f(z.burstFor)},${f(z.spitCd)},${b(z.horde)},` +
+          `${f(z.slamCd)},${f(z.roarCd)}`,
       );
     }
     for (const p of this.pools) {
@@ -460,6 +619,7 @@ export class SimWorld {
     }
     parts.push(`n${this.noises.map((n) => `${f(n.x)},${f(n.y)},${f(n.radius)}`).join(';')}`);
     parts.push(`x${[...this.brokenDoors].sort().join(';')}`);
+    if (this.horde) parts.push(`h${JSON.stringify(sortKeys(this.horde))}`);
     parts.push(`d${this.doors.openList().join(';')}`);
     return hashString(parts.join('|')).toString(16).padStart(8, '0');
   }
@@ -510,6 +670,7 @@ export class SimWorld {
     if (!res.hit) return;
     const { zombie: z, killed, assassination, silent } = res.hit;
     if (!silent) this.emitNoise(z.x, z.y, NOISE.meleeHit);
+    if (killed && this.horde?.active) this.horde.kills[p.id] = (this.horde.kills[p.id] ?? 0) + 1;
     this.events.push({
       type: 'hit',
       player: p.id,
@@ -591,18 +752,20 @@ export class SimWorld {
         z.x = p.x + (dx / d) * minPD;
         z.y = p.y + (dy / d) * minPD;
       }
-      pushOut(z, radiusOf(z), z.kind === 'giant' ? this.wallsOnly : this.blocked);
+      pushOut(z, radiusOf(z), breaksDoors(z.kind) ? this.wallsOnly : this.blocked);
     }
   }
 
   /** Sinh thêm zombie cho đủ số: cách người chơi spawnMinDist–spawnMaxDist, trên ô không bị chặn. */
   private refillZombies(): void {
-    const missing = this.zombieCount - this.zombies.length;
+    // zombie đợt tràn không tính vào dân số thường
+    const normal = () => this.zombies.reduce((n, z) => n + (z.horde ? 0 : 1), 0);
+    const missing = this.zombieCount - normal();
     if (missing <= 0) return;
     const alive = this.sortedPlayers().filter(isAlive);
     const anchors: readonly Vec2[] = alive.length > 0 ? alive : [this.map.spawn];
     let tries = missing * SPAWN_TRIES;
-    while (this.zombies.length < this.zombieCount && tries-- > 0) {
+    while (normal() < this.zombieCount && tries-- > 0) {
       const a = this.rng.pick(anchors);
       const ang = this.rng.next() * Math.PI * 2;
       const r = Z.spawnMinDist + this.rng.next() * (Z.spawnMaxDist - Z.spawnMinDist);
@@ -629,4 +792,31 @@ export class SimWorld {
     }
     return 'normal';
   }
+}
+
+function nearestOf<T extends { x: number; y: number }>(
+  list: readonly T[],
+  from: { x: number; y: number },
+): T | null {
+  let best: T | null = null;
+  let bestD = Infinity;
+  for (const p of list) {
+    const d = Math.hypot(p.x - from.x, p.y - from.y);
+    if (d < bestD) {
+      best = p;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+function structuredCopy(h: HordeState): HordeState {
+  return { ...h, kills: { ...h.kills }, downs: { ...h.downs } };
+}
+
+/** Sắp khóa object (đệ quy 1 cấp) để JSON.stringify ra cùng chuỗi trên mọi máy — dùng cho hash. */
+function sortKeys(h: HordeState): unknown {
+  const sorted = (o: Record<string, number>) =>
+    Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return { ...h, kills: sorted(h.kills), downs: sorted(h.downs) };
 }

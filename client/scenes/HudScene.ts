@@ -3,7 +3,9 @@ import { PLAYER } from '@shared/data/player';
 import { MAX_PLAYERS, type PeerId } from '@shared/types';
 import { dayClock } from '@shared/sim/dayNight';
 import { isAlive, isDowned } from '@shared/sim/player';
-import { VISION } from '@shared/sim/tuning/night';
+import type { WireHorde } from '@net/gameCodec';
+import { HORDE } from '@shared/sim/tuning/horde';
+import { DAY, VISION } from '@shared/sim/tuning/night';
 import { PARTY } from '@shared/sim/tuning/party';
 import type { WorldScene } from './WorldScene';
 
@@ -34,6 +36,12 @@ export class HudScene extends Phaser.Scene {
   private vision!: Phaser.GameObjects.RenderTexture;
   private visionShape!: Phaser.GameObjects.Graphics;
   private clockText!: Phaser.GameObjects.Text;
+  /** Trời đỏ dần trước đợt tràn (GĐ 5). */
+  private sky!: Phaser.GameObjects.Graphics;
+  /** Bảng thành tích đội sau đợt tràn: hiện tới thời điểm này (ms). */
+  private resultText!: Phaser.GameObjects.Text;
+  private resultUntil = 0;
+  private resultFor = 0;
 
   constructor() {
     super('hud');
@@ -45,6 +53,7 @@ export class HudScene extends Phaser.Scene {
     // tạo trước để nằm dưới mọi chữ/thanh của HUD
     this.vision = this.add.renderTexture(0, 0, width, height).setOrigin(0, 0);
     this.visionShape = this.make.graphics({}, false);
+    this.sky = this.add.graphics();
     this.scale.on('resize', (size: Phaser.Structs.Size) => this.vision.resize(size.width, size.height));
     this.gfx = this.add.graphics();
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
@@ -69,6 +78,16 @@ export class HudScene extends Phaser.Scene {
     this.clockText = this.add
       .text(0, 10, '', { ...style, fontSize: '14px', fontStyle: 'bold', stroke: '#000', strokeThickness: 3 })
       .setOrigin(0.5, 0);
+    this.resultText = this.add
+      .text(0, 0, '', {
+        ...style,
+        fontSize: '14px',
+        align: 'center',
+        backgroundColor: '#000000aa',
+        padding: { x: 14, y: 10 },
+      })
+      .setOrigin(0.5, 0)
+      .setVisible(false);
     this.subText = this.add
       .text(0, 0, '', { ...style, fontSize: '15px', stroke: '#000', strokeThickness: 3 })
       .setOrigin(0.5);
@@ -103,14 +122,10 @@ export class HudScene extends Phaser.Scene {
     const others = net ? net.sync.sample().others : [];
     const clock = dayClock(net ? net.sync.serverTick() : 0);
     this.drawVision(clock.darkness, others);
-    const hh = Math.floor(clock.time * 24);
-    const mm = Math.floor((clock.time * 24 - hh) * 60);
-    this.clockText
-      .setText(
-        `Ngày ${clock.day} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${clock.night ? ' · Đêm' : ''}`,
-      )
-      .setColor(clock.night ? '#9fa8da' : '#ffe082')
-      .setPosition(width / 2, 10);
+    const horde = net?.sync.latest?.horde ?? null;
+    this.drawSky(clock.day + clock.time, horde);
+    this.topBar(clock, horde);
+    this.hordeResult(time, horde);
     this.drawTeam(g, others, me ? { x: me.x, y: me.y } : null);
 
     if (!me) {
@@ -203,6 +218,76 @@ export class HudScene extends Phaser.Scene {
       }
     }
     rt.erase(g);
+  }
+
+  /**
+   * Thanh trên cùng (AGENTS.md mục 3): "Ngày X · HH:MM · Đợt tràn còn Y ngày"; trong đợt tràn:
+   * "ĐỢT TRÀN #n · còn R zombie · BOSS".
+   */
+  private topBar(clock: { day: number; time: number; night: boolean }, horde: WireHorde | null) {
+    const { width } = this.scale;
+    if (horde?.active) {
+      this.clockText
+        .setText(
+          `⚠ ĐỢT TRÀN #${horde.number} · còn ${horde.remaining} zombie${horde.bossAlive ? ' · BOSS!' : ''}`,
+        )
+        .setColor('#ff5252')
+        .setPosition(width / 2, 10);
+      return;
+    }
+    const hh = Math.floor(clock.time * 24);
+    const mm = Math.floor((clock.time * 24 - hh) * 60);
+    const nextDay = Math.ceil(clock.day / HORDE.everyDays) * HORDE.everyDays;
+    const daysLeft = nextDay - clock.day;
+    // đúng ngày 15 trước lúc tối hẳn: "đêm nay"; đã qua giờ (đợt vừa xong) thì tính tới đợt sau
+    const left =
+      daysLeft > 0
+        ? `còn ${daysLeft} ngày`
+        : clock.time < DAY.nightStart
+          ? 'ĐÊM NAY'
+          : `còn ${HORDE.everyDays} ngày`;
+    this.clockText
+      .setText(
+        `Ngày ${clock.day} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${clock.night ? ' · Đêm' : ''} · Đợt tràn ${left}`,
+      )
+      .setColor(daysLeft <= 2 ? '#ff8a65' : clock.night ? '#9fa8da' : '#ffe082')
+      .setPosition(width / 2, 10);
+  }
+
+  /** Trời đỏ dần từ ngày 13 của chu kỳ tới đêm ngày 15; đỏ hẳn trong lúc đợt tràn. */
+  private drawSky(dayFloat: number, horde: WireHorde | null) {
+    const { width, height } = this.scale;
+    const g = this.sky;
+    g.clear();
+    const cycle = ((dayFloat - 1) % HORDE.everyDays) + 1; // 1.0 … 15.99
+    const ramp = (cycle - HORDE.redSkyFromDay) / (HORDE.everyDays + DAY.nightStart - HORDE.redSkyFromDay);
+    const red = horde?.active ? 1 : Math.max(0, Math.min(1, ramp));
+    if (red > 0) g.fillStyle(0xb71c1c, 0.22 * red).fillRect(0, 0, width, height);
+  }
+
+  /** Bảng thành tích đội khi đợt tràn vừa xong (20 giây). */
+  private hordeResult(now: number, horde: WireHorde | null) {
+    if (horde && !horde.active && horde.survived !== null && this.resultFor !== horde.number) {
+      this.resultFor = horde.number;
+      this.resultUntil = now + 20000;
+      const rows = horde.rows
+        .map((r) => {
+          const id = this.world.net.sync.peerOfSlot(r.slot);
+          const name = id ? this.world.peerInfo(id).name : `Người chơi ${r.slot + 1}`;
+          return `${name}: ${r.kills} zombie · gục ${r.downs} lần`;
+        })
+        .join('\n');
+      const title = horde.survived
+        ? `SỐNG SÓT ĐỢT TRÀN #${horde.number}!`
+        : `THẤT BẠI ĐỢT TRÀN #${horde.number}`;
+      this.resultText
+        .setText(
+          `${title}\n\n${rows}${horde.survived ? '\n\n(Thùng thưởng huyền thoại: chờ GĐ 3 của B)' : ''}`,
+        )
+        .setColor(horde.survived ? '#ffe082' : '#ef9a9a');
+    }
+    const show = now < this.resultUntil;
+    this.resultText.setVisible(show).setPosition(this.scale.width / 2, this.scale.height * 0.28);
   }
 
   /** Khung trạng thái đội (góc dưới trái, trên thanh máu) + mũi tên chỉ đồng đội ngoài màn hình. */

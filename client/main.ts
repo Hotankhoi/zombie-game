@@ -49,11 +49,16 @@ const conditioned = new ConditionedTransport(trystero);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
 const session = new Session(net, { name, color });
-// ---- Thử ngày/đêm (chỉ máy host dùng): ?gio=0.9 → trận bắt đầu lúc 0.9 của ngày 1 (21h36) ----
+// ---- Thử ngày/đêm/đợt tràn (chỉ máy host dùng): ?ngay=15&gio=0.79 → trận bắt đầu ngày 15 lúc 0.79 của ngày
+// (đợt tràn 1 bắt đầu sau ~7 giây); ?gio=0.9 → đêm ngày 1 ----
+const ngayParam = Math.floor(Number(url.searchParams.get('ngay')));
 const gioParam = Number(url.searchParams.get('gio'));
+const hasNgay = url.searchParams.has('ngay') && ngayParam >= 1;
+const hasGio = url.searchParams.has('gio') && gioParam >= 0 && gioParam < 1;
 const startTick =
-  url.searchParams.has('gio') && gioParam >= 0 && gioParam < 1
-    ? tickOfDay(1) + Math.round((gioParam * DAY.lengthSec * 1000) / SIM_TICK_MS)
+  hasNgay || hasGio
+    ? tickOfDay(hasNgay ? ngayParam : 1) +
+      Math.round(((hasGio ? gioParam : DAY.startAt) * DAY.lengthSec * 1000) / SIM_TICK_MS)
     : undefined;
 const game = new NetGame(net, room, {
   zombieCount,

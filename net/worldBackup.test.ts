@@ -49,10 +49,10 @@ describe('worldBackup', () => {
     for (let n = 1; n < buf.length; n++) expect(decodeBackup(buf.subarray(0, n))).toBeNull();
   });
 
-  it('200 zombie ≈ 10 KB mỗi 10 giây (~1 KB/s)', () => {
+  it('200 zombie ≈ 12 KB mỗi 10 giây (~1.2 KB/s)', () => {
     const s = played(1).state();
     s.zombies = Array.from({ length: 200 }, (_, i) => zombie(i, i, i));
-    expect(encodeBackup(s).length).toBeLessThan(200 * 53 + 400);
+    expect(encodeBackup(s).length).toBeLessThan(200 * 61 + 400);
   });
 
   it('dựng lại SimWorld từ bản lưu chạy tiếp được, đủ số zombie', () => {
