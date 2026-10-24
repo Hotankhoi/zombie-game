@@ -1,0 +1,188 @@
+import { describe, expect, it } from 'vitest';
+import { ClientSync } from '@net/clientSync';
+import { GameMsg, decodeGame } from '@net/gameCodec';
+import { arenaMap } from '@shared/sim/grid';
+import { Btn, type PlayerInput } from '@shared/sim/input';
+import { SIM_TICK_MS, type PeerId } from '@shared/types';
+import { Rng } from '@shared/util/rng';
+import { HostServer, INTEREST_RADIUS, type Outgoing } from './hostServer';
+
+interface Wire {
+  at: number;
+  data: Uint8Array;
+}
+
+/**
+ * Trận giả: 1 host + vài client, mạng trễ `lag` tick mỗi chiều, mất `loss` gói unreliable
+ * (input luôn đi unreliable; snapshot cũng vậy; roster/sự kiện reliable).
+ */
+function match(ids: PeerId[], lag: Record<PeerId, number>, loss = 0, zombieCount = 20) {
+  let time = 0;
+  const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount });
+  const clients = new Map(ids.map((id) => [id, new ClientSync(id, arenaMap(), () => time)]));
+  const toHost: (Wire & { from: PeerId })[] = [];
+  const toClient = new Map<PeerId, Wire[]>(ids.map((id) => [id, []]));
+  const rng = new Rng('loss');
+  let tick = 0;
+  let maxErr = 0;
+  const seqs = new Map(ids.map((id) => [id, 0]));
+  /** Giữ gói input lại tới tick này (giả lập máy khách khựng / mạng giật rồi tới dồn). */
+  let holdUntil = -1;
+
+  function step(inputFor: (id: PeerId, t: number) => Omit<PlayerInput, 'seq'>) {
+    for (const [id, c] of clients) {
+      const seq = (seqs.get(id) ?? 0) + 1;
+      seqs.set(id, seq);
+      const { packet } = c.tick({ ...inputFor(id, tick), seq });
+      const at = Math.max(tick, holdUntil) + (lag[id] ?? 0);
+      if (!(loss > 0 && rng.chance(loss))) toHost.push({ from: id, at, data: packet });
+    }
+    for (let i = toHost.length - 1; i >= 0; i--) {
+      const m = toHost[i]!;
+      if (m.at <= tick) {
+        host.receive(m.from, m.data);
+        toHost.splice(i, 1);
+      }
+    }
+    for (const o of host.tick() as Outgoing[]) {
+      if (o.channel === 'unreliable' && loss > 0 && rng.chance(loss)) continue;
+      toClient.get(o.to)!.push({ at: tick + (lag[o.to] ?? 0), data: o.data });
+    }
+    for (const [id, q] of toClient) {
+      const c = clients.get(id)!;
+      while (q.length > 0 && q[0]!.at <= tick) {
+        c.receive(q.shift()!.data);
+        if (c.predictor.state) maxErr = Math.max(maxErr, c.predictor.lastError);
+      }
+    }
+    tick++;
+    time += SIM_TICK_MS;
+  }
+  const holdInputs = (ticks: number) => {
+    holdUntil = tick + ticks;
+  };
+  return { host, clients, step, holdInputs, maxErr: () => maxErr };
+}
+
+/** Đổi phím mỗi ~0.5s, tất định theo id. */
+function wander(seed: string) {
+  const r = new Rng(seed);
+  let cur: Omit<PlayerInput, 'seq'> = { moveX: 0, moveY: 0, aim: 0, buttons: 0 };
+  return (_id: PeerId, t: number) => {
+    if (t % 10 === 0) {
+      cur = {
+        moveX: r.int(-1, 1),
+        moveY: r.int(-1, 1),
+        aim: r.int(0, 255),
+        buttons: (r.chance(0.3) ? Btn.Sprint : 0) | (r.chance(0.5) ? Btn.Attack : 0),
+      };
+    }
+    return cur;
+  };
+}
+
+describe('HostServer + ClientSync', () => {
+  it('trễ đều (0 và 3 tick mỗi chiều): dự đoán khớp host, không phải sửa', () => {
+    // không zombie: zombie cắn là thứ client không đoán được, không phải lỗi dự đoán
+    const m = match(['host', 'far'], { host: 0, far: 3 }, 0, 0);
+    const inputs = { host: wander('a'), far: wander('b') };
+    for (let t = 0; t < 400; t++) m.step((id, tick) => inputs[id as 'host' | 'far'](id, tick));
+    expect(m.maxErr()).toBeLessThan(1e-6);
+    for (const [id, c] of m.clients) {
+      const real = m.host.world.players.get(id)!;
+      // dự đoán chạy trước host đúng số tick trễ → cùng vị trí sau khi host bắt kịp
+      expect(Math.hypot(c.predictor.state!.x - real.x, c.predictor.state!.y - real.y)).toBeLessThan(
+        0.5 + (id === 'far' ? 3 * 0.35 * 2 : 0),
+      );
+    }
+  });
+
+  it('mất 15% gói: input gửi dư 3 cái nên host gần như không thiếu input', () => {
+    const m = match(['a', 'b'], { a: 2, b: 2 }, 0.15, 0);
+    const inputs = { a: wander('a'), b: wander('b') };
+    for (let t = 0; t < 400; t++) m.step((id, tick) => inputs[id as 'a' | 'b'](id, tick));
+    // chỉ khi mất cả 3 gói liên tiếp (~0.3%) host mới thiếu hẳn 1 input → sửa nhỏ (1 tick đi)
+    expect(m.maxErr()).toBeLessThan(0.5);
+    for (const c of m.clients.values()) expect(c.received).toBeGreaterThan(150);
+  });
+
+  it('client khựng rồi gửi dồn (tab treo, mạng giật): host chạy bù, dự đoán vẫn khớp tuyệt đối', () => {
+    const m = match(['a'], { a: 2 }, 0, 0);
+    const walk = wander('stall');
+    for (let t = 0; t < 400; t++) {
+      // mỗi 50 tick thì 8 tick liền gói input bị giữ lại rồi tới cùng lúc
+      m.step((id, tick) => walk(id, tick));
+      if (t % 50 === 20) m.holdInputs(8);
+    }
+    expect(m.maxErr()).toBeLessThan(1e-9);
+    // sau vài tick không giật, host chạy bù xong: chỉ còn vài input đang trên đường (trễ 2 tick mỗi chiều)
+    for (let t = 400; t < 430; t++) m.step((id, tick) => walk(id, tick));
+    expect(m.clients.get('a')!.predictor.pendingCount).toBeLessThanOrEqual(7);
+  });
+
+  it('client thấy zombie quanh mình (nội suy), chỉ trong vùng quan tâm', () => {
+    const m = match(['a'], { a: 2 }, 0, 30);
+    for (let t = 0; t < 60; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
+    const c = m.clients.get('a')!;
+    const { zombies } = c.sample();
+    expect(zombies.length).toBeGreaterThan(0);
+    const me = m.host.world.players.get('a')!;
+    for (const z of zombies) {
+      expect(Math.abs(z.x - me.x)).toBeLessThanOrEqual(INTEREST_RADIUS + 1);
+      const real = m.host.world.zombies.find((r) => (r.id & 0xffff) === z.id);
+      if (real) expect(Math.hypot(real.x - z.x, real.y - z.y)).toBeLessThan(2);
+    }
+  });
+
+  it('sự kiện: chém trúng zombie → client nhận hit; vết chém của mình không gửi lại', () => {
+    const m = match(['a'], { a: 1 }, 0, 0);
+    const z = m.host.world;
+    for (let t = 0; t < 4; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
+    const me = z.players.get('a')!;
+    z.zombies.push({
+      id: 77,
+      x: me.x + 0.8,
+      y: me.y,
+      facing: Math.PI,
+      hp: 100,
+      mode: 'chase',
+      target: 'a',
+      wanderIn: 1,
+      wanderMoving: false,
+      biteCd: 1,
+    });
+    const c = m.clients.get('a')!;
+    for (let t = 0; t < 6; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack }));
+    expect(c.events.some((e) => e.type === 'hit' && e.zombie === 77)).toBe(true);
+    expect(c.events.some((e) => e.type === 'swing')).toBe(false);
+  });
+
+  it('người rời phòng → bị xóa khỏi thế giới, roster gửi lại', () => {
+    const m = match(['a', 'b'], { a: 0, b: 0 });
+    for (let t = 0; t < 5; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
+    m.host.removePeer('b');
+    const out = m.host.tick();
+    expect(m.host.world.players.has('b')).toBe(false);
+    const roster = out.map((o) => decodeGame(o.data)).find((g) => g?.type === GameMsg.Roster);
+    expect(roster?.type === GameMsg.Roster && roster.slots.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('chuyển host: dựng thế giới từ snapshot của client, người chơi giữ nguyên chỗ', () => {
+    const m = match(['old', 'b'], { old: 0, b: 1 }, 0, 25);
+    const inputs = { old: wander('a'), b: wander('b') };
+    for (let t = 0; t < 120; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
+    const c = m.clients.get('b')!;
+    const state = c.toWorldState('m', new Set(['b']))!;
+    expect(state.players.map((p) => p.id)).toEqual(['b']);
+    const next = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 25, restore: state });
+    const before = { ...next.world.players.get('b')! };
+    expect(Math.hypot(before.x - c.predictor.state!.x, before.y - c.predictor.state!.y)).toBeLessThan(1);
+    expect(next.world.zombies.length).toBeGreaterThan(0);
+    for (let i = 0; i < 6; i++) {
+      next.receive('b', c.tick({ seq: 1000 + i, moveX: 1, moveY: 0, aim: 0, buttons: 0 }).packet);
+      next.tick();
+    }
+    expect(next.world.players.get('b')!.x).toBeGreaterThan(before.x);
+    expect(next.world.zombies).toHaveLength(25);
+  });
+});
