@@ -5,6 +5,8 @@ import {
   DISTRICTS,
   generateChunk,
   isSolid,
+  isRoadTile,
+  spawnPoint,
   MAX_CHUNK,
   Tile,
   tileToChunk,
@@ -13,6 +15,30 @@ import {
 } from './world';
 
 describe('world generation v1', () => {
+  it('exposes walkable spawn points and road queries matching generated tiles', () => {
+    for (const seed of ['survivors', 'room-two']) {
+      const map = new WorldMap(seed);
+      for (const [cx, cy] of [
+        [0, 0],
+        [-1, -2],
+        [3, 5],
+        [MAX_CHUNK, -MAX_CHUNK],
+      ]) {
+        const spawn = spawnPoint(cx, cy);
+        expect(map.tileAt(Math.floor(spawn.x), Math.floor(spawn.y))).toBe(Tile.Road);
+        expect(map.isSolid(Math.floor(spawn.x), Math.floor(spawn.y))).toBe(false);
+        const chunk = map.getChunk(cx!, cy!);
+        for (let y = 0; y < CHUNK_SIZE; y++)
+          for (let x = 0; x < CHUNK_SIZE; x++)
+            expect(isRoadTile(cx! * CHUNK_SIZE + x, cy! * CHUNK_SIZE + y)).toBe(
+              chunk.tiles[y * CHUNK_SIZE + x] === Tile.Road,
+            );
+      }
+    }
+    expect(spawnPoint()).toEqual({ x: 16.5, y: 16.5 });
+    expect(() => spawnPoint(MAX_CHUNK + 1, 0)).toThrow(RangeError);
+    expect(() => isRoadTile(1.5, 0)).toThrow(RangeError);
+  });
   it('matches the v1 reference output verified in Chromium as well as Node', () => {
     expect(hashString(JSON.stringify(generateChunk('survivors', 0, 0)))).toBe(3605968675);
     expect(hashString(JSON.stringify(generateChunk('survivors', -1, -1)))).toBe(3015655695);
