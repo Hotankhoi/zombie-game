@@ -4,15 +4,20 @@ import type { ConditionedTransport } from '@net/conditions';
  * Bảng debug mạng (AGENTS.md mục 2.12). Bấm F3 để ẩn/hiện.
  * Thêm trễ / giật / mất gói vào gói gửi đi để thử game khi mạng xấu.
  */
-export function mountDebugPanel(root: HTMLElement, net: ConditionedTransport) {
+export function mountDebugPanel(
+  root: HTMLElement,
+  net: ConditionedTransport,
+): { setStats(lines: string[]): void } {
   const el = document.createElement('div');
   el.className = 'panel debug';
   el.innerHTML = `
     <h2>Giả lập mạng (F3)</h2>
     ${slider('latency', 'Trễ', 0, 300, 'ms')}
     ${slider('jitter', 'Giật', 0, 100, 'ms')}
-    ${slider('loss', 'Mất gói', 0, 20, '%')}`;
+    ${slider('loss', 'Mất gói', 0, 20, '%')}
+    <pre class="stats" id="dbg-stats"></pre>`;
   root.appendChild(el);
+  const stats = el.querySelector<HTMLPreElement>('#dbg-stats')!;
 
   const bind = (id: string, apply: (v: number) => void) => {
     const input = el.querySelector<HTMLInputElement>(`#dbg-${id}`)!;
@@ -36,6 +41,13 @@ export function mountDebugPanel(root: HTMLElement, net: ConditionedTransport) {
       el.classList.toggle('hidden');
     }
   });
+
+  return {
+    setStats(lines) {
+      const text = lines.join('\n');
+      if (stats.textContent !== text) stats.textContent = text;
+    },
+  };
 }
 
 function slider(id: string, label: string, min: number, max: number, unit: string) {
