@@ -149,7 +149,7 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: đang làm 1a (lõi chơi) — nhánh `a/1a-core-gameplay`
+  - A: 1a xong, PR #4 đã sửa theo review, chờ merge. Đang làm GĐ 2 phần 1 (2a: ghép map thật của B + host-authoritative trong Web Worker, dự đoán phía client, chọn/chuyển host cơ bản) — nhánh `a/2a-online-core`, xếp chồng lên PR #4 và PR #3 (merge 2 PR đó trước). Tiếp theo: 2b (kênh unreliable thật, delta, zombie tất định, ownership), 2c (giới hạn 4 người, mũi tên/khung máu đội, gục/cứu).
   - B: đã triển khai 1b trên `b/map-generator`: sinh map theo seed/chunk, renderer riêng, minimap và tile Kenney CC0; PR #3 chờ A review.
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
