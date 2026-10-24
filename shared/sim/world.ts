@@ -8,7 +8,7 @@ import { meleeAttack } from './combat';
 import { Doors, circleOverlapsTile, nearestDoor } from './doors';
 import { FlowField } from './flowField';
 import type { MapSource } from './grid';
-import { Btn, IDLE_INPUT, hasBtn, type PlayerInput } from './input';
+import { Btn, hasBtn, type PlayerInput } from './input';
 import { createPlayer, isAlive, stepPlayer, type PlayerState } from './player';
 import { countdown } from './timer';
 import { createZombie, stepZombie, type ZombieState } from './zombie';
@@ -31,11 +31,27 @@ export type SimEvent =
   | { type: 'death'; player: PeerId }
   | { type: 'respawn'; player: PeerId };
 
+/** Toàn bộ trạng thái cần để dựng lại thế giới (vd: chuyển host — AGENTS.md mục 2.1). */
+export interface WorldState {
+  tick: number;
+  /** Trạng thái RNG (Rng.stateValue). `new Rng(rngState)` chạy tiếp đúng dãy số. */
+  rngState: number;
+  nextZombieId: number;
+  players: PlayerState[];
+  zombies: ZombieState[];
+  openDoors: Vec2[];
+  /** Vị trí người chơi lúc dựng flow field gần nhất — để dựng lại đúng flow field đó. */
+  flowTargets: Vec2[];
+  flowDirty: boolean;
+}
+
 export interface SimWorldOptions {
   seed: number | string;
   map: MapSource;
   /** Số zombie giữ trên bản đồ (mặc định ZOMBIE_NORMAL.population). */
   zombieCount?: number;
+  /** Dựng tiếp từ trạng thái có sẵn thay vì thế giới mới (seed khi đó không dùng cho RNG). */
+  restore?: WorldState;
 }
 
 /** Tính lại flow field mỗi bao nhiêu tick (10 tick = 0.5s). */
@@ -60,6 +76,7 @@ export class SimWorld {
   events: SimEvent[] = [];
   private flow = new FlowField();
   private flowDirty = true;
+  private flowTargets: Vec2[] = [];
   private nextZombieId = 1;
 
   /** Ô chặn: tường, hoặc cửa đang đóng. */
@@ -68,9 +85,39 @@ export class SimWorld {
 
   constructor(opts: SimWorldOptions) {
     this.map = opts.map;
-    this.rng = new Rng(opts.seed);
     this.zombieCount = opts.zombieCount ?? Z.population;
-    this.refillZombies();
+    const s = opts.restore;
+    if (!s) {
+      this.rng = new Rng(opts.seed);
+      this.refillZombies();
+      return;
+    }
+    this.rng = new Rng(s.rngState);
+    this.tick = s.tick;
+    this.nextZombieId = s.nextZombieId;
+    for (const p of s.players) this.players.set(p.id, { ...p });
+    this.zombies = s.zombies.map((z) => ({ ...z }));
+    for (const d of s.openDoors) this.doors.set(d.x, d.y, true);
+    this.flowTargets = s.flowTargets.map((t) => ({ ...t }));
+    this.flow.build(this.flowTargets, this.blocked);
+    this.flowDirty = s.flowDirty;
+  }
+
+  /** Chụp trạng thái (bản sao) — ngược với `restore`. */
+  state(): WorldState {
+    return {
+      tick: this.tick,
+      rngState: this.rng.stateValue,
+      nextZombieId: this.nextZombieId,
+      players: this.sortedPlayers().map((p) => ({ ...p })),
+      zombies: this.zombies.map((z) => ({ ...z })),
+      openDoors: this.doors.openList().map((k) => {
+        const [x, y] = k.split(',').map(Number);
+        return { x: x as number, y: y as number };
+      }),
+      flowTargets: this.flowTargets.map((t) => ({ ...t })),
+      flowDirty: this.flowDirty,
+    };
   }
 
   addPlayer(id: PeerId): PlayerState {
@@ -88,29 +135,30 @@ export class SimWorld {
     this.flowDirty = true;
   }
 
-  /** Chạy 1 tick (SIM_TICK_MS). Người chơi thiếu input thì coi như đứng yên. */
+  /**
+   * Chạy 1 tick (SIM_TICK_MS). Người chơi thiếu input (input chưa tới host) thì đứng yên và
+   * "đóng băng": không hồi stamina/hồi chiêu — vì mọi thứ của nhân vật chỉ đổi theo input,
+   * dự đoán phía client mới khớp được với host khi input tới muộn.
+   */
   step(inputs: ReadonlyMap<PeerId, PlayerInput>): void {
     this.events = [];
     const players = this.sortedPlayers();
 
     for (const p of players) {
-      const input = inputs.get(p.id) ?? IDLE_INPUT;
+      const input = inputs.get(p.id);
       if (!isAlive(p)) {
         p.respawnIn = countdown(p.respawnIn, DT);
         if (p.respawnIn === 0) this.respawn(p);
       }
-      stepPlayer(p, input, DT, this.blocked);
-      if (isAlive(p)) {
-        if (hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
-        if (hasBtn(input, Btn.Attack)) this.attack(p);
-      }
-      p.prevButtons = input.buttons;
+      if (input) this.applyInput(p, input);
+      else p.sprinting = false;
     }
     this.zombies = this.zombies.filter((z) => z.hp > 0);
 
     const alive = players.filter(isAlive);
     if (this.flowDirty || this.tick % FLOW_EVERY === 0) {
-      this.flow.build(alive, this.blocked);
+      this.flowTargets = alive.map((p) => ({ x: p.x, y: p.y }));
+      this.flow.build(this.flowTargets, this.blocked);
       this.flowDirty = false;
     }
     const ctx = {
@@ -128,6 +176,29 @@ export class SimWorld {
   }
 
   /**
+   * Chạy thêm 1 input cho 1 người ngay trong tick vừa rồi, thế giới không trôi thêm thời gian.
+   * Host dùng khi input của một người dồn lại (mạng giật) để bắt kịp mà không phải bỏ input nào
+   * → mỗi input chạy đúng 1 lần, đúng thứ tự, nên dự đoán phía client khớp tuyệt đối.
+   * Sự kiện sinh ra được nối vào `events` của tick vừa chạy.
+   */
+  catchUp(id: PeerId, input: PlayerInput): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.applyInput(p, input);
+    this.zombies = this.zombies.filter((z) => z.hp > 0);
+  }
+
+  /** Phần "theo input" của người chơi: đi/chạy, mở cửa, chém. Giống hệt Predictor phía client. */
+  private applyInput(p: PlayerState, input: PlayerInput): void {
+    stepPlayer(p, input, DT, this.blocked);
+    if (isAlive(p)) {
+      if (hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
+      if (hasBtn(input, Btn.Attack)) this.attack(p);
+    }
+    p.prevButtons = input.buttons;
+  }
+
+  /**
    * Mã băm trạng thái — để test tính tất định (và GĐ 2 so khớp host/client).
    * Gồm MỌI trường ảnh hưởng tới tick sau (cả trạng thái ẩn: nút tick trước, bộ đếm, RNG),
    * để hai bản cùng hash thì chạy tiếp cùng input sẽ ra cùng kết quả.
@@ -140,6 +211,7 @@ export class SimWorld {
       `r${this.rng.stateValue}`,
       `n${this.nextZombieId}`,
       `f${b(this.flowDirty)}`,
+      `ft${this.flowTargets.map((t) => `${f(t.x)},${f(t.y)}`).join(';')}`,
     ];
     for (const p of this.sortedPlayers()) {
       parts.push(

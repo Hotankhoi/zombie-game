@@ -2,26 +2,29 @@ import Phaser from 'phaser';
 import { KNIFE } from '@shared/data/melee';
 import { PLAYER } from '@shared/data/player';
 import { ZOMBIE_NORMAL } from '@shared/data/zombies';
+import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/world';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
-import { arenaMap, type GridMap } from '@shared/sim/grid';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
 import { isAlive, type PlayerState } from '@shared/sim/player';
-import { SimWorld, type SimEvent } from '@shared/sim/world';
+import type { SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
+import type { NetGame } from '../net/netGame';
+import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 
-/** 1 ô mô phỏng = 16 px (khớp tile Kenney 16×16). Tọa độ sim tính theo ô. */
-export const TILE_SIZE = 16;
+/** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
+export { TILE_SIZE };
 const ZOOM = 3;
+/** Texture zombie vẽ to gấp bấy nhiêu lần rồi thu nhỏ lại → nét khi zoom. */
+const TEX_SCALE = ZOOM;
+const ZOMBIE_TEX = { wander: 'zombie-wander', chase: 'zombie-chase', flash: 'zombie-flash' } as const;
 /** Tối đa bao nhiêu tick chạy bù trong 1 frame (tab bị treo lâu thì bỏ, không chạy dồn). */
 const MAX_CATCHUP_TICKS = 5;
 
 export interface WorldSceneData {
   session: Session;
+  net: NetGame;
   name: string;
   color: number;
-  /** Seed thế giới (mã phòng). */
-  seed: string;
-  zombieCount?: number;
 }
 
 /** Hiệu ứng tạm thời vẽ bằng code (thay bằng sprite/particle sau). */
@@ -35,31 +38,32 @@ interface Fx {
 }
 
 /**
- * Cảnh thế giới (GĐ 1a): chạy SimWorld tick cố định 20Hz, vẽ 60fps có nội suy.
- * Hình vẽ tạm bằng code — tên hàm draw* để sau thay bằng sprite Kenney.
- * GĐ 1a chưa đồng bộ mạng: mỗi máy chạy mô phỏng riêng (cùng seed phòng).
+ * Cảnh thế giới (GĐ 2a): map thật của B (MapRenderer), trận online qua NetGame.
+ * Nhân vật mình: dự đoán 20Hz + nội suy giữa 2 tick. Zombie/đồng đội: nội suy từ snapshot host.
+ * Hình người/zombie vẽ tạm bằng code — tên hàm draw* để sau thay bằng sprite Kenney.
  */
 export class WorldScene extends Phaser.Scene {
   private session!: Session;
+  net!: NetGame;
   private myColor = 0xffffff;
   private myName = '';
-  private seed = '';
-  private zombieCount: number | undefined;
 
-  sim!: SimWorld;
-  private map!: GridMap;
-  private doorTiles: Vec2[] = [];
+  private worldMap!: WorldMap;
+  private mapRenderer!: MapRenderer;
+  /** Vùng chunk đang vẽ "x0,y0,x1,y1" — chỉ sync renderer khi đổi. */
+  private chunkRange = '';
   private acc = 0;
   private seq = 0;
-  /** Vị trí trước tick vừa chạy — để nội suy khi vẽ. */
-  private prevPlayers = new Map<PeerId, Vec2>();
-  private prevZombies = new Map<number, Vec2>();
   private hitFlash = new Map<number, number>();
   private fx: Fx[] = [];
+  /** Thời gian xử lý 1 frame (ms, làm mượt) — bảng F3. */
+  frameMs = 0;
 
   private gfxDoors!: Phaser.GameObjects.Graphics;
   private gfxDecals!: Phaser.GameObjects.Graphics;
   private gfxDyn!: Phaser.GameObjects.Graphics;
+  /** Zombie vẽ bằng sprite từ texture dựng sẵn (Graphics vẽ lại 200 hình tròn mỗi frame tốn ~13ms). */
+  private zombieSprites: Phaser.GameObjects.Image[] = [];
   private camTarget!: Phaser.GameObjects.Zone;
   private keys!: Record<
     'W' | 'A' | 'S' | 'D' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'SHIFT' | 'E',
@@ -76,10 +80,13 @@ export class WorldScene extends Phaser.Scene {
 
   init(data: WorldSceneData) {
     this.session = data.session;
+    this.net = data.net;
     this.myColor = data.color;
     this.myName = data.name;
-    this.seed = data.seed;
-    this.zombieCount = data.zombieCount;
+  }
+
+  preload() {
+    preloadMapTiles(this);
   }
 
   setMe(name: string, color: number) {
@@ -91,32 +98,29 @@ export class WorldScene extends Phaser.Scene {
     return this.myName;
   }
 
-  /** Nhân vật của mình (HUD đọc). */
+  /** Nhân vật của mình (HUD đọc) — bản dự đoán; undefined khi chưa nhận snapshot đầu tiên. */
   me(): PlayerState | undefined {
-    return this.sim?.players.get(this.session.selfId);
+    return this.net?.sync.predictor.state ?? undefined;
   }
 
   create() {
-    this.map = arenaMap();
-    this.sim = new SimWorld({ seed: this.seed, map: this.map, zombieCount: this.zombieCount });
-    this.sim.addPlayer(this.session.selfId);
-
-    this.drawMapTexture();
-    this.add.image(0, 0, 'arena-map').setOrigin(0, 0);
-    this.gfxDecals = this.add.graphics();
-    this.gfxDoors = this.add.graphics();
-    this.gfxDyn = this.add.graphics();
+    this.worldMap = new WorldMap(this.net.seed);
+    this.mapRenderer = new MapRenderer(this);
+    // map của B ở depth 0 (nhãn tòa nhà depth 1); hình động vẽ đè lên
+    this.gfxDecals = this.add.graphics().setDepth(2);
+    this.gfxDoors = this.add.graphics().setDepth(3);
+    this.gfxDyn = this.add.graphics().setDepth(4);
+    this.makeZombieTextures();
 
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
-    cam.setBounds(0, 0, this.map.width * TILE_SIZE, this.map.height * TILE_SIZE);
-    const me = this.me()!;
-    this.camTarget = this.add.zone(me.x * TILE_SIZE, me.y * TILE_SIZE, 1, 1);
+    const spawn = this.net.map.spawn;
+    this.camTarget = this.add.zone(spawn.x * TILE_SIZE, spawn.y * TILE_SIZE, 1, 1);
     cam.startFollow(this.camTarget, false, 0.15, 0.15);
     cam.setDeadzone(12, 12);
 
     this.setupInput();
-    // chỉ khi chạy npm run dev: mở console gõ __world để soi trạng thái mô phỏng
+    // chỉ khi chạy npm run dev: mở console gõ __world để soi trạng thái
     if (import.meta.env.DEV) (window as unknown as { __world: WorldScene }).__world = this;
   }
 
@@ -134,6 +138,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   override update(_time: number, delta: number) {
+    const t0 = performance.now();
     this.session.tick();
     this.updateAim();
 
@@ -146,18 +151,42 @@ export class WorldScene extends Phaser.Scene {
     }
     if (ticks === MAX_CATCHUP_TICKS) this.acc = 0;
 
+    const sync = this.net.sync;
+    for (const e of sync.events) this.onEvent(e);
+    sync.events = [];
+    sync.predictor.decay(delta);
+
     this.render(this.acc / SIM_TICK_MS);
+    this.syncChunks();
+    this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   }
 
   private stepSim() {
-    this.prevPlayers.clear();
-    for (const p of this.sim.players.values()) this.prevPlayers.set(p.id, { x: p.x, y: p.y });
-    this.prevZombies.clear();
-    for (const z of this.sim.zombies) this.prevZombies.set(z.id, { x: z.x, y: z.y });
-
     const input = this.readInput();
-    this.sim.step(new Map([[this.session.selfId, input]]));
-    for (const e of this.sim.events) this.onEvent(e);
+    // vết chém của mình vẽ ngay (dự đoán), không chờ host
+    if (this.net.tick(input)) {
+      const me = this.me();
+      if (me)
+        this.fx.push({ kind: 'swing', x: me.x, y: me.y, facing: me.facing, born: this.time.now, life: 140 });
+    }
+  }
+
+  /** Vẽ các chunk quanh camera (thêm 1 vòng chunk dự phòng để đi nhanh không thấy mép trống). */
+  private syncChunks() {
+    const v = this.cameras.main.worldView;
+    const px = CHUNK_SIZE * TILE_SIZE;
+    const x0 = Math.floor(v.x / px) - 1;
+    const y0 = Math.floor(v.y / px) - 1;
+    const x1 = Math.floor((v.x + v.width) / px) + 1;
+    const y1 = Math.floor((v.y + v.height) / px) + 1;
+    const key = `${x0},${y0},${x1},${y1}`;
+    if (key === this.chunkRange) return;
+    this.chunkRange = key;
+    const chunks: Chunk[] = [];
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) chunks.push(this.worldMap.getChunk(cx, cy));
+    }
+    this.mapRenderer.sync(chunks);
   }
 
   private readInput(): PlayerInput {
@@ -179,17 +208,18 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateAim() {
-    const me = this.me();
-    if (!me) return;
-    const pos = this.lerpPlayer(me, this.acc / SIM_TICK_MS);
+    if (!this.me()) return;
+    const pos = this.myDrawPos(this.acc / SIM_TICK_MS);
     const ptr = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
     this.myAim = radToAim(Math.atan2(ptr.y - pos.y * TILE_SIZE, ptr.x - pos.x * TILE_SIZE));
   }
 
   private onEvent(e: SimEvent) {
     const now = this.time.now;
+    const self = this.session.selfId;
     switch (e.type) {
       case 'swing':
+        // đồng đội chém (của mình đã vẽ lúc dự đoán)
         this.fx.push({ kind: 'swing', x: e.x, y: e.y, facing: e.facing, born: now, life: 140 });
         break;
       case 'hit':
@@ -199,11 +229,11 @@ export class WorldScene extends Phaser.Scene {
         if (e.assassination) this.floatText(e.x, e.y, 'Ám sát!', '#ffd54f');
         break;
       case 'bite':
-        if (e.player === this.session.selfId) this.cameras.main.shake(90, 0.006);
+        if (e.player === self) this.cameras.main.shake(90, 0.006);
         this.fx.push({ kind: 'blood', x: e.x, y: e.y, facing: 0, born: now, life: 300 });
         break;
       case 'death':
-        if (e.player === this.session.selfId) this.cameras.main.flash(300, 120, 0, 0);
+        if (e.player === self) this.cameras.main.flash(300, 120, 0, 0);
         break;
       case 'respawn':
       case 'door':
@@ -221,99 +251,93 @@ export class WorldScene extends Phaser.Scene {
 
     this.drawDoors();
 
-    for (const z of this.sim.zombies) {
-      const prev = this.prevZombies.get(z.id);
-      const x = (prev ? prev.x + (z.x - prev.x) * alpha : z.x) * T;
-      const y = (prev ? prev.y + (z.y - prev.y) * alpha : z.y) * T;
+    const { zombies, others } = this.net.sync.sample();
+    for (let i = 0; i < zombies.length; i++) {
+      const z = zombies[i] as (typeof zombies)[number];
       const flash = now - (this.hitFlash.get(z.id) ?? -1e9) < 120;
-      this.drawZombie(g, x, y, z.facing, z.mode === 'chase', flash);
+      let img = this.zombieSprites[i];
+      if (!img) {
+        img = this.add
+          .image(0, 0, ZOMBIE_TEX.wander)
+          .setDepth(3.5)
+          .setScale(1 / TEX_SCALE);
+        this.zombieSprites.push(img);
+      }
+      img
+        .setTexture(flash ? ZOMBIE_TEX.flash : z.chasing ? ZOMBIE_TEX.chase : ZOMBIE_TEX.wander)
+        .setPosition(z.x * T, z.y * T)
+        .setRotation(z.facing)
+        .setVisible(true);
     }
-
-    for (const p of this.sim.players.values()) {
-      if (!isAlive(p)) continue;
-      const pos = this.lerpPlayer(p, alpha);
-      const mine = p.id === this.session.selfId;
-      const facing = mine ? (this.myAim / 256) * Math.PI * 2 : p.facing;
-      this.drawPlayer(g, pos.x * T, pos.y * T, facing, mine ? this.myColor : 0xcccccc);
+    for (let i = zombies.length; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
+    for (const p of others) {
+      if (p.alive) this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
     }
+    const me = this.me();
+    const pos = this.myDrawPos(alpha);
+    if (me && isAlive(me))
+      this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
     for (const f of this.fx) this.drawFx(g, f, (now - f.born) / f.life);
 
-    const me = this.me();
-    if (me) {
-      const pos = this.lerpPlayer(me, alpha);
-      this.camTarget.setPosition(pos.x * T, pos.y * T);
-    }
+    this.camTarget.setPosition(pos.x * T, pos.y * T);
   }
 
-  private lerpPlayer(p: PlayerState, alpha: number): Vec2 {
-    const prev = this.prevPlayers.get(p.id);
-    if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > 2) return { x: p.x, y: p.y }; // hồi sinh: nhảy luôn
-    return { x: prev.x + (p.x - prev.x) * alpha, y: prev.y + (p.y - prev.y) * alpha };
+  /** Chỗ vẽ nhân vật mình: nội suy giữa 2 tick dự đoán + độ lệch làm mượt sau khi host sửa. */
+  private myDrawPos(alpha: number): Vec2 {
+    const pr = this.net.sync.predictor;
+    const s = pr.state;
+    if (!s) return { ...this.net.map.spawn };
+    return {
+      x: pr.prevX + (s.x - pr.prevX) * alpha + pr.offsetX,
+      y: pr.prevY + (s.y - pr.prevY) * alpha + pr.offsetY,
+    };
   }
 
-  /** Nền + tường vẽ 1 lần vào texture (tạm, thay bằng tile Kenney). */
-  private drawMapTexture() {
-    const T = TILE_SIZE;
-    const m = this.map;
-    const g = this.make.graphics({}, false);
-    g.fillStyle(0x1a1f1c).fillRect(0, 0, m.width * T, m.height * T);
-    for (let ty = 0; ty < m.height; ty++) {
-      for (let tx = 0; tx < m.width; tx++) {
-        if (m.isDoor(tx, ty)) {
-          this.doorTiles.push({ x: tx, y: ty });
-        } else if (m.isWall(tx, ty)) {
-          g.fillStyle(0x3b4540).fillRect(tx * T, ty * T, T, T);
-          g.fillStyle(0x4b5751).fillRect(tx * T, ty * T, T, 3);
-        } else if ((tx + ty) % 2 === 0) {
-          g.fillStyle(0x1d2320).fillRect(tx * T, ty * T, T, T);
-        }
-      }
-    }
-    g.generateTexture('arena-map', m.width * T, m.height * T);
-    g.destroy();
+  private colorOf(id: PeerId): number {
+    return this.session.peers.get(id)?.color ?? 0xcccccc;
   }
 
+  /** Map của B vẽ cửa đóng; cửa đang mở (theo snapshot host) vẽ đè: nền trống + cánh cửa áp một bên. */
   private drawDoors() {
     const T = TILE_SIZE;
     const g = this.gfxDoors;
+    const map = this.net.map;
     g.clear();
-    for (const d of this.doorTiles) {
-      const x = d.x * T;
-      const y = d.y * T;
-      if (this.sim.doors.isOpen(d.x, d.y)) {
-        // cửa mở: cánh cửa áp sát một bên khung
-        const horizontalWall = this.map.isWall(d.x - 1, d.y) || this.map.isWall(d.x + 1, d.y);
-        g.fillStyle(0x6d4c41);
-        if (horizontalWall) g.fillRect(x, y, 3, T);
-        else g.fillRect(x, y, T, 3);
-      } else {
-        g.fillStyle(0x8d6e63).fillRect(x + 1, y + 1, T - 2, T - 2);
-        g.fillStyle(0x5d4037).fillRect(x + T / 2 + 2, y + T / 2 - 1, 2, 2);
-      }
+    for (const key of this.net.sync.doors.openList()) {
+      const [tx, ty] = key.split(',').map(Number) as [number, number];
+      const x = tx * T;
+      const y = ty * T;
+      g.fillStyle(0x9d8965).fillRect(x, y, T, T);
+      const horizontalWall = map.isWall(tx - 1, ty) || map.isWall(tx + 1, ty);
+      g.fillStyle(0x6d4c41);
+      if (horizontalWall) g.fillRect(x, y, 3, T);
+      else g.fillRect(x, y, T, 3);
     }
   }
 
-  private drawZombie(
-    g: Phaser.GameObjects.Graphics,
-    x: number,
-    y: number,
-    facing: number,
-    chasing: boolean,
-    flash: boolean,
-  ) {
-    const r = ZOMBIE_NORMAL.radius * TILE_SIZE;
-    g.fillStyle(flash ? 0xffffff : chasing ? 0x7d9a5c : 0x5e7560).fillCircle(x, y, r);
-    const ex = Math.cos(facing);
-    const ey = Math.sin(facing);
-    const eyeColor = chasing ? 0xff5252 : 0x2c3a2e;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eyeColor).fillCircle(
-        x + ex * r * 0.55 - ey * side * r * 0.35,
-        y + ey * r * 0.55 + ex * side * r * 0.35,
-        1,
-      );
+  /**
+   * Hình zombie tạm (thay bằng sprite Kenney sau): vẽ 1 lần vào texture, nhìn sang phải,
+   * phóng to TEX_SCALE lần cho nét khi camera zoom; sprite xoay theo hướng nhìn.
+   */
+  private makeZombieTextures() {
+    const r = ZOMBIE_NORMAL.radius * TILE_SIZE * TEX_SCALE;
+    const size = Math.ceil(r * 2 + 2);
+    const c = size / 2;
+    const variants: [string, number, number][] = [
+      [ZOMBIE_TEX.wander, 0x5e7560, 0x2c3a2e],
+      [ZOMBIE_TEX.chase, 0x7d9a5c, 0xff5252],
+      [ZOMBIE_TEX.flash, 0xffffff, 0xffffff],
+    ];
+    for (const [key, body, eye] of variants) {
+      if (this.textures.exists(key)) continue;
+      const g = this.make.graphics({}, false);
+      g.fillStyle(body).fillCircle(c, c, r);
+      g.fillStyle(eye);
+      for (const side of [-1, 1]) g.fillCircle(c + r * 0.55, c + side * r * 0.35, TEX_SCALE);
+      g.generateTexture(key, size, size);
+      g.destroy();
     }
   }
 
@@ -368,6 +392,7 @@ export class WorldScene extends Phaser.Scene {
         strokeThickness: 2,
       })
       .setOrigin(0.5, 1)
+      .setDepth(5)
       .setResolution(ZOOM * window.devicePixelRatio);
     this.tweens.add({ targets: t, y: t.y - 10, alpha: 0, duration: 900, onComplete: () => t.destroy() });
   }

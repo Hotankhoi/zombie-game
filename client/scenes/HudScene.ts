@@ -57,10 +57,20 @@ export class HudScene extends Phaser.Scene {
       this.fpsShown = this.game.loop.actualFps;
       this.fpsAt = time;
     }
-    const zombies = this.world.sim?.zombies.length ?? 0;
-    this.fpsText.setText(`${Math.round(this.fpsShown)} FPS · ${zombies} zombie`).setPosition(width - 16, 12);
+    const net = this.world.net;
+    const zombies = net?.sync.zombieCount ?? 0;
+    const role = net?.role === 'host' ? 'Host' : net?.role === 'client' ? 'Khách' : 'Đang tìm host…';
+    this.fpsText
+      .setText(`${Math.round(this.fpsShown)} FPS · ${zombies} zombie gần · ${role}`)
+      .setPosition(width - 16, 12);
 
-    if (!me) return;
+    if (!me) {
+      this.respawnText
+        .setVisible(true)
+        .setText('Đang vào trận…')
+        .setPosition(width / 2, height / 2 - 60);
+      return;
+    }
     const x = 16;
     const w = Math.min(220, width - 32);
     const yHp = height - 44;
