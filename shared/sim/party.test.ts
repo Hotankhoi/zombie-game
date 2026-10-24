@@ -127,4 +127,36 @@ describe('gục / cứu / kéo (GĐ 2c)', () => {
       expect(pred.lastError).toBe(0);
     }
   });
+
+  it('chết hẳn → sau 8s xác thành zombie tại chỗ, mang id người chơi (GĐ 6)', () => {
+    const { w, a } = duo();
+    a.x = 10;
+    a.y = 10.5;
+    w['down'](a);
+    a.downedFor = 0.04; // hết giờ gục ở tick sau → chết hẳn
+    run(w, 1);
+    expect(isAlive(a)).toBe(false);
+    expect(w.corpses).toHaveLength(1);
+    expect(w.corpses[0]).toMatchObject({ player: 'a', x: 10, y: 10.5 });
+    expect(w.corpses[0]!.turnIn).toBeCloseTo(PARTY.turnSec - SIM_TICK_MS / 1000, 5);
+    run(w, (PARTY.turnSec - 0.5) * TICKS_PER_SEC);
+    expect(w.zombies.some((z) => z.turnedFrom === 'a')).toBe(false);
+    run(w, TICKS_PER_SEC);
+    const z = w.zombies.find((zz) => zz.turnedFrom === 'a')!;
+    expect(z).toBeDefined();
+    expect(z.hp).toBe(100 * PARTY.turnedHpFactor);
+    expect(w.corpses).toHaveLength(0);
+  });
+
+  it('xác chờ biến đổi được giữ khi state() → restore (chuyển host)', () => {
+    const { w, a } = duo();
+    w['die'](a);
+    run(w, 10);
+    const b = new SimWorld({ seed: 'x', map: arenaMap(), zombieCount: 0, restore: w.state() });
+    expect(b.hash()).toBe(w.hash());
+    run(w, PARTY.turnSec * TICKS_PER_SEC);
+    run(b, PARTY.turnSec * TICKS_PER_SEC);
+    expect(b.hash()).toBe(w.hash());
+    expect(b.zombies.some((z) => z.turnedFrom === 'a')).toBe(true);
+  });
 });

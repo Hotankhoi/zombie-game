@@ -1,6 +1,6 @@
 import type { PlayerState } from '@shared/sim/player';
 import { ZOMBIE_KINDS } from '@shared/sim/tuning/zombieKinds';
-import type { HordeState, Noise, Pool, WorldState } from '@shared/sim/world';
+import type { Corpse, HordeState, Noise, Pool, WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
 import type { PeerId } from '@shared/types';
 import { Reader, Writer } from './gameCodec';
@@ -62,6 +62,9 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(z.spitCd);
     w.f32(z.slamCd);
     w.f32(z.roarCd);
+    const turned = enc.encode(z.turnedFrom ?? '').subarray(0, 255);
+    w.u8(turned.length);
+    w.bytes(turned);
   }
   w.u16(s.openDoors.length);
   for (const d of s.openDoors) {
@@ -103,6 +106,16 @@ export function encodeBackup(s: WorldState): Uint8Array {
   const horde = enc.encode(s.horde ? JSON.stringify(s.horde) : '');
   w.u32(horde.length);
   w.bytes(horde);
+  const corpses = s.corpses ?? [];
+  w.u8(Math.min(255, corpses.length));
+  for (const c of corpses.slice(0, 255)) {
+    const id = enc.encode(c.player).subarray(0, 255);
+    w.u8(id.length);
+    w.bytes(id);
+    w.f64(c.x);
+    w.f64(c.y);
+    w.f32(c.turnIn);
+  }
   return w.done();
 }
 
@@ -170,6 +183,7 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       const spitCd = r.f32();
       const slamCd = r.f32();
       const roarCd = r.f32();
+      const turnedFrom = dec.decode(r.bytes(r.u8())) || null;
       const target = mode === 'chase' ? (players[t]?.id ?? null) : null;
       zombies.push({
         id,
@@ -192,6 +206,7 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         horde: (flags & 4) !== 0,
         slamCd,
         roarCd,
+        turnedFrom,
       });
     }
     const openDoors: { x: number; y: number }[] = [];
@@ -220,6 +235,11 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
     for (let i = 0, n = r.u16(); i < n; i++) noises.push({ x: r.f32(), y: r.f32(), radius: r.f32() });
     const hordeText = dec.decode(r.bytes(r.u32()));
     const horde = hordeText ? (JSON.parse(hordeText) as HordeState) : null;
+    const corpses: Corpse[] = [];
+    for (let i = 0, n = r.u8(); i < n; i++) {
+      const player = dec.decode(r.bytes(r.u8()));
+      corpses.push({ player, x: r.f64(), y: r.f64(), turnIn: r.f32() });
+    }
     return {
       tick,
       rngState,
@@ -234,6 +254,7 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       brokenDoors,
       noises,
       horde,
+      corpses,
     };
   } catch {
     return null;

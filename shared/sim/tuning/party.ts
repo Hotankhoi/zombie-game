@@ -21,6 +21,10 @@ export const PARTY = {
   crawlSpeedFactor: 0.25,
   /** Người đang kéo đi chậm lại = walkSpeed × hệ số này (không chạy được). */
   dragSpeedFactor: 0.6,
+  /** Chết hẳn → sau bấy nhiêu giây xác thành zombie tại chỗ (GĐ 6). */
+  turnSec: 8,
+  /** Zombie từ đồng đội: máu = máu zombie thường × hệ số này. */
+  turnedHpFactor: 1.5,
   /** Người bị kéo nằm sau lưng người kéo bấy nhiêu ô. */
   dragOffset: 0.75,
 } as const;

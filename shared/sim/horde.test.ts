@@ -11,7 +11,8 @@ import { SimWorld } from './world';
 
 const TPS = 1000 / SIM_TICK_MS;
 const idle: PlayerInput = { seq: 0, moveX: 0, moveY: 0, aim: 0, buttons: 0 };
-const nightOf = (day: number) => tickOfDay(day) + Math.ceil((DAY.nightStart * DAY.lengthSec * 1000) / SIM_TICK_MS);
+const nightOf = (day: number) =>
+  tickOfDay(day) + Math.ceil((DAY.nightStart * DAY.lengthSec * 1000) / SIM_TICK_MS);
 
 /** Sân trống 90×90 (đủ chỗ sinh zombie đợt tràn cách 20–29 ô), người chơi ở giữa. */
 function arena(tick: number, zombieCount = 5) {
@@ -66,7 +67,9 @@ describe('đợt tràn (GĐ 5)', () => {
     const h = w.horde!;
     h.spawned = h.quota; // coi như đã sinh hết, chỉ còn vài con
     h.bossesSpawned = h.bosses;
-    w.zombies = [testZombie(500, p.x + 0.9, p.y, { horde: true, hp: 1, facing: Math.PI, mode: 'chase', target: 'a' })];
+    w.zombies = [
+      testZombie(500, p.x + 0.9, p.y, { horde: true, hp: 1, facing: Math.PI, mode: 'chase', target: 'a' }),
+    ];
     w.step(new Map([['a', { ...idle, aim: radToAim(0), buttons: Btn.Attack }]]));
     run(w, 1);
     expect(h.active).toBe(false);
@@ -108,7 +111,13 @@ describe('đợt tràn (GĐ 5)', () => {
   it('Boss đập đất: người trong tầm mất máu', () => {
     const { w, p } = arena(0, 0);
     w.addPlayer('b').x = p.x + 40;
-    const boss = testZombie(9, p.x + 2.8, p.y, { kind: 'boss', mode: 'chase', target: 'a', facing: Math.PI, biteCd: 9 });
+    const boss = testZombie(9, p.x + 2.8, p.y, {
+      kind: 'boss',
+      mode: 'chase',
+      target: 'a',
+      facing: Math.PI,
+      biteCd: 9,
+    });
     w.zombies.push(boss);
     w.step(new Map());
     expect(p.hp).toBe(100 - BOSS.slamDamage);
