@@ -131,4 +131,19 @@ describe('SimWorld', () => {
     c.rng.next();
     expect(c.hash()).not.toBe(base);
   });
+  it('state() → restore: chạy tiếp cùng input ra cùng mã băm như bản gốc', () => {
+    const a = simulate('mig', 300);
+    const b = new SimWorld({ seed: 'khác', map: arenaMap(), restore: a.state() });
+    expect(b.hash()).toBe(a.hash());
+    const input: PlayerInput = { seq: 1, moveX: 1, moveY: 0, aim: 0, buttons: Btn.Attack };
+    const inputs = new Map([
+      ['alice', input],
+      ['bob', { ...input, moveX: -1 }],
+    ]);
+    for (let t = 0; t < 200; t++) {
+      a.step(inputs);
+      b.step(inputs);
+    }
+    expect(b.hash()).toBe(a.hash());
+  });
 });
