@@ -1,0 +1,32 @@
+.map-panel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  max-width: min(240px, calc(100vw - 32px));
+  pointer-events: auto;
+  text-align: right;
+}
+.map-details {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-align: left;
+  font-size: 12px;
+  max-height: calc(100dvh - 80px);
+  overflow: auto;
+}
+.map-details p {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+.map-details .map-position {
+  color: var(--text);
+}
+.map-details canvas {
+  width: 160px;
+  height: 160px;
+  max-width: 100%;
+  image-rendering: pixelated;
+}
