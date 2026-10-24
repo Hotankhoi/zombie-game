@@ -1,3 +1,5 @@
+import { Rng } from '@shared/util/rng';
+import { createZombie, type ZombieState } from './zombie';
 import { GridMap } from './grid';
 
 /**
@@ -13,3 +15,8 @@ export function twoRoomMap(): GridMap {
 }
 
 export const DOOR = { x: 8, y: 4 } as const;
+
+/** Zombie cho test: mặc định loại thường, không nấp; ghi đè trường tùy ý. */
+export function testZombie(id: number, x: number, y: number, extra: Partial<ZombieState> = {}): ZombieState {
+  return { ...createZombie(id, x, y, new Rng(id)), hidden: false, ...extra };
+}

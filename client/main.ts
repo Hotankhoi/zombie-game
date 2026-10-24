@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
-import { MAX_PLAYERS, PLAYER_COLORS } from '@shared/types';
+import { MAX_PLAYERS, PLAYER_COLORS, SIM_TICK_MS } from '@shared/types';
+import { tickOfDay } from '@shared/sim/dayNight';
+import { DAY } from '@shared/sim/tuning/night';
 import { hashString } from '@shared/util/rng';
 import { ConditionedTransport } from '@net/conditions';
 import { CountingTransport } from '@net/stats';
@@ -47,7 +49,17 @@ const conditioned = new ConditionedTransport(trystero);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
 const session = new Session(net, { name, color });
-const game = new NetGame(net, room, { zombieCount, rttOf: (id) => session.peers.get(id)?.rttMs ?? null });
+// ---- Thử ngày/đêm (chỉ máy host dùng): ?gio=0.9 → trận bắt đầu lúc 0.9 của ngày 1 (21h36) ----
+const gioParam = Number(url.searchParams.get('gio'));
+const startTick =
+  url.searchParams.has('gio') && gioParam >= 0 && gioParam < 1
+    ? tickOfDay(1) + Math.round((gioParam * DAY.lengthSec * 1000) / SIM_TICK_MS)
+    : undefined;
+const game = new NetGame(net, room, {
+  zombieCount,
+  startTick,
+  rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
+});
 
 // ---- Phaser ----
 const phaser = new Phaser.Game({

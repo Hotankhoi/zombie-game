@@ -1,5 +1,6 @@
 import type { PlayerState } from '@shared/sim/player';
-import type { WorldState } from '@shared/sim/world';
+import { ZOMBIE_KINDS } from '@shared/sim/tuning/zombieKinds';
+import type { Noise, Pool, WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
 import type { PeerId } from '@shared/types';
 import { Reader, Writer } from './gameCodec';
@@ -11,7 +12,7 @@ import { Reader, Writer } from './gameCodec';
  */
 export const WORLD_BACKUP_MSG = 125;
 
-const MODE = { wander: 0, chase: 1 } as const;
+const MODES = ['wander', 'investigate', 'chase'] as const;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -36,7 +37,7 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(p.staminaIdle);
     w.f32(p.attackCd);
     w.f32(p.respawnIn);
-    w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0) | (p.dragging ? 4 : 0));
+    w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0) | (p.dragging ? 4 : 0) | (p.flashlight ? 8 : 0));
     w.u8(p.prevButtons);
     w.f32(p.downedFor);
     w.f32(p.reviveProgress);
@@ -44,15 +45,21 @@ export function encodeBackup(s: WorldState): Uint8Array {
   w.u16(s.zombies.length);
   for (const z of s.zombies) {
     w.u32(z.id);
+    w.u8(Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)));
     w.f32(z.x);
     w.f32(z.y);
     w.f32(z.facing);
     w.f32(z.hp);
-    w.u8(MODE[z.mode]);
+    w.u8(MODES.indexOf(z.mode));
     w.u8(z.target === null ? 255 : (slot.get(z.target) ?? 255));
     w.f32(z.wanderIn);
-    w.u8(z.wanderMoving ? 1 : 0);
+    w.u8((z.wanderMoving ? 1 : 0) | (z.hidden ? 2 : 0));
     w.f32(z.biteCd);
+    w.f32(z.goalX);
+    w.f32(z.goalY);
+    w.f32(z.investigateFor);
+    w.f32(z.burstFor);
+    w.f32(z.spitCd);
   }
   w.u16(s.openDoors.length);
   for (const d of s.openDoors) {
@@ -63,6 +70,32 @@ export function encodeBackup(s: WorldState): Uint8Array {
   for (const t of s.flowTargets) {
     w.f64(t.x);
     w.f64(t.y);
+  }
+  const pools = s.pools ?? [];
+  w.u32(s.nextPoolId ?? 1);
+  w.u16(pools.length);
+  for (const p of pools) {
+    w.u32(p.id);
+    w.u8(p.kind === 'acid' ? 1 : 0);
+    w.f32(p.x);
+    w.f32(p.y);
+    w.f32(p.radius);
+    w.f32(p.ttl);
+    w.f32(p.armIn);
+    w.f32(p.dps);
+  }
+  const broken = s.brokenDoors ?? [];
+  w.u16(broken.length);
+  for (const d of broken) {
+    w.i32(d.x);
+    w.i32(d.y);
+  }
+  const noises = s.noises ?? [];
+  w.u16(noises.length);
+  for (const n of noises) {
+    w.f32(n.x);
+    w.f32(n.y);
+    w.f32(n.radius);
   }
   return w.done();
 }
@@ -108,39 +141,86 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         downedFor,
         reviveProgress,
         dragging: (flags & 4) !== 0,
+        flashlight: (flags & 8) !== 0,
       });
     }
     const zombies: ZombieState[] = [];
     for (let i = 0, n = r.u16(); i < n; i++) {
       const id = r.u32();
+      const kind = ZOMBIE_KINDS[r.u8()] ?? 'normal';
       const x = r.f32();
       const y = r.f32();
       const facing = r.f32();
       const hp = r.f32();
-      const mode = r.u8() === MODE.chase ? 'chase' : 'wander';
+      const mode = MODES[r.u8()] ?? 'wander';
       const t = r.u8();
       const wanderIn = r.f32();
-      const wanderMoving = r.u8() === 1;
+      const flags = r.u8();
       const biteCd = r.f32();
+      const goalX = r.f32();
+      const goalY = r.f32();
+      const investigateFor = r.f32();
+      const burstFor = r.f32();
+      const spitCd = r.f32();
       const target = mode === 'chase' ? (players[t]?.id ?? null) : null;
       zombies.push({
         id,
+        kind,
         x,
         y,
         facing,
         hp,
-        mode: target ? 'chase' : 'wander',
+        mode: mode === 'chase' && !target ? 'wander' : mode,
         target,
         wanderIn,
-        wanderMoving,
+        wanderMoving: (flags & 1) !== 0,
         biteCd,
+        goalX,
+        goalY,
+        investigateFor,
+        hidden: (flags & 2) !== 0,
+        burstFor,
+        spitCd,
       });
     }
     const openDoors: { x: number; y: number }[] = [];
     for (let i = 0, n = r.u16(); i < n; i++) openDoors.push({ x: r.i32(), y: r.i32() });
     const flowTargets: { x: number; y: number }[] = [];
     for (let i = 0, n = r.u8(); i < n; i++) flowTargets.push({ x: r.f64(), y: r.f64() });
-    return { tick, rngState, nextZombieId, players, zombies, openDoors, flowTargets, flowDirty };
+    const nextPoolId = r.u32();
+    const pools: Pool[] = [];
+    for (let i = 0, n = r.u16(); i < n; i++) {
+      const id = r.u32();
+      const kind = r.u8() === 1 ? 'acid' : 'poison';
+      pools.push({
+        id,
+        kind,
+        x: r.f32(),
+        y: r.f32(),
+        radius: r.f32(),
+        ttl: r.f32(),
+        armIn: r.f32(),
+        dps: r.f32(),
+      });
+    }
+    const brokenDoors: { x: number; y: number }[] = [];
+    for (let i = 0, n = r.u16(); i < n; i++) brokenDoors.push({ x: r.i32(), y: r.i32() });
+    const noises: Noise[] = [];
+    for (let i = 0, n = r.u16(); i < n; i++) noises.push({ x: r.f32(), y: r.f32(), radius: r.f32() });
+    return {
+      tick,
+      rngState,
+      nextZombieId,
+      players,
+      zombies,
+      openDoors,
+      flowTargets,
+      flowDirty,
+      pools,
+      nextPoolId,
+      brokenDoors,
+      noises,
+    };
   } catch {
     return null;
   }

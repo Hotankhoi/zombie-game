@@ -24,13 +24,15 @@ const snap: SnapshotMsg = {
       downedFor: 12.5,
       reviveProgress: 1.5,
       dragging: true,
+      flashlight: true,
     },
   ],
   zombies: [
-    { id: 70000, x: -30.5, y: 990.25, facing: Math.PI, chasing: true },
-    { id: 5, x: -40, y: 1000, facing: 0, chasing: false },
+    { id: 70000, x: -30.5, y: 990.25, facing: Math.PI, chasing: true, kind: 'giant' },
+    { id: 5, x: -40, y: 1000, facing: 0, chasing: false, kind: 'normal' },
   ],
   doors: [{ x: -38, y: 1003 }],
+  pools: [{ kind: 'acid', x: -35.5, y: 1002.25, radius: 1.125, arming: true, ttl: 3.2 }],
 };
 
 describe('gameCodec', () => {
@@ -57,6 +59,7 @@ describe('gameCodec', () => {
         y: 1000,
         facing: 1,
         chasing: false,
+        kind: 'normal' as const,
       })),
     };
     expect(encodeGame(many).length).toBeLessThan(200 * 8 + 120);
@@ -106,9 +109,11 @@ describe('gameCodec', () => {
 
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
-    const ext = 1 + snap.players.length * 10; // khối mở rộng GĐ 2c ở cuối gói
+    const ext = 1 + snap.players.length * 10 + 1 + snap.pools.length * 8; // khối mở rộng GĐ 2c + 4 ở cuối gói
     for (let n = 0; n < full.length; n++) {
-      if (n !== full.length - ext) expect(decodeGame(full.subarray(0, n))).toBeNull();
+      // cắt đúng ranh giới khối mở rộng = gói bản cũ hơn, vẫn hợp lệ
+      const boundary = n === full.length - ext || n === full.length - (1 + snap.pools.length * 8);
+      if (!boundary) expect(decodeGame(full.subarray(0, n))).toBeNull();
     }
     expect(decodeGame(new Uint8Array([1, 2, 3]))).toBeNull(); // gói phòng chờ
     expect(decodeGame(new Uint8Array([GameMsg.Events, 0, 0, 0, 0, 0, 1, 99]))).toBeNull();
@@ -116,7 +121,9 @@ describe('gameCodec', () => {
 
   it('snapshot bản cũ (không có khối mở rộng gục/cứu) vẫn đọc được, trạng thái gục = 0', () => {
     const full = encodeGame(snap);
-    const old = decodeGame(full.subarray(0, full.length - (1 + snap.players.length * 10))) as SnapshotMsg;
+    const old = decodeGame(
+      full.subarray(0, full.length - (1 + snap.players.length * 10 + 1 + snap.pools.length * 8)),
+    ) as SnapshotMsg;
     expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });
     const now = decodeGame(full) as SnapshotMsg;
     expect(now.players[0]).toMatchObject({ downedFor: 12.5, reviveProgress: 1.5, dragging: true });

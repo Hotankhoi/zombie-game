@@ -1,11 +1,11 @@
-import { ZOMBIE_NORMAL } from '@shared/data/zombies';
 import { Doors } from '@shared/sim/doors';
 import type { MapSource } from '@shared/sim/grid';
 import { aimToRad, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
 import { Predictor } from '@shared/sim/prediction';
 import type { SimEvent, WorldState } from '@shared/sim/world';
-import type { ZombieState } from '@shared/sim/zombie';
+import type { ZombieKind } from '@shared/sim/tuning/zombieKinds';
+import { maxHpOf, type ZombieState } from '@shared/sim/zombie';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { hashString } from '@shared/util/rng';
 import {
@@ -45,6 +45,8 @@ export interface RemotePlayerView {
   downedFor: number;
   /** Đang được cứu: đã giữ R bao lâu (giây). */
   reviveProgress: number;
+  /** Đèn pin đang bật (GĐ 4) — đèn của đồng đội cũng soi sáng cho mình. */
+  flashlight: boolean;
 }
 
 export interface ZombieView {
@@ -53,6 +55,7 @@ export interface ZombieView {
   y: number;
   facing: number;
   chasing: boolean;
+  kind: ZombieKind;
 }
 
 /**
@@ -131,6 +134,15 @@ export class ClientSync {
     return Math.max(MIN_INTERP_MS, Math.min(MAX_INTERP_MS, gap + 2.5 * this.jitterMs + 20));
   }
 
+  /**
+   * Tick hiện tại của host ước lượng theo đồng hồ máy mình (ngày/đêm, đếm ngày của GĐ 4–5
+   * suy ra từ tick nên mọi máy thấy cùng giờ). Chưa có snapshot thì 0.
+   */
+  serverTick(): number {
+    if (this.clockOffset === null) return this.latest?.tick ?? 0;
+    return Math.max(0, (this.now() - this.clockOffset) / SIM_TICK_MS);
+  }
+
   get zombieCount(): number {
     return this.snaps[this.snaps.length - 1]?.zombies.size ?? 0;
   }
@@ -174,6 +186,7 @@ export class ClientSync {
               y: za.y + (zb.y - za.y) * alpha,
               facing: lerpAngle(za.facing, zb.facing, alpha),
               chasing: alpha < 0.5 ? za.chasing : zb.chasing,
+              kind: zb.kind,
             }
           : { ...zb },
       );
@@ -192,6 +205,7 @@ export class ClientSync {
         hp: pb.hp,
         downedFor: pb.respawnIn <= 0 ? pb.downedFor : 0,
         reviveProgress: pb.reviveProgress,
+        flashlight: pb.flashlight,
       });
     }
     return { zombies, others };
@@ -226,15 +240,22 @@ export class ClientSync {
       }
       return {
         id: z.id,
+        kind: z.kind,
         x: z.x,
         y: z.y,
         facing: z.facing,
-        hp: ZOMBIE_NORMAL.maxHp,
+        hp: maxHpOf(z.kind),
         mode: target ? 'chase' : 'wander',
         target,
         wanderIn: 1,
         wanderMoving: false,
         biteCd: 0,
+        goalX: z.x,
+        goalY: z.y,
+        investigateFor: 0,
+        hidden: false,
+        burstFor: 0,
+        spitCd: 0,
       };
     });
     return {
@@ -331,6 +352,7 @@ export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
     downedFor: w.downedFor,
     reviveProgress: w.reviveProgress,
     dragging: w.dragging,
+    flashlight: w.flashlight,
   };
 }
 

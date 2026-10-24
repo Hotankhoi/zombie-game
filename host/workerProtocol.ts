@@ -4,7 +4,7 @@ import type { Channel, PeerId } from '@shared/types';
 /** Tin nhắn luồng chính → Web Worker host. */
 export type ToWorker =
   /** seed = seed thế giới (worldSeedForRoom(mã phòng)), dùng cho cả map lẫn mô phỏng. */
-  | { t: 'init'; seed: string; zombieCount?: number; restore?: WorldState }
+  | { t: 'init'; seed: string; zombieCount?: number; startTick?: number; restore?: WorldState }
   | { t: 'in'; from: PeerId; data: Uint8Array }
   | { t: 'leave'; peer: PeerId };
 

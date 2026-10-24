@@ -32,6 +32,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         seed: m.seed,
         map: new MapgenSource(m.seed),
         zombieCount: m.zombieCount,
+        startTick: m.startTick,
         restore: m.restore,
       });
       nextAt = statAt = performance.now();

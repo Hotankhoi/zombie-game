@@ -1,8 +1,7 @@
 import type { MeleeWeapon } from '@shared/data/melee';
-import { ZOMBIE_NORMAL as Z } from '@shared/data/zombies';
 import { angleDiff, hasLineOfSight, type BlockedFn } from './collision';
 import { spendStamina, type PlayerState } from './player';
-import { isBehind, startChase, type ZombieState } from './zombie';
+import { isBehind, radiusOf, startChase, type ZombieState } from './zombie';
 
 export interface MeleeHit {
   zombie: ZombieState;
@@ -58,9 +57,10 @@ function pickTarget(
     const dx = z.x - p.x;
     const dy = z.y - p.y;
     const d = Math.hypot(dx, dy);
-    if (d - Z.radius > weapon.range) continue;
+    const zr = radiusOf(z);
+    if (d - zr > weapon.range) continue;
     // sát người thì góc không còn ý nghĩa → coi như trong quạt
-    if (d > Z.radius && angleDiff(p.facing, Math.atan2(dy, dx)) > (weapon.arcDeg / 2) * DEG) continue;
+    if (d > zr && angleDiff(p.facing, Math.atan2(dy, dx)) > (weapon.arcDeg / 2) * DEG) continue;
     if (!hasLineOfSight(p, z, blocked)) continue;
     if (d < bestD || (d === bestD && best !== null && z.id < best.id)) {
       best = z;

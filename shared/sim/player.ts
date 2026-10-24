@@ -31,6 +31,8 @@ export interface PlayerState {
   reviveProgress: number;
   /** Đang kéo một người gục (đi chậm, không chạy được). */
   dragging: boolean;
+  /** Đèn pin đang bật (GĐ 4): soi xa ban đêm nhưng zombie thấy mình từ xa. */
+  flashlight: boolean;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -50,6 +52,7 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     downedFor: 0,
     reviveProgress: 0,
     dragging: false,
+    flashlight: false,
   };
 }
 
@@ -75,6 +78,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
     return;
   }
   p.facing = aimToRad(input.aim);
+  if (hasBtn(input, Btn.Flashlight) && (p.prevButtons & Btn.Flashlight) === 0) p.flashlight = !p.flashlight;
 
   let mx = Math.sign(input.moveX);
   let my = Math.sign(input.moveY);
