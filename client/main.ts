@@ -7,8 +7,12 @@ import { ConditionedTransport } from '@net/conditions';
 import { CountingTransport } from '@net/stats';
 import { loadIceServers } from '@net/ice';
 import { newRoomCode, normalizeRoomCode } from '@net/roomCode';
+import { AutoTransport } from '@net/auto';
+import { RELAY_URL, RelayTransport } from '@net/relay';
 import { Session } from '@net/session';
 import { TrysteroTransport } from '@net/trystero';
+import type { Transport } from '@net/transport';
+import { selfId as trysteroSelfId } from '@trystero-p2p/nostr';
 import { NetGame } from './net/netGame';
 import { HudScene } from './scenes/HudScene';
 import { WorldScene } from './scenes/WorldScene';
@@ -36,16 +40,26 @@ const NAME_KEY = 'zg.name';
 let name = safeGet(NAME_KEY) ?? `Người sống sót ${Math.floor(Math.random() * 90 + 10)}`;
 
 // ---- Mạng ----
+// Thử WebRTC trước; ai không nối thẳng được sau ~8s thì đi relay WebSocket (nếu có VITE_RELAY_URL).
+// ?relay=1: WebRTC chỉ qua TURN · ?relay=ws: bỏ WebRTC, đi hẳn relay WebSocket (để thử relay trên 1 máy).
 let netError: string | null = null;
-const iceServers = await loadIceServers();
-const trystero = new TrysteroTransport(room, {
-  iceServers,
-  forceRelay: url.searchParams.get('relay') === '1',
-  onError: (e) => {
-    netError = e;
-  },
-});
-const conditioned = new ConditionedTransport(trystero);
+const onNetError = (e: string) => {
+  netError = e;
+};
+const relayParam = url.searchParams.get('relay');
+const onlyRelay = relayParam === 'ws' && RELAY_URL !== '';
+if (relayParam === 'ws' && !RELAY_URL) netError = 'Bản game này chưa có relay (VITE_RELAY_URL) — dùng WebRTC';
+const trystero = onlyRelay
+  ? null
+  : new TrysteroTransport(room, {
+      iceServers: await loadIceServers(),
+      forceRelay: relayParam === '1',
+      onError: onNetError,
+    });
+const relay = RELAY_URL ? new RelayTransport(RELAY_URL, room, trystero?.selfId ?? trysteroSelfId) : null;
+const auto = relay ? new AutoTransport(trystero, relay) : null;
+const base: Transport = auto ?? trystero!;
+const conditioned = new ConditionedTransport(base);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
 const session = new Session(net, { name, color });
@@ -114,7 +128,8 @@ function netStatsText(): string[] {
       (game.migrations > 0 ? ` · đổi host ${game.migrations} lần` : ''),
     `Ping tới host: ${ping == null ? '—' : `${Math.round(ping)} ms`}`,
     `Băng thông: ↑ ${net.upKBps.toFixed(1)} KB/s · ↓ ${net.downKBps.toFixed(1)} KB/s`,
-    `Kênh unreliable: ${trystero.unreliableOpen}/${net.peers().length} người`,
+    `Kênh unreliable: ${trystero?.unreliableOpen ?? 0}/${net.peers().length} người`,
+    ...relayLine(),
     `Điểm host: mình ${game.election.scoreOf(net.selfId) ?? '—'}` +
       (hostId && hostId !== net.selfId ? ` · host ${game.election.scoreOf(hostId) ?? '—'}` : '') +
       ` · chạy thử ${game.simBenchMs.toFixed(1)} ms` +
@@ -132,6 +147,23 @@ function netStatsText(): string[] {
     );
   }
   return lines;
+}
+/** Đường đi của gói: thẳng (WebRTC) hay relay WebSocket, và số khung gửi lên relay (= hạn mức Cloudflare). */
+let relayFrames = { at: performance.now(), n: 0, perSec: 0 };
+function relayLine(): string[] {
+  if (!relay || !auto) return [];
+  const now = performance.now();
+  if (now - relayFrames.at >= 1000) {
+    relayFrames = {
+      at: now,
+      n: relay.framesSent,
+      perSec: ((relay.framesSent - relayFrames.n) * 1000) / (now - relayFrames.at),
+    };
+  }
+  return [
+    `Đường: thẳng ${net.peers().length - auto.relayed} · relay ${auto.relayed} người` +
+      ` (${relay.connected ? 'đã nối' : 'chưa nối'} relay, ${relayFrames.perSec.toFixed(0)} khung/s)`,
+  ];
 }
 session.changed.on(render);
 setInterval(render, 500);

@@ -1,0 +1,19 @@
+# Relay WebSocket dự phòng cho game — Cloudflare Workers + Durable Objects (gói Free, không cần thẻ).
+# Mỗi phòng game = 1 Durable Object. Deploy tự động: .github/workflows/relay.yml. Chạy thử: npm run dev.
+name = "zombie-relay"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "RELAY_ROOM"
+class_name = "RelayRoom"
+
+# Gói Free chỉ cho Durable Object loại SQLite (không lưu gì, chỉ chuyển tiếp gói).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]
+
+[vars]
+# Trang được phép mở WebSocket (cách nhau dấu phẩy). Rỗng = cho tất cả. Yêu cầu không có Origin (bot Node) luôn được.
+ALLOWED_ORIGINS = "https://hotankhoi.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"

@@ -15,3 +15,12 @@ npm run loadtest -- --silent=false
 ```
 
 Bản chạy nhanh (15 giây, 4 bot) nằm trong `npm test` (`host/loadTest.test.ts`) để CI bắt lỗi băng thông/dự đoán.
+
+Đo qua relay Cloudflare thật (`relayLoadTest.ts`, `relay.loadtest.ts`; bỏ qua nếu không có `RELAY_URL`):
+
+```bash
+cd relay && npm install && npx wrangler dev        # terminal 1
+RELAY_URL=ws://127.0.0.1:8787 npm run loadtest -- --silent=false   # terminal 2
+```
+
+In ra số khung gửi lên relay mỗi giây và số giờ chơi/ngày trong hạn mức free (chi tiết: `docs/relay.md`).
