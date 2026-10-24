@@ -1,4 +1,5 @@
 import type { PlayerInput } from '@shared/sim/input';
+import { ZOMBIE_KINDS, type ZombieKind } from '@shared/sim/tuning/zombieKinds';
 
 /**
  * Gói tin trong trận (GĐ 2a), nhị phân + lượng tử hóa (AGENTS.md mục 2.8). Byte đầu = loại gói,
@@ -34,6 +35,8 @@ export interface WirePlayer {
   downedFor: number;
   reviveProgress: number;
   dragging: boolean;
+  /** Đèn pin (GĐ 4) — cờ trong khối mở rộng. */
+  flashlight: boolean;
 }
 
 export interface WireZombie {
@@ -43,6 +46,20 @@ export interface WireZombie {
   y: number;
   facing: number;
   chasing: boolean;
+  /** Loại zombie (GĐ 4) — nằm ở bit 1–3 của byte cờ; bản cũ chỉ đọc bit 0 (chasing). */
+  kind: ZombieKind;
+}
+
+/** Vũng độc/axit (GĐ 4) gửi trong khối mở rộng. */
+export interface WirePool {
+  kind: 'poison' | 'acid';
+  x: number;
+  y: number;
+  radius: number;
+  /** Axit còn đang bay tới (chưa gây sát thương). */
+  arming: boolean;
+  /** Còn bao lâu (giây, làm tròn 0.1). */
+  ttl: number;
 }
 
 export interface SnapshotMsg {
@@ -56,6 +73,8 @@ export interface SnapshotMsg {
   zombies: WireZombie[];
   /** Ô cửa đang mở quanh người nhận (tọa độ ô tuyệt đối). */
   doors: { x: number; y: number }[];
+  /** Vũng độc/axit quanh người nhận (GĐ 4, khối mở rộng). */
+  pools: WirePool[];
 }
 
 export type WireEvent =
@@ -225,7 +244,7 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.i16(clampI16((z.x - msg.originX) * POS_SCALE));
         w.i16(clampI16((z.y - msg.originY) * POS_SCALE));
         w.u8(angleToByte(z.facing));
-        w.u8(z.chasing ? 1 : 0);
+        w.u8((z.chasing ? 1 : 0) | (Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) << 1));
       }
       w.u8(msg.doors.length);
       for (const d of msg.doors) {
@@ -238,7 +257,17 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8(p.slot);
         w.f32(p.downedFor);
         w.f32(p.reviveProgress);
-        w.u8(p.dragging ? 1 : 0);
+        w.u8((p.dragging ? 1 : 0) | (p.flashlight ? 2 : 0));
+      }
+      // khối mở rộng GĐ 4: vũng độc/axit
+      w.u8(Math.min(255, msg.pools.length));
+      for (const pool of msg.pools.slice(0, 255)) {
+        w.u8(pool.kind === 'acid' ? 1 : 0);
+        w.i16(clampI16((pool.x - msg.originX) * POS_SCALE));
+        w.i16(clampI16((pool.y - msg.originY) * POS_SCALE));
+        w.u8(Math.min(255, Math.round(pool.radius * 16)));
+        w.u8(pool.arming ? 1 : 0);
+        w.u8(Math.min(255, Math.round(pool.ttl * 10)));
       }
       break;
     case GameMsg.Events:
@@ -345,6 +374,7 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             downedFor: 0,
             reviveProgress: 0,
             dragging: false,
+            flashlight: false,
           });
         }
         const zombies: WireZombie[] = [];
@@ -353,7 +383,15 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
           const x = originX + r.i16() / POS_SCALE;
           const y = originY + r.i16() / POS_SCALE;
           const facing = byteToAngle(r.u8());
-          zombies.push({ id, x, y, facing, chasing: (r.u8() & 1) !== 0 });
+          const flags = r.u8();
+          zombies.push({
+            id,
+            x,
+            y,
+            facing,
+            chasing: (flags & 1) !== 0,
+            kind: ZOMBIE_KINDS[(flags >> 1) & 7] ?? 'normal',
+          });
         }
         const doors: { x: number; y: number }[] = [];
         for (let i = 0, n = r.u8(); i < n; i++) doors.push({ x: originX + r.i16(), y: originY + r.i16() });
@@ -363,11 +401,28 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             const p = bySlot.get(r.u8());
             const downedFor = r.f32();
             const reviveProgress = r.f32();
-            const dragging = r.u8() === 1;
-            if (p) Object.assign(p, { downedFor, reviveProgress, dragging });
+            const flags = r.u8();
+            if (p)
+              Object.assign(p, {
+                downedFor,
+                reviveProgress,
+                dragging: (flags & 1) !== 0,
+                flashlight: (flags & 2) !== 0,
+              });
           }
         }
-        return { type, tick, ack, originX, originY, players, zombies, doors };
+        const pools: WirePool[] = [];
+        if (r.more()) {
+          for (let i = 0, n = r.u8(); i < n; i++) {
+            const kind = r.u8() === 1 ? 'acid' : 'poison';
+            const x = originX + r.i16() / POS_SCALE;
+            const y = originY + r.i16() / POS_SCALE;
+            const radius = r.u8() / 16;
+            const arming = r.u8() === 1;
+            pools.push({ kind, x, y, radius, arming, ttl: r.u8() / 10 });
+          }
+        }
+        return { type, tick, ack, originX, originY, players, zombies, doors, pools };
       }
       case GameMsg.Events: {
         const tick = r.u32();

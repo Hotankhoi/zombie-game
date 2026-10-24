@@ -4,6 +4,7 @@ import { GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCode
 import { decodeRoomFull } from '@net/roomFull';
 import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
 import { arenaMap } from '@shared/sim/grid';
+import { testZombie } from '@shared/sim/testMaps';
 import { Btn, type PlayerInput } from '@shared/sim/input';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
@@ -141,18 +142,9 @@ describe('HostServer + ClientSync', () => {
     const z = m.host.world;
     for (let t = 0; t < 4; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
     const me = z.players.get('a')!;
-    z.zombies.push({
-      id: 77,
-      x: me.x + 0.8,
-      y: me.y,
-      facing: Math.PI,
-      hp: 100,
-      mode: 'chase',
-      target: 'a',
-      wanderIn: 1,
-      wanderMoving: false,
-      biteCd: 1,
-    });
+    z.zombies.push(
+      testZombie(77, me.x + 0.8, me.y, { facing: Math.PI, mode: 'chase', target: 'a', biteCd: 1 }),
+    );
     const c = m.clients.get('a')!;
     for (let t = 0; t < 6; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack }));
     expect(c.events.some((e) => e.type === 'hit' && e.zombie === 77)).toBe(true);
@@ -240,8 +232,9 @@ describe('ClientSync – ngoại suy khi thiếu snapshot', () => {
       originX: 0,
       originY: 0,
       players: [],
-      zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false }],
+      zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false, kind: 'normal' }],
       doors: [],
+      pools: [],
     });
     for (const [tick, x] of [
       [10, 5],
@@ -281,5 +274,30 @@ describe('HostServer – giới hạn 4 người', () => {
     send('e', 3);
     host.tick();
     expect(host.world.players.has('e')).toBe(true);
+  });
+});
+
+describe('HostServer – GĐ 4', () => {
+  it('zombie đang nấp không có trong snapshot; loại zombie và vũng axit đi kèm snapshot', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    const c = new ClientSync('a', arenaMap());
+    host.receive('a', c.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    host.tick();
+    const me = host.world.players.get('a')!;
+    host.world.zombies.push(
+      testZombie(1, me.x + 5, me.y, { kind: 'hider', hidden: true }),
+      testZombie(2, me.x - 5, me.y, { kind: 'giant' }),
+    );
+    host.world['spit'](me.x + 1, me.y);
+    let snap: SnapshotMsg | null = null;
+    for (let i = 0; i < 2; i++) {
+      for (const o of host.tick()) {
+        const g = decodeGame(o.data);
+        if (g?.type === GameMsg.Snapshot) snap = g;
+      }
+    }
+    expect(snap!.zombies.map((z) => [z.id, z.kind])).toEqual([[2, 'giant']]);
+    expect(snap!.pools).toHaveLength(1);
+    expect(snap!.pools[0]).toMatchObject({ kind: 'acid', arming: true });
   });
 });

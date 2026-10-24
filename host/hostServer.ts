@@ -31,6 +31,8 @@ export interface HostServerOptions {
   seed: string;
   map: MapSource;
   zombieCount?: number;
+  /** Thế giới mới bắt đầu ở tick này (thử ban đêm: `?gio=`). Bỏ qua khi dựng tiếp từ thế giới cũ. */
+  startTick?: number;
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
 }
@@ -64,6 +66,7 @@ export class HostServer {
       zombieCount: opts.zombieCount,
       restore: opts.restore,
     });
+    if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
   }
 
   /** Gói từ mạng (hoặc từ chính máy host). Người gửi input lần đầu = vào trận. */
@@ -236,8 +239,16 @@ export class HostServer {
       if (!me) continue;
       const zombies = [];
       for (const z of w.zombies) {
-        if (near(me, z.x, z.y))
-          zombies.push({ id: z.id, x: z.x, y: z.y, facing: z.facing, chasing: z.mode === 'chase' });
+        // zombie đang nấp không gửi đi: máy người chơi không biết nó ở đâu cho tới khi nó lao ra
+        if (!z.hidden && near(me, z.x, z.y))
+          zombies.push({
+            id: z.id,
+            x: z.x,
+            y: z.y,
+            facing: z.facing,
+            chasing: z.mode === 'chase',
+            kind: z.kind,
+          });
       }
       this.out.push({
         to: c.id,
@@ -250,6 +261,16 @@ export class HostServer {
           players,
           zombies,
           doors: doors.filter((d) => near(me, d.x + 0.5, d.y + 0.5)),
+          pools: w.pools
+            .filter((p) => near(me, p.x, p.y))
+            .map((p) => ({
+              kind: p.kind,
+              x: p.x,
+              y: p.y,
+              radius: p.radius,
+              arming: p.armIn > 0,
+              ttl: p.ttl,
+            })),
         }),
         channel: 'unreliable',
       });
@@ -278,5 +299,6 @@ function wirePlayer(slot: number, p: PlayerState): WirePlayer {
     downedFor: p.downedFor,
     reviveProgress: p.reviveProgress,
     dragging: p.dragging,
+    flashlight: p.flashlight,
   };
 }

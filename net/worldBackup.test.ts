@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { arenaMap } from '@shared/sim/grid';
+import { testZombie } from '@shared/sim/testMaps';
 import { Btn } from '@shared/sim/input';
 import { SimWorld, type WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
@@ -14,19 +15,8 @@ function played(ticks = 120): SimWorld {
   return w;
 }
 
-const zombie = (id: number, x: number, y: number, extra: Partial<ZombieState> = {}): ZombieState => ({
-  id,
-  x,
-  y,
-  facing: 0,
-  hp: 100,
-  mode: 'wander',
-  target: null,
-  wanderIn: 1,
-  wanderMoving: false,
-  biteCd: 0,
-  ...extra,
-});
+const zombie = (id: number, x: number, y: number, extra: Partial<ZombieState> = {}): ZombieState =>
+  testZombie(id, x, y, extra);
 
 describe('worldBackup', () => {
   it('mã hóa/giải mã giữ đủ trạng thái (vị trí zombie float32), gói hỏng → null', () => {
@@ -59,10 +49,10 @@ describe('worldBackup', () => {
     for (let n = 1; n < buf.length; n++) expect(decodeBackup(buf.subarray(0, n))).toBeNull();
   });
 
-  it('200 zombie ≈ 6 KB mỗi 10 giây', () => {
+  it('200 zombie ≈ 10 KB mỗi 10 giây (~1 KB/s)', () => {
     const s = played(1).state();
     s.zombies = Array.from({ length: 200 }, (_, i) => zombie(i, i, i));
-    expect(encodeBackup(s).length).toBeLessThan(200 * 31 + 400);
+    expect(encodeBackup(s).length).toBeLessThan(200 * 53 + 400);
   });
 
   it('dựng lại SimWorld từ bản lưu chạy tiếp được, đủ số zombie', () => {
