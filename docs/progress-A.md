@@ -9,9 +9,15 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Không xếp chồng lên `b/loot-online` hay PR #7.
 - Hệ quả: dữ liệu cân bằng mới của A để tạm ở `shared/sim/tuning/`; đổi định dạng gói theo cách tương thích (không tăng `PROTOCOL_VERSION`). Cả hai cần báo B.
 
-## Thứ tự merge (xếp chồng)
+## Thứ tự merge (phiên 2026-10-24, merge commit, không squash)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)`
+`#3 (map, B)` → `#4 (1a)` → `#15 (hợp đồng loot, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `#14 (7b relay)`
+
+## Nhật ký phiên merge 2026-10-24 (cập nhật sau mỗi bước)
+
+- Bước 0: sửa 13 góp ý Codex còn mở trên #6–#13 ở nhánh `a/7-bots-perf` (commit 4fbafb2, 53915f0, fc2f29a, 02abae8), trả lời + resolve từng thread. Bản lưu thế giới: có byte phiên bản, gọn ~25 byte/zombie, mỗi người nhận 10s/lần (loadtest đợt tràn tối đa: 22.1 KB/s TB, đỉnh 24.98).
+- Đã merge: #3, #4, #15, #6, #8, #9, #10, #11, #12 (xung đột chỉ ở AGENTS.md mục 8 và `PROTOCOL_VERSION` → giữ 3).
+- Đang: #13 → #14 → PR spawn theo map B → thử link thật → Phần 2.
 
 ## Các giai đoạn
 

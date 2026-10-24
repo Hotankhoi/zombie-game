@@ -3,6 +3,21 @@ import { Rng, hashString } from '../util/rng';
 export const MAP_VERSION = 1;
 export const CHUNK_SIZE = 32;
 export const TILE_SIZE = 16;
+/** Local tile indices occupied by the two-tile-wide streets. */
+export const ROAD_MIN = 15;
+export const ROAD_MAX = 16;
+
+/** World coordinates in tile units, centered on a road tile at the crossroads. */
+export function spawnPoint(chunkX = 0, chunkY = 0): { x: number; y: number } {
+  validateChunk(chunkX, chunkY);
+  return { x: chunkX * CHUNK_SIZE + ROAD_MAX + 0.5, y: chunkY * CHUNK_SIZE + ROAD_MAX + 0.5 };
+}
+
+/** Accepts integer world tile coordinates, including negative chunks. */
+export function isRoadTile(tileX: number, tileY: number): boolean {
+  const { localX, localY } = tileToChunk(tileX, tileY);
+  return localX === ROAD_MIN || localX === ROAD_MAX || localY === ROAD_MIN || localY === ROAD_MAX;
+}
 // Keep arithmetic exact, including conversion from tiles to display pixels.
 export const MAX_CHUNK = 1_000_000;
 export const Tile = { Grass: 0, Road: 1, Pavement: 2, Floor: 3, Wall: 4, Door: 5 } as const;
@@ -68,7 +83,7 @@ export function generateChunk(seed: string, x: number, y: number): Chunk {
   // Crossroads use global alignment so every shared chunk edge matches exactly.
   for (let ty = 0; ty < CHUNK_SIZE; ty++) {
     for (let tx = 0; tx < CHUNK_SIZE; tx++) {
-      if (tx === 15 || tx === 16 || ty === 15 || ty === 16) put(tx, ty, Tile.Road);
+      if (tx === ROAD_MIN || tx === ROAD_MAX || ty === ROAD_MIN || ty === ROAD_MAX) put(tx, ty, Tile.Road);
       else if (tx === 14 || tx === 17 || ty === 14 || ty === 17) put(tx, ty, Tile.Pavement);
     }
   }
