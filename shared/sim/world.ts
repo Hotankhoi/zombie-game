@@ -516,7 +516,7 @@ export class SimWorld {
   private applyInput(p: PlayerState, input: PlayerInput): void {
     stepPlayer(p, input, DT, this.blocked);
     if (isAlive(p)) {
-      if (hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
+      if (isUp(p) && hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
       // gục thì không chém được (luồng E ở trên giữ nguyên — B đang nối loot vào đó)
       if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p);
     }

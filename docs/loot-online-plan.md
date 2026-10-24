@@ -1,5 +1,11 @@
 # Ghép loot vào trận online — B
 
+## Tiến độ nhánh triển khai
+
+Đã ghép nền PR #14 của A, #7 của B và API spawn mới từ #3 trong nhánh này. Đã thêm vị trí rương tất định (`shared/mapgen/chests.ts`) và bộ quản lý loot (`shared/loot/authority.ts`) kiểm tra người được host cho vào, còn đứng, khoảng cách, đường nhìn qua callback host, chống request cũ bằng revision. Snapshot chứa đồng thời túi và rương, kiểm tra dữ liệu khôi phục và không cho bên nhận sửa ngược trạng thái lưu trữ. Đã dùng `spawnPoint` trong adapter mô phỏng và chặn người gục mở/đóng cửa.
+
+Các module mới hiện chưa được gọi từ luồng mạng/gameplay. Còn phải làm PR hợp đồng riêng, codec, nối worker/client/UI, sao chép giao dịch trước xác nhận và kiểm thử nhiều client. Chưa công bố loot online hoàn thành. Giới hạn 4 inventory hiện tính cả người từng tham gia trong snapshot; trước khi nối vào phòng thật cần chốt vòng đời rời phòng/tái tham gia/chết và quyền giữ đồ, tránh tự xóa đồ để nhường chỗ.
+
 Người dùng đã chọn triển khai phương án 1: đi trên map, mở rương, nhặt vào túi trong trận online; hai người cùng nhặt không nhân đôi đồ. Kế hoạch này dựa trên PR #6 (online của A) và #7 (loot của B, phụ thuộc #5). Các PR nền chưa merge tại thời điểm kiểm tra. Nhánh triển khai: `b/loot-online`; không push thẳng main.
 
 ## Các điểm đã đối chiếu
