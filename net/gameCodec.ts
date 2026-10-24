@@ -48,6 +48,8 @@ export interface WireZombie {
   chasing: boolean;
   /** Loại zombie (GĐ 4) — nằm ở bit 1–3 của byte cờ; bản cũ chỉ đọc bit 0 (chasing). */
   kind: ZombieKind;
+  /** Zombie từ xác đồng đội (GĐ 6): slot của người đó, hoặc null — bit 4–6 của byte cờ (slot + 1). */
+  turnedSlot: number | null;
 }
 
 /** Vũng độc/axit (GĐ 4) gửi trong khối mở rộng. */
@@ -259,7 +261,8 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.i16(clampI16((z.x - msg.originX) * POS_SCALE));
         w.i16(clampI16((z.y - msg.originY) * POS_SCALE));
         w.u8(angleToByte(z.facing));
-        w.u8((z.chasing ? 1 : 0) | (Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) << 1));
+        const turned = z.turnedSlot === null ? 0 : Math.min(7, z.turnedSlot + 1);
+        w.u8((z.chasing ? 1 : 0) | (Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) << 1) | (turned << 4));
       }
       w.u8(msg.doors.length);
       for (const d of msg.doors) {
@@ -425,6 +428,7 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             facing,
             chasing: (flags & 1) !== 0,
             kind: ZOMBIE_KINDS[(flags >> 1) & 7] ?? 'normal',
+            turnedSlot: (flags >> 4) & 7 ? ((flags >> 4) & 7) - 1 : null,
           });
         }
         const doors: { x: number; y: number }[] = [];

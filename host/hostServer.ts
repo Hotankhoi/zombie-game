@@ -303,6 +303,7 @@ export class HostServer {
           facing: z.facing,
           chasing: z.mode === 'chase',
           kind: z.kind,
+          turnedSlot: z.turnedFrom ? (this.clients.get(z.turnedFrom)?.slot ?? null) : null,
         });
       }
       this.out.push({

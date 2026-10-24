@@ -28,8 +28,8 @@ const snap: SnapshotMsg = {
     },
   ],
   zombies: [
-    { id: 70000, x: -30.5, y: 990.25, facing: Math.PI, chasing: true, kind: 'giant' },
-    { id: 5, x: -40, y: 1000, facing: 0, chasing: false, kind: 'normal' },
+    { id: 70000, x: -30.5, y: 990.25, facing: Math.PI, chasing: true, kind: 'giant', turnedSlot: 3 },
+    { id: 5, x: -40, y: 1000, facing: 0, chasing: false, kind: 'normal', turnedSlot: null },
   ],
   doors: [{ x: -38, y: 1003 }],
   pools: [{ kind: 'acid', x: -35.5, y: 1002.25, radius: 1.125, arming: true, ttl: 3.2 }],
@@ -55,6 +55,10 @@ describe('gameCodec', () => {
     expect(Math.abs(out.zombies[0]!.y - 990.25)).toBeLessThanOrEqual(1 / POS_SCALE);
     expect(out.zombies[0]!.facing).toBeCloseTo(Math.PI, 1);
     expect(out.zombies[0]!.chasing).toBe(true);
+    expect(out.zombies.map((z) => [z.kind, z.turnedSlot])).toEqual([
+      ['giant', 3],
+      ['normal', null],
+    ]);
     expect(out.doors).toEqual([{ x: -38, y: 1003 }]);
   });
 
@@ -68,6 +72,7 @@ describe('gameCodec', () => {
         facing: 1,
         chasing: false,
         kind: 'normal' as const,
+        turnedSlot: null,
       })),
     };
     expect(encodeGame(many).length).toBeLessThan(200 * 8 + 120);
