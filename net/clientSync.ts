@@ -61,6 +61,8 @@ export interface ZombieView {
   facing: number;
   chasing: boolean;
   kind: ZombieKind;
+  /** Zombie từ xác đồng đội (GĐ 6): người đó, để vẽ màu riêng. */
+  turnedFrom: PeerId | null;
 }
 
 /**
@@ -135,6 +137,10 @@ export class ClientSync {
     }
   }
 
+  private turnedOf(z: WireZombie): PeerId | null {
+    return z.turnedSlot === null ? null : (this.slots.get(z.turnedSlot) ?? null);
+  }
+
   private forgetZombie(id: number): void {
     this.zombieSeen.delete(id);
     for (const s of this.snaps) s.zombies.delete(id);
@@ -207,8 +213,9 @@ export class ClientSync {
               facing: lerpAngle(za.facing, zb.facing, alpha),
               chasing: alpha < 0.5 ? za.chasing : zb.chasing,
               kind: zb.kind,
+              turnedFrom: this.turnedOf(zb),
             }
-          : { ...zb },
+          : { ...zb, turnedFrom: this.turnedOf(zb) },
       );
     }
     for (const [id, pb] of to.players) {
@@ -279,6 +286,7 @@ export class ClientSync {
         horde: false,
         slamCd: 0,
         roarCd: 0,
+        turnedFrom: z.turnedSlot === null ? null : (this.slots.get(z.turnedSlot) ?? null),
       };
     });
     return {

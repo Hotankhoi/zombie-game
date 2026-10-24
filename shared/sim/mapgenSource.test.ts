@@ -70,7 +70,8 @@ describe('MapgenSource (map thật của B)', () => {
     };
     const a = run();
     expect(a.hash()).toBe(run().hash());
-    expect(a.zombies).toHaveLength(60);
+    // + zombie từ xác người chơi (GĐ 6) nếu người chơi chết hẳn trong lúc chạy
+    expect(a.zombies.filter((z) => z.turnedFrom === null)).toHaveLength(60);
     for (const z of a.zombies) expect(a.blocked(Math.floor(z.x), Math.floor(z.y))).toBe(false);
   });
 });

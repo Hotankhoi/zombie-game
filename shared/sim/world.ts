@@ -58,6 +58,15 @@ export interface HordeState {
   downs: Record<PeerId, number>;
 }
 
+/** Xác người chơi chết hẳn, chờ thành zombie (GĐ 6). */
+export interface Corpse {
+  player: PeerId;
+  x: number;
+  y: number;
+  /** Còn bao lâu (giây) thì đứng dậy thành zombie. */
+  turnIn: number;
+}
+
 /** Tiếng ồn chờ zombie nghe (tick sau). */
 export interface Noise {
   x: number;
@@ -103,6 +112,8 @@ export interface WorldState {
   noises?: Noise[];
   /** GĐ 5. */
   horde?: HordeState | null;
+  /** GĐ 6. */
+  corpses?: Corpse[];
 }
 
 export interface SimWorldOptions {
@@ -147,6 +158,8 @@ export class SimWorld {
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
   horde: HordeState | null = null;
+  /** Xác chờ thành zombie (GĐ 6). */
+  corpses: Corpse[] = [];
 
   /** Ô chặn: tường, hoặc cửa đang đóng. */
   readonly blocked: BlockedFn = (tx, ty) =>
@@ -177,6 +190,7 @@ export class SimWorld {
     for (const d of s.brokenDoors ?? []) this.brokenDoors.add(`${d.x},${d.y}`);
     this.noises = (s.noises ?? []).map((n) => ({ ...n }));
     this.horde = s.horde ? structuredCopy(s.horde) : null;
+    this.corpses = (s.corpses ?? []).map((c) => ({ ...c }));
   }
 
   /** Chụp trạng thái (bản sao) — ngược với `restore`. */
@@ -201,6 +215,7 @@ export class SimWorld {
       }),
       noises: this.noises.map((n) => ({ ...n })),
       horde: this.horde ? structuredCopy(this.horde) : null,
+      corpses: this.corpses.map((c) => ({ ...c })),
     };
   }
 
@@ -256,6 +271,7 @@ export class SimWorld {
     this.partyActions(players, inputs);
     this.reapZombies();
     this.stepPools(players);
+    this.stepCorpses();
 
     const alive = players.filter(isAlive);
     if (this.flowDirty || this.tick % FLOW_EVERY === 0) {
@@ -571,7 +587,25 @@ export class SimWorld {
     p.sprinting = false;
   }
 
+  /** Xác đủ giờ → zombie đứng dậy tại chỗ, mang id người chơi (GĐ 6). */
+  private stepCorpses(): void {
+    if (this.corpses.length === 0) return;
+    for (const c of this.corpses) {
+      c.turnIn = countdown(c.turnIn, DT);
+      if (c.turnIn > 0) continue;
+      const z = createZombie(this.nextZombieId++, c.x, c.y, this.rng, 'normal');
+      z.hp *= PARTY.turnedHpFactor;
+      z.turnedFrom = c.player;
+      // vừa đứng dậy: đi lang thang ngay tại chỗ (không biết ai ở đâu)
+      this.zombies.push(z);
+      this.emitNoise(c.x, c.y, NOISE.meleeHit);
+    }
+    this.corpses = this.corpses.filter((c) => c.turnIn > 0);
+  }
+
   private die(p: PlayerState): void {
+    // xác ở lại chỗ chết, sau PARTY.turnSec thành zombie
+    this.corpses.push({ player: p.id, x: p.x, y: p.y, turnIn: PARTY.turnSec });
     p.hp = 0;
     p.downedFor = 0;
     p.reviveProgress = 0;
@@ -609,7 +643,7 @@ export class SimWorld {
         `z${z.id}:${z.kind},${f(z.x)},${f(z.y)},${f(z.facing)},${f(z.hp)},${z.mode},${z.target ?? ''},` +
           `${f(z.wanderIn)},${b(z.wanderMoving)},${f(z.biteCd)},${f(z.goalX)},${f(z.goalY)},` +
           `${f(z.investigateFor)},${b(z.hidden)},${f(z.burstFor)},${f(z.spitCd)},${b(z.horde)},` +
-          `${f(z.slamCd)},${f(z.roarCd)}`,
+          `${f(z.slamCd)},${f(z.roarCd)},${z.turnedFrom ?? ''}`,
       );
     }
     for (const p of this.pools) {
@@ -620,6 +654,7 @@ export class SimWorld {
     parts.push(`n${this.noises.map((n) => `${f(n.x)},${f(n.y)},${f(n.radius)}`).join(';')}`);
     parts.push(`x${[...this.brokenDoors].sort().join(';')}`);
     if (this.horde) parts.push(`h${JSON.stringify(sortKeys(this.horde))}`);
+    for (const c of this.corpses) parts.push(`c${c.player}:${f(c.x)},${f(c.y)},${f(c.turnIn)}`);
     parts.push(`d${this.doors.openList().join(';')}`);
     return hashString(parts.join('|')).toString(16).padStart(8, '0');
   }

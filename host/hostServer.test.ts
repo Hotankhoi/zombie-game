@@ -240,7 +240,7 @@ describe('ClientSync – ngoại suy khi thiếu snapshot', () => {
       originX: 0,
       originY: 0,
       players: [],
-      zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false, kind: 'normal' }],
+      zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false, kind: 'normal', turnedSlot: null }],
       doors: [],
       pools: [],
       horde: null,

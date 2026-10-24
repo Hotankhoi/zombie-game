@@ -296,6 +296,9 @@ export class WorldScene extends Phaser.Scene {
         .setPosition(z.x * T, z.y * T)
         .setRotation(z.facing)
         .setVisible(true);
+      // zombie từ xác đồng đội (GĐ 6): nhuộm màu riêng của người đó để cả đội nhận ra
+      if (z.turnedFrom && !flash) img.setTint(this.colorOf(z.turnedFrom));
+      else img.clearTint();
     }
     for (let i = zombies.length; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
     for (const p of others) {
@@ -327,6 +330,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private colorOf(id: PeerId): number {
+    if (id === this.session.selfId) return this.myColor;
     return this.session.peers.get(id)?.color ?? 0xcccccc;
   }
 

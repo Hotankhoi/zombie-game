@@ -43,6 +43,11 @@ export interface ZombieState {
   /** Boss: hồi chiêu đập đất / gầm (giây). */
   slamCd: number;
   roarCd: number;
+  /**
+   * Zombie từ xác đồng đội (GĐ 6): id người chơi đó, null nếu là zombie thường. B dùng để thả lại đồ
+   * của người đó khi zombie này bị giết ("mặc nguyên đồ của mình").
+   */
+  turnedFrom: PeerId | null;
 }
 
 const DEG = Math.PI / 180;
@@ -75,6 +80,7 @@ export function createZombie(
     horde: false,
     slamCd: 0,
     roarCd: 0,
+    turnedFrom: null,
   };
 }
 
