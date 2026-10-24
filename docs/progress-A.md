@@ -11,21 +11,21 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Thứ tự merge (xếp chồng)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `2b` → `2c` → `4` → `5` → `7`
+`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)`
 
 ## Các giai đoạn
 
-| GĐ  | Nhánh                                         | PR        | Trạng thái                                                                                                   |
-| --- | --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------ |
-| 1a  | `a/1a-core-gameplay`                          | #4        | Xong, chờ merge                                                                                              |
-| 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6        | Xong, chờ merge                                                                                              |
-| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8        | Xong, chờ merge                                                                                              |
-| 2b' | —                                             | —         | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
-| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9        | Xong, chờ merge                                                                                              |
-| 4   | `a/4-night-noise` (base `a/2c-party`)         | #10       | Xong, chờ merge                                                                                              |
-| 5   | `a/5-horde` (base `a/4-night-noise`)          | #11       | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
-| 6   | `a/6-turned` (base `a/5-horde`)               | (đang mở) | Xong phần độc lập (đồng đội thành zombie); hành động 2 người: cần báo B trước                                |
-| 7   | —                                             | —         | Chưa (bot, đo tải)                                                                                           |
+| GĐ  | Nhánh                                         | PR  | Trạng thái                                                                                                   |
+| --- | --------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------ |
+| 1a  | `a/1a-core-gameplay`                          | #4  | Xong, chờ merge                                                                                              |
+| 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6  | Xong, chờ merge                                                                                              |
+| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8  | Xong, chờ merge                                                                                              |
+| 2b' | —                                             | —   | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
+| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9  | Xong, chờ merge                                                                                              |
+| 4   | `a/4-night-noise` (base `a/2c-party`)         | #10 | Xong, chờ merge                                                                                              |
+| 5   | `a/5-horde` (base `a/4-night-noise`)          | #11 | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
+| 6   | `a/6-turned` (base `a/5-horde`)               | #12 | Xong phần độc lập, chờ merge; hành động 2 người: cần báo B trước                                             |
+| 7   | `a/7-bots-perf` (base `a/6-turned`)           | #13 | Xong phần A (bot, đo tải, tối ưu); TURN trên 4G: người dùng tự thử                                           |
 
 ## Việc treo
 
@@ -67,3 +67,13 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 - Làm: chết hẳn → xác ở lại, sau 8s thành zombie tại chỗ (`SimWorld.corpses`, `ZombieState.turnedFrom`), nhuộm màu người đó; kéo người gục đã làm ở 2c.
 - Bỏ (cần báo B trước): hành động 2 người (két sắt, cửa cuốn, kho quân sự = chỗ chứa loot / tương tác E; cửa cuốn còn cần đối tượng map); "mặc nguyên đồ của mình" (túi đồ) — B thả đồ khi giết zombie có `turnedFrom`.
+
+## GĐ 7 – kế hoạch & kết quả
+
+- Làm: `tools/bot.ts` + `tools/loadTest.ts` + `npm run loadtest` (4 kịch bản), bản nhanh trong `npm test`; tối ưu host (`separate()` 5.6 → 3.4 ms ở 650 zombie dồn sát; tra ô 1 lần `tileKind`); lớp tối dùng mặt nạ hình học (~11 → ~2 ms/frame).
+- Bảng đo cuối (4 bot): mạng tốt 200 zombie host 1.0 ms/tick, 17 KB/s; trễ 150ms + mất 5%: 1.6 ms, 17 KB/s, lệch dự đoán 0; đợt tràn tối đa (564 TB / 683 max zombie): host 7.3 ms (p95 11), 20.9 KB/s TB, đỉnh 24.7 KB/s.
+- Còn lại (người dùng): thử TURN trên 4G; chơi 2–4 máy thật.
+
+## Hết giai đoạn độc lập
+
+Các phần còn lại của A đều cần B trước: lưu IndexedDB/xuất nhập save (GĐ 5), hành động 2 người (GĐ 6), giảm thanh/tiếng súng/giáp (GĐ 4), 2b' (delta snapshot, zombie tất định, ownership, hit do client — đụng chỗ B ghép loot online). API spawnPoint của B vẫn chưa có trên `b/map-generator` (kiểm tra lần cuối: commit 4248753).

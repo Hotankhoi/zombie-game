@@ -35,6 +35,10 @@ export class MapgenSource implements MapSource {
     return this.kind(tx, ty) === DOOR;
   }
 
+  tileKind(tx: number, ty: number): number {
+    return this.kind(tx, ty);
+  }
+
   private kind(tx: number, ty: number): number {
     const cx = Math.floor(tx / CHUNK_SIZE);
     const cy = Math.floor(ty / CHUNK_SIZE);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HostElection, decodeScore, encodeScore, type ElectionOptions } from './hostElection';
+import { HostElection, decodeScore, encodeScore, pickBest, type ElectionOptions } from './hostElection';
 import { LoopbackHub, type LoopbackTransport } from './loopback';
 
 function room() {
@@ -145,5 +145,40 @@ describe('HostElection', () => {
     expect(decodeScore(encodeScore(1e9))).toBe(65535);
     expect(decodeScore(encodeScore(-5))).toBe(0);
     expect(decodeScore(new Uint8Array([126]))).toBeNull();
+  });
+});
+
+describe('pickBest', () => {
+  it('không phụ thuộc thứ tự duyệt (không có chu trình a > b > z > a)', () => {
+    const cands = [
+      { id: 'a', score: 100 },
+      { id: 'b', score: 90 },
+      { id: 'z', score: 80 },
+    ];
+    const orders = [
+      [0, 1, 2],
+      [0, 2, 1],
+      [1, 0, 2],
+      [1, 2, 0],
+      [2, 0, 1],
+      [2, 1, 0],
+    ];
+    const picks = new Set(orders.map((o) => pickBest(o.map((i) => cands[i] as (typeof cands)[number]))));
+    expect([...picks]).toEqual(['b']); // mốc 80, b (90) ngang z → id nhỏ hơn
+  });
+
+  it('chưa ai có điểm: id nhỏ nhất; có điểm thì hơn người chưa có', () => {
+    expect(
+      pickBest([
+        { id: 'c', score: Infinity },
+        { id: 'b', score: Infinity },
+      ]),
+    ).toBe('b');
+    expect(
+      pickBest([
+        { id: 'a', score: Infinity },
+        { id: 'c', score: 300 },
+      ]),
+    ).toBe('c');
   });
 });

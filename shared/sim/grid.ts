@@ -11,6 +11,11 @@ export interface MapSource {
   isWall(tx: number, ty: number): boolean;
   /** Ô cửa (mặc định đóng). */
   isDoor(tx: number, ty: number): boolean;
+  /**
+   * Không bắt buộc: loại ô trong 1 lần tra (0 trống, 1 tường, 2 cửa) — SimWorld dùng nếu có để khỏi tra 2 lần
+   * (va chạm/tia nhìn/flow field hỏi hàng chục nghìn ô mỗi tick).
+   */
+  tileKind?(tx: number, ty: number): number;
   /** Điểm xuất phát của người chơi (tọa độ ô, số thực). */
   spawn: Vec2;
 }
@@ -40,6 +45,10 @@ export class GridMap implements MapSource {
 
   isDoor(tx: number, ty: number): boolean {
     return this.inside(tx, ty) && this.cells[ty * this.width + tx] === DOOR;
+  }
+
+  tileKind(tx: number, ty: number): number {
+    return this.inside(tx, ty) ? (this.cells[ty * this.width + tx] as number) : WALL;
   }
 
   setWall(tx: number, ty: number): this {

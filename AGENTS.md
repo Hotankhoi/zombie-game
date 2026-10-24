@@ -149,7 +149,7 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: 1a (PR #4), 2a (#6), 2b (#8), 2c (#9), 4 (#10), 5 (#11) xong, chờ merge. Mỗi giai đoạn 1 PR xếp chồng — tiến độ và thứ tự merge ở `docs/progress-A.md`. Hiện: GĐ 6 phần độc lập (đồng đội chết thành zombie) — nhánh `a/6-turned`; hành động 2 người + lưu save chờ bàn với B.
+  - A: 1a (PR #4), 2a (#6), 2b (#8), 2c (#9), 4 (#10), 5 (#11), 6 (#12), 7 (bot + đo tải + tối ưu, nhánh `a/7-bots-perf`) xong, chờ merge — xếp chồng, thứ tự và chi tiết ở `docs/progress-A.md`. Phần còn lại (lưu save, hành động 2 người, súng/giảm thanh, 2b') chờ bàn với B.
   - B: đã triển khai 1b trên `b/map-generator`: sinh map theo seed/chunk, renderer riêng, minimap và tile Kenney CC0; PR #3 chờ A review.
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
