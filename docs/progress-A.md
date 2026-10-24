@@ -21,8 +21,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6        | Xong, chờ merge                                                                                              |
 | 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8        | Xong, chờ merge                                                                                              |
 | 2b' | —                                             | —         | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
-| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | (đang mở) | Xong, chờ merge                                                                                              |
-| 4   | —                                             | —         | Chưa                                                                                                         |
+| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9        | Xong, chờ merge                                                                                              |
+| 4   | `a/4-night-noise` (base `a/2c-party`)         | (đang mở) | Xong, chờ merge                                                                                              |
 | 5   | —                                             | —         | Chưa (phần lưu IndexedDB: cần báo B trước)                                                                   |
 | 6   | —                                             | —         | Cần báo B trước (hành động 2 người = chỗ chứa loot); kéo người gục làm ở 2c                                  |
 | 7   | —                                             | —         | Chưa (bot, đo tải)                                                                                           |
@@ -49,3 +49,9 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Kế hoạch: giới hạn 4 người (host từ chối người thứ 5, gói 124 "phòng đầy"); gục/cứu (R)/kéo (G) trong `SimWorld` + `shared/sim/tuning/party.ts`; trạng thái gục gửi bằng khối mở rộng cuối snapshot; HUD: khung đội, mũi tên mép màn hình, chữ khi gục/phòng đầy.
 - Kết quả: 122 test; 2 tab: host bị cắn gục → khách giữ R → đứng dậy 30 máu; 200 zombie: host 0.79 ms/tick, frame TB 2.1 ms.
 - Cần báo B: người gục vẫn mở/đóng cửa được (luồng E giữ nguyên vì B nối loot vào đó — B chặn `isUp` khi xử lý E). Số cân bằng ở `shared/sim/tuning/party.ts` → B chuyển vào `/shared/data`.
+
+## GĐ 4 – kế hoạch & kết quả
+
+- Kế hoạch: ngày/đêm suy từ tick (`shared/sim/dayNight.ts`, 11 phút/ngày); tầm nhìn nón + đèn pin (F) vẽ ở HUD; tiếng ồn (`SimWorld.emitNoise`, zombie "investigate"); 6 loại zombie (`shared/sim/tuning/zombieKinds.ts`); vũng độc/axit; khổng lồ phá cửa. `?gio=0.9` để thử ban đêm.
+- Kết quả: 138 test; Browser pane: ngày/đêm/đèn pin hiển thị đúng; 200 zombie: frame TB 2.6 ms (lớp bóng tối 0.5 ms).
+- Bỏ (cần B): giảm thanh (phụ kiện súng), axit mòn giáp (giáp), súng phát tiếng ồn (B gọi `world.emitNoise(x, y, r)`). Khổng lồ phá tường: chưa làm (phải đồng bộ thay đổi map). Tường chưa che tầm nhìn.
