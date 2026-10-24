@@ -36,6 +36,13 @@ Người dùng đã chọn triển khai phương án 1: đi trên map, mở rư�
 - Chạy test logic, typecheck, lint, build; kiểm tra 2–4 client với trễ 150ms và mất gói 5%, thao tác bàn phím/chuột không xuyên xuống gameplay.
 - PR mô tả phần sửa vùng A/chung, các kiểm tra đã thực hiện và giới hạn còn lại. A review trước khi merge.
 
-## Phối hợp đang chờ
+## Phối hợp đã xác nhận
 
-Đã nhờ người dùng chuyển A thông báo B bắt đầu ghép online, hỏi A có đang sửa host/net/WorldScene hoặc đã có hợp đồng loot mới không. Chưa sửa các file vùng chung hoặc vùng A trong bước chuẩn bị này. Sau khi nhận phản hồi, cập nhật dòng B/ghi chú loot ở AGENTS.md và chốt điểm ghép trước khi triển khai hợp đồng.
+Người dùng đã chuyển phản hồi của A: PR #8–#13 nối tiếp #6, A để trống điểm ghép loot và shared/types cho B. Đã kiểm tra thêm có PR #14 relay nối sau #13; cần bảo đảm điểm ghép dùng interface Transport để tương thích cả hai đường truyền.
+
+- Các gói riêng 124 (phòng đầy), 125 (sao lưu thế giới), 126 (điểm host) thuộc A, không tái sử dụng cho loot. PR hợp đồng của B tăng PROTOCOL_VERSION từ giá trị mới nhất của A.
+- B bổ sung API `spawnPoint()` và `isRoadTile()` trên nhánh map; A không cần giả định đường ở ô 15–16. API mặc định trả tâm ô đường (16.5,16.5), đơn vị ô.
+- Tương tác phải kiểm tra `isUp(p)` phía host, gồm cả cửa khi ghép phím E; người gục không được mở cửa hoặc nhặt đồ.
+- Gói sao lưu 125 hiện chưa có túi/rương. Sao lưu định kỳ 10 giây không đủ để bảo đảm giao dịch vừa được xác nhận tồn tại sau khi host rời; cần đồng bộ trạng thái loot theo giao dịch và gắn phiên authority.
+- Các điểm nối tương lai A đã cung cấp: `world.emitNoise` cho súng, `dayClock(tick).night` cho cân bằng loot, `horde.survived` cho thùng thưởng, `turnedFrom` cho đồ rơi. Chưa mở rộng phạm vi bước ghép rương cơ bản sang súng/thưởng/đồ rơi trước khi định nghĩa quyền sở hữu và vòng đời các vật phẩm đó.
+- Các bảng tạm trong `shared/sim/tuning` và công việc IndexedDB, hành động hai người, delta snapshot cần phối hợp riêng với A; không tự di chuyển trong PR ghép loot.
