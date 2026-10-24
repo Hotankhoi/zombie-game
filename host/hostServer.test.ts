@@ -180,15 +180,21 @@ describe('HostServer + ClientSync', () => {
     expect(next.world.zombies).toHaveLength(25);
   });
 
-  it('host gửi bản sao lưu toàn thế giới mỗi 10s (reliable) cho mọi người', () => {
+  it('host gửi bản sao lưu toàn thế giới mỗi 10s (reliable), xoay vòng từng người', () => {
     const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 30 });
-    const c = new ClientSync('a', arenaMap());
-    host.receive('a', c.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    for (const id of ['a', 'b']) {
+      host.receive(
+        id,
+        new ClientSync(id, arenaMap()).tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet,
+      );
+    }
     const backups: Outgoing[] = [];
-    for (let t = 0; t < BACKUP_EVERY * 2; t++) {
+    for (let t = 0; t < BACKUP_EVERY * 4; t++) {
       for (const o of host.tick()) if (o.data[0] === WORLD_BACKUP_MSG) backups.push(o);
     }
-    expect(backups).toHaveLength(2);
+    expect(backups).toHaveLength(4);
+    expect(backups.map((b) => b.to).sort()).toEqual(['a', 'a', 'b', 'b']);
+    expect(backups[0]!.to).not.toBe(backups[1]!.to);
     expect(backups[0]!.channel).toBe('reliable');
     expect(decodeBackup(backups[1]!.data)!.zombies).toHaveLength(30);
   });
@@ -203,7 +209,8 @@ describe('HostServer + ClientSync', () => {
       for (const o of out) if (o.to === 'b' && o.data[0] === WORLD_BACKUP_MSG) backup = decodeBackup(o.data);
       return out;
     };
-    for (let t = 0; t < BACKUP_EVERY + 40; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
+    // bản lưu gửi xoay vòng: sau 2 lượt chắc chắn b đã nhận
+    for (let t = 0; t < BACKUP_EVERY * 2 + 40; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
     expect(backup).not.toBeNull();
     const c = m.clients.get('b')!;
     const latest = c.latest!;
@@ -216,7 +223,8 @@ describe('HostServer + ClientSync', () => {
     )!;
     expect(merged.zombies.length).toBeGreaterThanOrEqual(c.toWorldState('m', keep)!.zombies.length);
     const next = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 40, restore: merged });
-    expect(next.world.players.get('b')!.x).toBeCloseTo(c.predictor.state!.x, 0);
+    // bản dựng lại theo snapshot cuối (trễ 1 tick); dự đoán đi trước vài tick
+    expect(Math.abs(next.world.players.get('b')!.x - c.predictor.state!.x)).toBeLessThan(1.5);
   });
 });
 
@@ -235,6 +243,7 @@ describe('ClientSync – ngoại suy khi thiếu snapshot', () => {
       zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false, kind: 'normal' }],
       doors: [],
       pools: [],
+      horde: null,
     });
     for (const [tick, x] of [
       [10, 5],
@@ -299,5 +308,39 @@ describe('HostServer – GĐ 4', () => {
     expect(snap!.zombies.map((z) => [z.id, z.kind])).toEqual([[2, 'giant']]);
     expect(snap!.pools).toHaveLength(1);
     expect(snap!.pools[0]).toMatchObject({ kind: 'acid', arming: true });
+  });
+});
+
+describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
+  it('300 zombie quanh người: mỗi snapshot ≤ 200, gần nhất luôn có; client vẫn thấy đủ 300', () => {
+    let time = 0;
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    const c = new ClientSync('a', arenaMap(), () => time);
+    host.receive('a', c.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    for (const o of host.tick()) c.receive(o.data); // roster: client biết slot của mình
+    const me = host.world.players.get('a')!;
+    for (let i = 0; i < 300; i++) {
+      host.world.zombies.push(
+        testZombie(i + 1, me.x + 2 + (i % 20), me.y - 8 + Math.floor(i / 20), {
+          wanderMoving: false,
+          wanderIn: 99,
+        }),
+      );
+    }
+    const sizes: number[] = [];
+    for (let t = 0; t < 30; t++) {
+      for (const o of host.tick()) {
+        const g = decodeGame(o.data);
+        if (g?.type === GameMsg.Snapshot) {
+          sizes.push(g.zombies.length);
+          // con gần nhất (cách 2 ô) luôn có mặt
+          expect(g.zombies.some((z) => z.id === 1 + 8 * 20)).toBe(true);
+        }
+        c.receive(o.data);
+      }
+      time += SIM_TICK_MS;
+    }
+    expect(Math.max(...sizes)).toBe(200);
+    expect(c.sample().zombies).toHaveLength(300);
   });
 });

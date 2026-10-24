@@ -62,6 +62,19 @@ export interface WirePool {
   ttl: number;
 }
 
+/** Trạng thái đợt tràn (GĐ 5) gửi trong khối mở rộng; null = chưa có đợt nào. */
+export interface WireHorde {
+  number: number;
+  active: boolean;
+  /** Kết quả khi xong: true sống sót, false thất bại; null = đang diễn ra. */
+  survived: boolean | null;
+  /** Còn bao nhiêu zombie đợt tràn (chưa sinh + đang sống). */
+  remaining: number;
+  bossAlive: boolean;
+  /** Bảng thành tích đội theo slot. */
+  rows: { slot: number; kills: number; downs: number }[];
+}
+
 export interface SnapshotMsg {
   type: GameMsg.Snapshot;
   tick: number;
@@ -75,6 +88,8 @@ export interface SnapshotMsg {
   doors: { x: number; y: number }[];
   /** Vũng độc/axit quanh người nhận (GĐ 4, khối mở rộng). */
   pools: WirePool[];
+  /** Đợt tràn (GĐ 5, khối mở rộng). */
+  horde: WireHorde | null;
 }
 
 export type WireEvent =
@@ -269,6 +284,25 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8(pool.arming ? 1 : 0);
         w.u8(Math.min(255, Math.round(pool.ttl * 10)));
       }
+      // khối mở rộng GĐ 5: đợt tràn
+      w.u8(msg.horde ? 1 : 0);
+      if (msg.horde) {
+        const h = msg.horde;
+        w.u8(h.number & 0xff);
+        w.u8(
+          (h.active ? 1 : 0) |
+            (h.survived === true ? 2 : 0) |
+            (h.survived === false ? 4 : 0) |
+            (h.bossAlive ? 8 : 0),
+        );
+        w.u16(Math.min(0xffff, h.remaining));
+        w.u8(h.rows.length);
+        for (const row of h.rows) {
+          w.u8(row.slot);
+          w.u16(Math.min(0xffff, row.kills));
+          w.u8(Math.min(255, row.downs));
+        }
+      }
       break;
     case GameMsg.Events:
       w.u32(msg.tick);
@@ -422,7 +456,23 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             pools.push({ kind, x, y, radius, arming, ttl: r.u8() / 10 });
           }
         }
-        return { type, tick, ack, originX, originY, players, zombies, doors, pools };
+        let horde: WireHorde | null = null;
+        if (r.more() && r.u8() === 1) {
+          const number = r.u8();
+          const flags = r.u8();
+          const remaining = r.u16();
+          const rows: WireHorde['rows'] = [];
+          for (let i = 0, n = r.u8(); i < n; i++) rows.push({ slot: r.u8(), kills: r.u16(), downs: r.u8() });
+          horde = {
+            number,
+            active: (flags & 1) !== 0,
+            survived: (flags & 2) !== 0 ? true : (flags & 4) !== 0 ? false : null,
+            remaining,
+            bossAlive: (flags & 8) !== 0,
+            rows,
+          };
+        }
+        return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde };
       }
       case GameMsg.Events: {
         const tick = r.u32();

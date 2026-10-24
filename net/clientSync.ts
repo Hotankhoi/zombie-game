@@ -24,6 +24,11 @@ const KEEP_SNAPSHOTS = 12;
 /** Trễ nội suy tối thiểu/tối đa (ms) cho zombie và đồng đội. */
 const MIN_INTERP_MS = 100;
 const MAX_INTERP_MS = 400;
+/**
+ * Đợt tràn lớn: host chỉ gửi một phần zombie mỗi snapshot (ngân sách, xem host/hostServer.ts). Zombie vắng
+ * mặt mà mới thấy cách đây ≤ bấy nhiêu tick (và không bị giết) thì giữ vị trí cũ thay vì cho biến mất.
+ */
+const KEEP_MISSING_TICKS = 24;
 /** Snapshot tới muộn: ngoại suy theo vận tốc tối đa bấy nhiêu tick (150ms) rồi đứng chờ, không đoán xa hơn. */
 const MAX_EXTRAP_TICKS = 3;
 
@@ -67,6 +72,11 @@ export class ClientSync {
   doors = new Doors();
   /** Sự kiện đã nhận (đổi slot → PeerId), scene lấy ra vẽ hiệu ứng. */
   events: SimEvent[] = [];
+  /** Người chơi của một slot (bảng thành tích đợt tràn). */
+  peerOfSlot(slot: number): PeerId | undefined {
+    return this.slots.get(slot);
+  }
+
   /** Snapshot mới nhất (để chuyển host). */
   latest: SnapshotMsg | null = null;
   /** Số snapshot đã nhận / bị bỏ vì tới muộn hơn cái mới hơn. */
@@ -76,6 +86,8 @@ export class ClientSync {
   jitterMs = 0;
   private slots = new Map<number, PeerId>();
   private snaps: Snap[] = [];
+  /** Tick snapshot gần nhất có mặt từng zombie (giữ zombie xa ở snapshot lẻ). */
+  private zombieSeen = new Map<number, number>();
   private recent: PlayerInput[] = [];
   /** Ước lượng (giờ máy mình) − (tick host × 50ms). */
   private clockOffset: number | null = null;
@@ -114,6 +126,8 @@ export class ClientSync {
         for (const e of msg.events) {
           const ev = this.fromWire(e);
           if (ev) this.events.push(ev);
+          // zombie bị giết: bỏ khỏi danh sách "giữ khi vắng mặt" ngay
+          if (e.kind === 'hit' && e.killed) this.forgetZombie(e.zombie);
         }
         return true;
       default:
@@ -121,9 +135,15 @@ export class ClientSync {
     }
   }
 
+  private forgetZombie(id: number): void {
+    this.zombieSeen.delete(id);
+    for (const s of this.snaps) s.zombies.delete(id);
+  }
+
   /** Đổi host: bỏ đồng hồ/bộ đệm cũ (tick của host mới có thể nhảy). Giữ dự đoán. */
   resetHost(): void {
     this.snaps = [];
+    this.zombieSeen.clear();
     this.clockOffset = null;
     this.lastRecv = null;
     this.latest = null;
@@ -256,6 +276,9 @@ export class ClientSync {
         hidden: false,
         burstFor: 0,
         spitCd: 0,
+        horde: false,
+        slamCd: 0,
+        roarCd: 0,
       };
     });
     return {
@@ -294,7 +317,18 @@ export class ClientSync {
       const id = this.slots.get(p.slot);
       if (id) players.set(id, p);
     }
-    this.snaps.push({ tick: msg.tick, players, zombies: new Map(msg.zombies.map((z) => [z.id, z])) });
+    const zmap = new Map(msg.zombies.map((z) => [z.id, z]));
+    for (const z of msg.zombies) this.zombieSeen.set(z.id, msg.tick);
+    const prev = this.snaps[this.snaps.length - 1];
+    if (prev) {
+      for (const [id, z] of prev.zombies) {
+        if (zmap.has(id)) continue;
+        const seen = this.zombieSeen.get(id) ?? -Infinity;
+        if (msg.tick - seen <= KEEP_MISSING_TICKS) zmap.set(id, z);
+        else this.zombieSeen.delete(id);
+      }
+    }
+    this.snaps.push({ tick: msg.tick, players, zombies: zmap });
     if (this.snaps.length > KEEP_SNAPSHOTS) this.snaps.shift();
 
     const doors = new Doors();

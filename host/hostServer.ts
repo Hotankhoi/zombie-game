@@ -1,9 +1,17 @@
-import { decodeGame, encodeGame, GameMsg, type WireEvent, type WirePlayer } from '@net/gameCodec';
+import {
+  decodeGame,
+  encodeGame,
+  GameMsg,
+  type WireEvent,
+  type WireHorde,
+  type WirePlayer,
+} from '@net/gameCodec';
 import { encodeRoomFull } from '@net/roomFull';
 import { encodeBackup } from '@net/worldBackup';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
+import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
 import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
 
@@ -14,7 +22,17 @@ export const SNAPSHOT_EVERY = 2;
  * (AGENTS.md mục 2.7: ~1.5 màn hình; màn hình zoom 3 rộng khoảng 40 ô).
  */
 export const INTEREST_RADIUS = 32;
-/** Gửi bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất trạng thái. */
+/**
+ * Ngân sách zombie mỗi snapshot (giữ ≤ 25 KB/s mỗi người khi đợt tràn 500 con quây sát): luôn gửi
+ * ZOMBIE_NEAR_ALWAYS con gần nhất, phần còn lại gửi xoay vòng trong số chỗ trống. Client giữ vị trí cũ
+ * của con vắng mặt một lúc (net/clientSync.ts). Cách làm triệt để (delta + zombie tất định) để GĐ 2b'.
+ */
+export const ZOMBIE_BUDGET = 200;
+export const ZOMBIE_NEAR_ALWAYS = 130;
+/**
+ * Gửi bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất trạng thái.
+ * Mỗi lần gửi cho 1 người, xoay vòng (đợt tràn 650 zombie: bản lưu ~40 KB, gửi cả 4 người = 4 KB/s mỗi người).
+ */
 export const BACKUP_EVERY = 200;
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
 const CATCH_UP_ABOVE = 1;
@@ -56,6 +74,8 @@ export class HostServer {
   private clients = new Map<PeerId, Client>();
   private out: Outgoing[] = [];
   private rosterDirty = false;
+  /** Lượt gửi bản sao lưu (xoay vòng người nhận). */
+  private backupTurn = 0;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
@@ -156,10 +176,32 @@ export class HostServer {
     return next;
   }
 
+  /**
+   * Zombie gửi cho một người: trong vùng quan tâm, không đang nấp; quá ngân sách thì lấy con gần nhất
+   * + xoay vòng phần còn lại theo số thứ tự snapshot (mỗi con xa vẫn được cập nhật vài lần mỗi giây).
+   */
+  private pickZombies(me: PlayerState, round: number): ZombieState[] {
+    const list: { z: ZombieState; d: number }[] = [];
+    for (const z of this.world.zombies) {
+      // zombie đang nấp không gửi đi: máy người chơi không biết nó ở đâu cho tới khi nó lao ra
+      if (z.hidden || !near(me, z.x, z.y)) continue;
+      list.push({ z, d: Math.max(Math.abs(z.x - me.x), Math.abs(z.y - me.y)) });
+    }
+    if (list.length <= ZOMBIE_BUDGET) return list.map((e) => e.z);
+    list.sort((a, b) => a.d - b.d || a.z.id - b.z.id);
+    const out = list.slice(0, ZOMBIE_NEAR_ALWAYS).map((e) => e.z);
+    const rest = list.slice(ZOMBIE_NEAR_ALWAYS);
+    const room = ZOMBIE_BUDGET - ZOMBIE_NEAR_ALWAYS;
+    const start = (round * room) % rest.length;
+    for (let i = 0; i < room; i++) out.push((rest[(start + i) % rest.length] as { z: ZombieState }).z);
+    return out;
+  }
+
   private sendBackup(): void {
-    if (this.clients.size === 0) return;
-    const data = encodeBackup(this.world.state());
-    for (const c of this.clients.values()) this.out.push({ to: c.id, data, channel: 'reliable' });
+    const list = [...this.clients.values()].sort((a, b) => a.slot - b.slot);
+    if (list.length === 0) return;
+    const c = list[this.backupTurn++ % list.length] as Client;
+    this.out.push({ to: c.id, data: encodeBackup(this.world.state()), channel: 'reliable' });
   }
 
   private sendRoster(): void {
@@ -234,21 +276,34 @@ export class HostServer {
       const [x, y] = k.split(',').map(Number);
       return { x: x as number, y: y as number };
     });
+    const h = w.horde;
+    const horde: WireHorde | null = h
+      ? {
+          number: h.number,
+          active: h.active,
+          survived: h.survived,
+          remaining: w.hordeRemaining(),
+          bossAlive: w.zombies.some((z) => z.kind === 'boss' && z.horde),
+          rows: [...this.clients.values()].map((c) => ({
+            slot: c.slot,
+            kills: h.kills[c.id] ?? 0,
+            downs: h.downs[c.id] ?? 0,
+          })),
+        }
+      : null;
     for (const c of this.clients.values()) {
       const me = w.players.get(c.id);
       if (!me) continue;
       const zombies = [];
-      for (const z of w.zombies) {
-        // zombie đang nấp không gửi đi: máy người chơi không biết nó ở đâu cho tới khi nó lao ra
-        if (!z.hidden && near(me, z.x, z.y))
-          zombies.push({
-            id: z.id,
-            x: z.x,
-            y: z.y,
-            facing: z.facing,
-            chasing: z.mode === 'chase',
-            kind: z.kind,
-          });
+      for (const z of this.pickZombies(me, w.tick / SNAPSHOT_EVERY)) {
+        zombies.push({
+          id: z.id,
+          x: z.x,
+          y: z.y,
+          facing: z.facing,
+          chasing: z.mode === 'chase',
+          kind: z.kind,
+        });
       }
       this.out.push({
         to: c.id,
@@ -261,6 +316,7 @@ export class HostServer {
           players,
           zombies,
           doors: doors.filter((d) => near(me, d.x + 0.5, d.y + 0.5)),
+          horde,
           pools: w.pools
             .filter((p) => near(me, p.x, p.y))
             .map((p) => ({
