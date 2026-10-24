@@ -11,21 +11,21 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Thứ tự merge (xếp chồng)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `7`
+`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)`
 
 ## Các giai đoạn
 
-| GĐ  | Nhánh                                         | PR        | Trạng thái                                                                                                   |
-| --- | --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------ |
-| 1a  | `a/1a-core-gameplay`                          | #4        | Xong, chờ merge                                                                                              |
-| 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6        | Xong, chờ merge                                                                                              |
-| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8        | Xong, chờ merge                                                                                              |
-| 2b' | —                                             | —         | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
-| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9        | Xong, chờ merge                                                                                              |
-| 4   | `a/4-night-noise` (base `a/2c-party`)         | #10       | Xong, chờ merge                                                                                              |
-| 5   | `a/5-horde` (base `a/4-night-noise`)          | #11       | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
-| 6   | `a/6-turned` (base `a/5-horde`)               | #12       | Xong phần độc lập, chờ merge; hành động 2 người: cần báo B trước                                             |
-| 7   | `a/7-bots-perf` (base `a/6-turned`)           | (đang mở) | Xong phần A (bot, đo tải, tối ưu); TURN trên 4G: người dùng tự thử                                           |
+| GĐ  | Nhánh                                         | PR  | Trạng thái                                                                                                   |
+| --- | --------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------ |
+| 1a  | `a/1a-core-gameplay`                          | #4  | Xong, chờ merge                                                                                              |
+| 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6  | Xong, chờ merge                                                                                              |
+| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8  | Xong, chờ merge                                                                                              |
+| 2b' | —                                             | —   | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
+| 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9  | Xong, chờ merge                                                                                              |
+| 4   | `a/4-night-noise` (base `a/2c-party`)         | #10 | Xong, chờ merge                                                                                              |
+| 5   | `a/5-horde` (base `a/4-night-noise`)          | #11 | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
+| 6   | `a/6-turned` (base `a/5-horde`)               | #12 | Xong phần độc lập, chờ merge; hành động 2 người: cần báo B trước                                             |
+| 7   | `a/7-bots-perf` (base `a/6-turned`)           | #13 | Xong phần A (bot, đo tải, tối ưu); TURN trên 4G: người dùng tự thử                                           |
 
 ## Việc treo
 
