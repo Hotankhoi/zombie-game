@@ -29,7 +29,10 @@ export function mountLobbyPanel(root: HTMLElement, opts: LobbyOptions) {
     <div class="status"></div>`;
   root.appendChild(el);
 
-  if (new URLSearchParams(window.location.search).get('inventory') === '1') {
+  const preview = new URLSearchParams(window.location.search);
+  if (preview.get('loot') === '1') {
+    void import('./loot/preview').then(({ mountLootPreview }) => mountLootPreview(root));
+  } else if (preview.get('inventory') === '1') {
     void import('./inventory/preview').then(({ mountInventoryPreview }) => mountInventoryPreview(root));
   }
 

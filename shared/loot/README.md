@@ -47,4 +47,6 @@ Preview dùng callback cục bộ trễ 150ms để kiểm tra thao tác đang c
 
 Chạy `npm run check` và `npm run build`. Test logic kiểm tra tính tất định, vùng loot, snapshot không hợp lệ, chuyển một phần/toàn bộ, túi đầy, rollback toàn giao dịch, request lặp, hai người lấy cùng rương, tính bất biến và bảo toàn tổng vật phẩm.
 
+Đã kiểm tra bản production trên Chromium: mở/lấy riêng/lấy hết, khóa bấm lặp, từ chối số lượng sai và túi đầy, đổi khu trong lúc chờ, quay lại rương đã lấy hết, thay túi khi đang nhặt, focus bàn phím sau mở/lấy hết/Escape. Đã thử chạm chọn đồ ở 390×844 và kiểm tra không tràn ngang ở 320px. Kiểm tra vòng đời panel gồm push mới thắng phản hồi cũ, đổi rương A→B→A khi còn request, snapshot/phản hồi lỗi, callback mất kết nối, hủy panel trong lúc chờ và không cập nhật DOM khi revision không đổi. Các kiểm tra trình duyệt này dùng authority cục bộ, không chứng minh transport online.
+
 Khi ghép mạng thật cần kiểm tra thêm: 4 người cùng mở/nhặt, trễ 150ms và mất gói, ngắt kết nối sau gửi lệnh, đổi host lúc nhặt, rời/quay về chunk, tải save và yêu cầu ngoài tầm. Các tình huống này chưa được xác nhận bằng preview cục bộ.
