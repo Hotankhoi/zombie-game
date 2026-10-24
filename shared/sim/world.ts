@@ -243,7 +243,7 @@ export class SimWorld {
   addPlayer(id: PeerId): PlayerState {
     let p = this.players.get(id);
     if (!p) {
-      p = createPlayer(id, this.map.spawn);
+      p = createPlayer(id, this.freeSpawn(id));
       this.players.set(id, p);
       this.flowDirty = true;
     }
@@ -671,9 +671,22 @@ export class SimWorld {
     return [...this.players.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
+  /** Chỗ xuất phát chưa có ai đứng (rải người chơi ra, không chồng lên nhau); hết chỗ thì chỗ đầu. */
+  private freeSpawn(self: PeerId): Vec2 {
+    const spots = this.map.spawns?.length ? this.map.spawns : [this.map.spawn];
+    const taken = (s: Vec2) => {
+      for (const p of this.players.values()) {
+        if (p.id !== self && isAlive(p) && Math.hypot(p.x - s.x, p.y - s.y) < PLAYER.radius * 2) return true;
+      }
+      return false;
+    };
+    return { ...(spots.find((s) => !taken(s)) ?? (spots[0] as Vec2)) };
+  }
+
   private respawn(p: PlayerState): void {
-    p.x = this.map.spawn.x;
-    p.y = this.map.spawn.y;
+    const at = this.freeSpawn(p.id);
+    p.x = at.x;
+    p.y = at.y;
     p.hp = PLAYER.maxHp;
     p.stamina = PLAYER.maxStamina;
     p.exhausted = false;

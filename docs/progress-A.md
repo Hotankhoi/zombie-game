@@ -17,7 +17,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 - Bước 0: sửa 13 góp ý Codex còn mở trên #6–#13 ở nhánh `a/7-bots-perf` (commit 4fbafb2, 53915f0, fc2f29a, 02abae8), trả lời + resolve từng thread. Bản lưu thế giới: có byte phiên bản, gọn ~25 byte/zombie, mỗi người nhận 10s/lần (loadtest đợt tràn tối đa: 22.1 KB/s TB, đỉnh 24.98).
 - Đã merge: #3, #4, #15, #6, #8, #9, #10, #11, #12 (xung đột chỉ ở AGENTS.md mục 8 và `PROTOCOL_VERSION` → giữ 3).
-- Đang: #13 → #14 → PR spawn theo map B → thử link thật → Phần 2.
+- Đã merge thêm: #13, #14 (xung đột chỉ AGENTS.md mục 8 + docs/progress-A.md).
+- Đang: PR spawn theo map B (`a/spawn-road`) → thử link thật → Phần 2.
 
 ## Các giai đoạn
 
@@ -36,7 +37,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Việc treo
 
-- API `spawnPoint`/ô đường của B: chưa có trên `b/map-generator` (kiểm tra lại giữa các giai đoạn). Khi có: rebase #6, thay `spawn = { x: 16, y: 16 }` trong `shared/sim/mapgenSource.ts`, xóa comment TẠM và mục giả định trong mô tả #6.
+- ~~API `spawnPoint`/ô đường của B~~: xong (nhánh `a/spawn-road`) — `MapgenSource.spawn = spawnPoint()`, `spawns` = 4 ô đường trống quanh đó; `SimWorld` đặt mỗi người (và người hồi sinh) vào chỗ chưa ai đứng.
 
 ## GĐ 2b – kế hoạch
 

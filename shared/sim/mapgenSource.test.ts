@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Tile, WorldMap, worldSeedForRoom } from '@shared/mapgen/world';
+import { Tile, WorldMap, isRoadTile, spawnPoint, worldSeedForRoom } from '@shared/mapgen/world';
+import { MAX_PLAYERS } from '@shared/types';
 import { Rng } from '@shared/util/rng';
 import { Btn, type PlayerInput } from './input';
 import { MapgenSource } from './mapgenSource';
@@ -29,16 +30,32 @@ describe('MapgenSource (map thật của B)', () => {
     }
   });
 
-  it('điểm xuất phát nằm trên đường, không bị chặn', () => {
+  it('điểm xuất phát theo spawnPoint() của B; 4 chỗ đứng trên ô đường, không tường, không trùng nhau', () => {
+    for (const room of ['ABC123', 'XYZ999', 'MAP001']) {
+      const src = new MapgenSource(worldSeedForRoom(room));
+      expect(src.spawn).toEqual(spawnPoint());
+      expect(src.spawns).toHaveLength(MAX_PLAYERS);
+      for (const s of src.spawns) {
+        const tx = Math.floor(s.x);
+        const ty = Math.floor(s.y);
+        expect(isRoadTile(tx, ty)).toBe(true);
+        expect(src.isWall(tx, ty) || src.isDoor(tx, ty)).toBe(false);
+        expect(Math.hypot(s.x - src.spawn.x, s.y - src.spawn.y)).toBeLessThanOrEqual(3);
+      }
+      const keys = new Set(src.spawns.map((s) => `${s.x},${s.y}`));
+      expect(keys.size).toBe(MAX_PLAYERS);
+    }
+  });
+
+  it('4 người vào trận: mỗi người một chỗ riêng trên ô đường', () => {
     const src = new MapgenSource(SEED);
-    const { x, y } = src.spawn;
-    for (const [tx, ty] of [
-      [x - 1, y - 1],
-      [x, y - 1],
-      [x - 1, y],
-      [x, y],
-    ] as const) {
-      expect(src.isWall(tx, ty) || src.isDoor(tx, ty)).toBe(false);
+    const w = new SimWorld({ seed: SEED, map: src, zombieCount: 0 });
+    const ps = ['a', 'b', 'c', 'd'].map((id) => w.addPlayer(id));
+    const at = ps.map((p) => `${p.x},${p.y}`);
+    expect(new Set(at).size).toBe(4);
+    for (const p of ps) {
+      expect(src.isWall(Math.floor(p.x), Math.floor(p.y))).toBe(false);
+      expect(isRoadTile(Math.floor(p.x), Math.floor(p.y))).toBe(true);
     }
   });
 
