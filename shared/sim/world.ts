@@ -86,6 +86,8 @@ export type SimEvent =
       killed: boolean;
       assassination: boolean;
       silent: boolean;
+      /** Máu zombie còn lại sau đòn — máy khách nhớ để chuyển host không hồi máu zombie. */
+      hp: number;
     }
   | { type: 'bite'; zombie: number; player: PeerId; x: number; y: number }
   | { type: 'door'; x: number; y: number; open: boolean }
@@ -721,6 +723,7 @@ export class SimWorld {
       killed,
       assassination,
       silent,
+      hp: Math.max(0, z.hp),
     });
   }
 

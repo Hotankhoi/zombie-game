@@ -49,10 +49,10 @@ describe('worldBackup', () => {
     for (let n = 1; n < buf.length; n++) expect(decodeBackup(buf.subarray(0, n))).toBeNull();
   });
 
-  it('200 zombie ≈ 12 KB mỗi 10 giây (~1.2 KB/s)', () => {
+  it('200 zombie ≈ 6 KB mỗi 10 giây (~0.6 KB/s)', () => {
     const s = played(1).state();
     s.zombies = Array.from({ length: 200 }, (_, i) => zombie(i, i, i));
-    expect(encodeBackup(s).length).toBeLessThan(200 * 61 + 400);
+    expect(encodeBackup(s).length).toBeLessThan(200 * 30 + 400);
   });
 
   it('dựng lại SimWorld từ bản lưu chạy tiếp được, đủ số zombie', () => {
@@ -108,6 +108,85 @@ describe('worldBackup', () => {
       { x: 12, y: 10 },
     ]);
     expect(m.flowTargets).toEqual([{ x: 14, y: 10 }]);
+  });
+
+  it('ghép: giữ máu đã mất, zombie nấp, zombie ngoài vùng gửi đủ, cửa phá, vũng, đợt tràn, xác', () => {
+    const base = played(1).state();
+    const a = { ...base.players.find((p) => p.id === 'a')!, x: 10, y: 10 };
+    const backup: WorldState = {
+      ...base,
+      tick: 100,
+      nextZombieId: 50,
+      players: [a],
+      zombies: [
+        zombie(1, 12, 12, { hp: 80 }), // snapshot biết máu 30 (sự kiện hit) → 30
+        zombie(2, 13, 13, { hidden: true }), // đang nấp: snapshot không gửi → vẫn còn
+        zombie(3, 25, 10), // trong vùng quan tâm nhưng ngoài vùng gửi đủ (quá ngân sách) → vẫn còn
+        zombie(4, 11, 11), // trong vùng gửi đủ, snapshot không có → đã chết
+      ],
+      openDoors: [],
+      pools: [
+        { id: 5, kind: 'poison', x: 3, y: 3, radius: 1, ttl: 10, armIn: 0, dps: 5 },
+        { id: 6, kind: 'acid', x: 4, y: 4, radius: 1, ttl: 1, armIn: 0, dps: 5 }, // hết hạn khi ghép
+      ],
+      nextPoolId: 7,
+      brokenDoors: [{ x: 40, y: 40 }],
+      noises: [],
+      horde: {
+        number: 1,
+        active: true,
+        startTick: 0,
+        endTick: 9999,
+        quota: 150,
+        spawned: 90,
+        bosses: 1,
+        bossesSpawned: 0,
+        spawnBudget: 0,
+        survived: null,
+        kills: { a: 12 },
+        downs: {},
+      },
+      corpses: [{ player: 'c', x: 5, y: 5, turnIn: 6 }],
+    };
+    const fresh: WorldState = {
+      ...base,
+      tick: 140, // 2 giây sau bản lưu
+      nextZombieId: 9,
+      players: [{ ...a, x: 11 }],
+      zombies: [zombie(1, 12.5, 12, { hp: 30 })],
+      openDoors: [],
+      corpses: [{ player: 'd', x: 7, y: 7, turnIn: 3 }],
+    };
+    const area = { x: 11, y: 10, radius: 32, zombieRadius: 8 };
+    const m = mergeBackup(backup, fresh, area, new Set(['a']))!;
+    const byId = new Map(m.zombies.map((z) => [z.id, z]));
+    expect(byId.get(1)).toMatchObject({ x: 12.5, hp: 30 });
+    expect(byId.has(2)).toBe(true);
+    expect(byId.has(3)).toBe(true);
+    expect(byId.has(4)).toBe(false);
+    expect(m.pools!.map((p) => [p.id, p.ttl])).toEqual([[5, 8]]);
+    expect(m.nextPoolId).toBe(7);
+    expect(m.brokenDoors).toEqual([{ x: 40, y: 40 }]);
+    expect(m.horde).toMatchObject({ number: 1, active: true, kills: { a: 12 } });
+    expect(m.corpses!.map((c) => [c.player, c.turnIn])).toEqual([
+      ['d', 3],
+      ['c', 4],
+    ]);
+  });
+
+  it('snapshot cũ hơn bản lưu (mất gói) → không lùi về snapshot, dùng bản lưu', () => {
+    const s = played(40).state();
+    const older = { ...played(10).state(), players: s.players.map((p) => ({ ...p, x: p.x - 5 })) };
+    const m = mergeBackup(s, older, { x: 0, y: 0, radius: 32 }, new Set(['a', 'b']))!;
+    expect(m.tick).toBe(s.tick);
+    expect(m.players.map((p) => p.x)).toEqual(s.players.map((p) => p.x));
+    expect(m.zombies).toHaveLength(s.zombies.length);
+  });
+
+  it('bản lưu khác phiên bản bố cục → bỏ qua (null), không đọc lệch', () => {
+    const buf = encodeBackup(played(5).state());
+    buf[1] = (buf[1]! + 1) & 255;
+    expect(decodeBackup(buf)).toBeNull();
   });
 
   it('không có bản lưu → dùng snapshot; không có snapshot → bản lưu (lọc người đã rời)', () => {

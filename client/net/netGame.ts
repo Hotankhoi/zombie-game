@@ -4,7 +4,7 @@ import { HostElection } from '@net/hostElection';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
 import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
-import { INTEREST_RADIUS } from '@host/hostServer';
+import { snapshotArea } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
@@ -140,7 +140,7 @@ export class NetGame {
     // lên thay host cũ: bản sao lưu toàn thế giới (≤10s) ghép với snapshot mới nhất quanh mình
     const keep = new Set([self, ...this.transport.peers()]);
     const latest = this.sync.latest;
-    const area = latest ? { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS } : null;
+    const area = latest ? snapshotArea(latest) : null;
     const restore =
       mergeBackup(this.backup, this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
     this.backup = null;

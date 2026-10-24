@@ -3,7 +3,8 @@ import type { MapSource } from '@shared/sim/grid';
 import { aimToRad, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
 import { Predictor } from '@shared/sim/prediction';
-import type { SimEvent, WorldState } from '@shared/sim/world';
+import type { Corpse, SimEvent, WorldState } from '@shared/sim/world';
+import { PARTY } from '@shared/sim/tuning/party';
 import type { ZombieKind } from '@shared/sim/tuning/zombieKinds';
 import { maxHpOf, type ZombieState } from '@shared/sim/zombie';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
@@ -31,6 +32,9 @@ const MAX_INTERP_MS = 400;
 const KEEP_MISSING_TICKS = 24;
 /** Snapshot tới muộn: ngoại suy theo vận tốc tối đa bấy nhiêu tick (150ms) rồi đứng chờ, không đoán xa hơn. */
 const MAX_EXTRAP_TICKS = 3;
+const TICKS_PER_SEC = 1000 / SIM_TICK_MS;
+/** Nhớ máu tối đa bấy nhiêu zombie bị đánh gần nhất. */
+const ZOMBIE_HP_KEEP = 1024;
 
 interface Snap {
   tick: number;
@@ -90,6 +94,13 @@ export class ClientSync {
   private snaps: Snap[] = [];
   /** Tick snapshot gần nhất có mặt từng zombie (giữ zombie xa ở snapshot lẻ). */
   private zombieSeen = new Map<number, number>();
+  /**
+   * Máu zombie đã bị đánh (16 bit thấp của id → máu còn lại, theo sự kiện hit) — chuyển host không hồi máu
+   * zombie (snapshot không gửi máu cho đỡ tốn băng thông). Giới hạn ZOMBIE_HP_KEEP con gần nhất bị đánh.
+   */
+  private zombieHp = new Map<number, number>();
+  /** Xác đồng đội chưa thành zombie (sự kiện death + vị trí cuối) — chuyển host không làm mất xác. */
+  private corpses: { player: PeerId; x: number; y: number; tick: number }[] = [];
   private recent: PlayerInput[] = [];
   /** Ước lượng (giờ máy mình) − (tick host × 50ms). */
   private clockOffset: number | null = null;
@@ -130,6 +141,8 @@ export class ClientSync {
           if (ev) this.events.push(ev);
           // zombie bị giết: bỏ khỏi danh sách "giữ khi vắng mặt" ngay
           if (e.kind === 'hit' && e.killed) this.forgetZombie(e.zombie);
+          else if (e.kind === 'hit') this.rememberHp(e.zombie & 0xffff, e.hp);
+          else if (e.kind === 'death') this.rememberCorpse(e.slot, msg.tick);
         }
         return true;
       default:
@@ -141,8 +154,24 @@ export class ClientSync {
     return z.turnedSlot === null ? null : (this.slots.get(z.turnedSlot) ?? null);
   }
 
+  private rememberHp(id: number, hp: number): void {
+    this.zombieHp.delete(id); // chèn lại cuối → Map giữ thứ tự bị đánh gần nhất
+    this.zombieHp.set(id, hp);
+    if (this.zombieHp.size > ZOMBIE_HP_KEEP)
+      this.zombieHp.delete(this.zombieHp.keys().next().value as number);
+  }
+
+  private rememberCorpse(slot: number, tick: number): void {
+    const id = this.slots.get(slot);
+    const p = this.latest?.players.find((w) => w.slot === slot);
+    if (!id || !p) return;
+    this.corpses = this.corpses.filter((c) => tick - c.tick < PARTY.turnSec * TICKS_PER_SEC);
+    this.corpses.push({ player: id, x: p.x, y: p.y, tick });
+  }
+
   private forgetZombie(id: number): void {
     this.zombieSeen.delete(id);
+    this.zombieHp.delete(id & 0xffff);
     for (const s of this.snaps) s.zombies.delete(id);
   }
 
@@ -271,7 +300,7 @@ export class ClientSync {
         x: z.x,
         y: z.y,
         facing: z.facing,
-        hp: maxHpOf(z.kind),
+        hp: this.zombieHp.get(z.id) ?? maxHpOf(z.kind),
         mode: target ? 'chase' : 'wander',
         target,
         wanderIn: 1,
@@ -295,6 +324,14 @@ export class ClientSync {
       nextZombieId: maxId + 1,
       players,
       zombies,
+      corpses: this.corpses
+        .map((c): Corpse => ({
+          player: c.player,
+          x: c.x,
+          y: c.y,
+          turnIn: PARTY.turnSec - (s.tick - c.tick) / TICKS_PER_SEC,
+        }))
+        .filter((c) => c.turnIn > 0),
       openDoors: s.doors.map((d) => ({ ...d })),
       flowTargets: alive.map((p) => ({ x: p.x, y: p.y })),
       flowDirty: true,
@@ -365,6 +402,7 @@ export class ClientSync {
               killed: e.killed,
               assassination: e.assassination,
               silent: e.silent,
+              hp: e.hp,
             }
           : null;
       case 'bite':

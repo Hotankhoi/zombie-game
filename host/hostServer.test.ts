@@ -8,7 +8,7 @@ import { testZombie } from '@shared/sim/testMaps';
 import { Btn, type PlayerInput } from '@shared/sim/input';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
-import { BACKUP_EVERY, HostServer, INTEREST_RADIUS, type Outgoing } from './hostServer';
+import { BACKUP_EVERY, HostServer, INTEREST_RADIUS, snapshotArea, type Outgoing } from './hostServer';
 
 interface Wire {
   at: number;
@@ -151,6 +151,28 @@ describe('HostServer + ClientSync', () => {
     expect(c.events.some((e) => e.type === 'swing')).toBe(false);
   });
 
+  it('chuyển host giữ máu zombie đã bị đánh (qua sự kiện hit) và xác đồng đội chưa thành zombie', () => {
+    const m = match(['a', 'b'], { a: 1, b: 1 }, 0, 0);
+    const z = m.host.world;
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const me = z.players.get('a')!;
+    const zb = testZombie(77, me.x + 0.8, me.y, { facing: Math.PI, hp: 1000, biteCd: 99 });
+    z.zombies.push(zb);
+    for (let t = 0; t < 4; t++) m.step((id) => (id === 'a' ? { ...idle(), buttons: Btn.Attack } : idle()));
+    expect(zb.hp).toBeLessThan(1000);
+    // b chết hẳn: xác nằm lại chờ thành zombie
+    const b = z.players.get('b')!;
+    b.hp = 0;
+    b.downedFor = 0.01;
+    for (let t = 0; t < 6; t++) m.step(idle);
+    expect(z.corpses.map((c) => c.player)).toEqual(['b']);
+    const state = m.clients.get('a')!.toWorldState('m', new Set(['a', 'b']))!;
+    expect(state.zombies.find((x) => x.id === 77)!.hp).toBe(Math.fround(zb.hp));
+    expect(state.corpses!.map((c) => c.player)).toEqual(['b']);
+    expect(state.corpses![0]!.turnIn).toBeGreaterThan(7);
+  });
+
   it('người rời phòng → bị xóa khỏi thế giới, roster gửi lại', () => {
     const m = match(['a', 'b'], { a: 0, b: 0 });
     for (let t = 0; t < 5; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
@@ -180,7 +202,7 @@ describe('HostServer + ClientSync', () => {
     expect(next.world.zombies).toHaveLength(25);
   });
 
-  it('host gửi bản sao lưu toàn thế giới mỗi 10s (reliable), xoay vòng từng người', () => {
+  it('mỗi người nhận bản sao lưu toàn thế giới mỗi 10s (reliable), gửi so le từng người', () => {
     const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 30 });
     for (const id of ['a', 'b']) {
       host.receive(
@@ -192,8 +214,8 @@ describe('HostServer + ClientSync', () => {
     for (let t = 0; t < BACKUP_EVERY * 4; t++) {
       for (const o of host.tick()) if (o.data[0] === WORLD_BACKUP_MSG) backups.push(o);
     }
-    expect(backups).toHaveLength(4);
-    expect(backups.map((b) => b.to).sort()).toEqual(['a', 'a', 'b', 'b']);
+    expect(backups).toHaveLength(8);
+    expect(backups.map((b) => b.to).sort()).toEqual(['a', 'a', 'a', 'a', 'b', 'b', 'b', 'b']);
     expect(backups[0]!.to).not.toBe(backups[1]!.to);
     expect(backups[0]!.channel).toBe('reliable');
     expect(decodeBackup(backups[1]!.data)!.zombies).toHaveLength(30);
@@ -215,12 +237,7 @@ describe('HostServer + ClientSync', () => {
     const c = m.clients.get('b')!;
     const latest = c.latest!;
     const keep = new Set(['b']);
-    const merged = mergeBackup(
-      backup,
-      c.toWorldState('m', keep),
-      { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS },
-      keep,
-    )!;
+    const merged = mergeBackup(backup, c.toWorldState('m', keep), snapshotArea(latest), keep)!;
     expect(merged.zombies.length).toBeGreaterThanOrEqual(c.toWorldState('m', keep)!.zombies.length);
     const next = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 40, restore: merged });
     // bản dựng lại theo snapshot cuối (trễ 1 tick); dự đoán đi trước vài tick

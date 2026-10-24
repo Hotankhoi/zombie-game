@@ -2,6 +2,7 @@ import {
   decodeGame,
   encodeGame,
   GameMsg,
+  type SnapshotMsg,
   type WireEvent,
   type WireHorde,
   type WirePlayer,
@@ -30,8 +31,8 @@ export const INTEREST_RADIUS = 32;
 export const ZOMBIE_BUDGET = 200;
 export const ZOMBIE_NEAR_ALWAYS = 130;
 /**
- * Gửi bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất trạng thái.
- * Mỗi lần gửi cho 1 người, xoay vòng (đợt tràn 650 zombie: bản lưu ~40 KB, gửi cả 4 người = 4 KB/s mỗi người).
+ * Mỗi người nhận bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
+ * trạng thái. Gửi so le (mỗi BACKUP_EVERY / số người tick gửi cho 1 người) để không dồn cùng một tick.
  */
 export const BACKUP_EVERY = 200;
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
@@ -134,7 +135,8 @@ export class HostServer {
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
-    if (this.world.tick % BACKUP_EVERY === 0) this.sendBackup();
+    const every = Math.max(1, Math.floor(BACKUP_EVERY / Math.max(1, this.clients.size)));
+    if (this.world.tick % every === 0) this.sendBackup();
 
     const out = this.out;
     this.out = [];
@@ -253,6 +255,7 @@ export class HostServer {
           killed: e.killed,
           assassination: e.assassination,
           silent: e.silent,
+          hp: e.hp,
         };
       case 'bite':
         return { kind: 'bite', zombie: e.zombie, slot: this.slotOf(e.player), x: e.x, y: e.y };
@@ -333,6 +336,22 @@ export class HostServer {
       });
     }
   }
+}
+
+/**
+ * Vùng mà snapshot gửi ĐỦ zombie (trừ zombie đang nấp) quanh gốc của gói: cả vùng quan tâm, hoặc — khi chạm
+ * ngân sách — chỉ tới con gần thứ ZOMBIE_NEAR_ALWAYS (xa hơn chỉ gửi xoay vòng). Chuyển host dùng vùng này
+ * để biết zombie vắng mặt là đã chết hay chỉ bị bỏ bớt (net/worldBackup.ts mergeBackup).
+ */
+export function snapshotArea(s: SnapshotMsg): { x: number; y: number; radius: number; zombieRadius: number } {
+  const area = { x: s.originX, y: s.originY, radius: INTEREST_RADIUS, zombieRadius: INTEREST_RADIUS };
+  if (s.zombies.length < ZOMBIE_BUDGET) return area;
+  const d = s.zombies
+    .map((z) => Math.max(Math.abs(z.x - s.originX), Math.abs(z.y - s.originY)))
+    .sort((a, b) => a - b);
+  // gốc gói = vị trí người nhận làm tròn (lệch ≤ 0.5 ô) → lùi thêm 1 ô cho chắc
+  area.zombieRadius = Math.max(0, (d[ZOMBIE_NEAR_ALWAYS - 1] ?? 0) - 1);
+  return area;
 }
 
 function near(p: { x: number; y: number }, x: number, y: number): boolean {
