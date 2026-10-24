@@ -16,4 +16,4 @@ new_sqlite_classes = ["RelayRoom"]
 
 [vars]
 # Trang được phép mở WebSocket (cách nhau dấu phẩy). Rỗng = cho tất cả. Yêu cầu không có Origin (bot Node) luôn được.
-ALLOWED_ORIGINS = "https://hotankhoi.github.io,http://localhost:5173,http://127.0.0.1:5173"
+ALLOWED_ORIGINS = "https://hotankhoi.github.io,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173"

@@ -11,7 +11,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Thứ tự merge (xếp chồng)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)`
+`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `7b (relay)`
 
 ## Các giai đoạn
 
@@ -26,6 +26,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | 5   | `a/5-horde` (base `a/4-night-noise`)          | #11 | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
 | 6   | `a/6-turned` (base `a/5-horde`)               | #12 | Xong phần độc lập, chờ merge; hành động 2 người: cần báo B trước                                             |
 | 7   | `a/7-bots-perf` (base `a/6-turned`)           | #13 | Xong phần A (bot, đo tải, tối ưu); TURN trên 4G: người dùng tự thử                                           |
+| 7b  | `a/7b-relay` (base `a/7-bots-perf`)           | PR  | Xong code + test với `wrangler dev`; deploy Cloudflare: người dùng thêm secret (docs/relay.md)               |
 
 ## Việc treo
 
@@ -73,6 +74,20 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Làm: `tools/bot.ts` + `tools/loadTest.ts` + `npm run loadtest` (4 kịch bản), bản nhanh trong `npm test`; tối ưu host (`separate()` 5.6 → 3.4 ms ở 650 zombie dồn sát; tra ô 1 lần `tileKind`); lớp tối dùng mặt nạ hình học (~11 → ~2 ms/frame).
 - Bảng đo cuối (4 bot): mạng tốt 200 zombie host 1.0 ms/tick, 17 KB/s; trễ 150ms + mất 5%: 1.6 ms, 17 KB/s, lệch dự đoán 0; đợt tràn tối đa (564 TB / 683 max zombie): host 7.3 ms (p95 11), 20.9 KB/s TB, đỉnh 24.7 KB/s.
 - Còn lại (người dùng): thử TURN trên 4G; chơi 2–4 máy thật.
+
+## GĐ 7b – relay dự phòng (kế hoạch & kết quả)
+
+- Lý do: TURN Metered chỉ 500 MB/tháng → người 4G không vào được khi hết. Thêm relay WebSocket miễn phí, không thẻ.
+- Làm: `relay/` (Worker + Durable Object SQLite `RelayRoom`, WebSocket Hibernation, 1 phòng = 1 DO);
+  `net/relayProtocol.ts` (khung dùng chung game + worker), `net/relay.ts` (`RelayTransport`, gộp gói ≤ 1 khung/50ms),
+  `net/auto.ts` (`AutoTransport`: WebRTC trước, sau 8s chưa nối thẳng → relay; `?relay=ws` đi hẳn relay);
+  `client/main.ts` nối vào + dòng F3. Không đổi gói game, không đụng điểm nối loot, không sửa `shared/types`.
+- Hạn mức: 4 người cùng qua relay ≈ 7,5 giờ/ngày (đo, gộp gói); không gộp chỉ ~4,4 giờ. Chi tiết `docs/relay.md`.
+- Test: 14 unit test (LoopbackHub + relay giả); relay thật bằng `wrangler dev`: 4 client Node, chuyển đường sau 8,0s,
+  đo tải 4 bot 60s (73 khung/s, 10 snapshot/s mỗi khách, 17 KB/s).
+- Deploy: `.github/workflows/relay.yml` (secret `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`), `deploy.yml` nhận
+  `VITE_RELAY_URL`. Thiếu secret → bỏ qua. Người dùng cần làm các bước trong `docs/relay.md`.
+- Cần báo B: `client/main.ts` đổi chỗ tạo Transport (nếu B sửa main.ts thì ghép tay); không có thay đổi giao thức.
 
 ## Hết giai đoạn độc lập
 
