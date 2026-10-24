@@ -23,8 +23,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | 2b' | —                                             | —         | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
 | 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9        | Xong, chờ merge                                                                                              |
 | 4   | `a/4-night-noise` (base `a/2c-party`)         | #10       | Xong, chờ merge                                                                                              |
-| 5   | `a/5-horde` (base `a/4-night-noise`)          | (đang mở) | Xong phần đợt tràn; lưu IndexedDB: cần báo B trước                                                           |
-| 6   | —                                             | —         | Cần báo B trước (hành động 2 người = chỗ chứa loot); kéo người gục làm ở 2c                                  |
+| 5   | `a/5-horde` (base `a/4-night-noise`)          | #11       | Xong phần đợt tràn, chờ merge; lưu IndexedDB: cần báo B trước                                                |
+| 6   | `a/6-turned` (base `a/5-horde`)               | (đang mở) | Xong phần độc lập (đồng đội thành zombie); hành động 2 người: cần báo B trước                                |
 | 7   | —                                             | —         | Chưa (bot, đo tải)                                                                                           |
 
 ## Việc treo
@@ -62,3 +62,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Băng thông: ngân sách 200 zombie/snapshot (130 gần nhất + xoay vòng), sao lưu thế giới xoay vòng 1 người/10s → 4 người + 648 zombie: 24.5 KB/s mỗi người.
 - Kết quả: 147 test. Đo không giao diện (4 người bất tử, 648 zombie): host TB 10–20 ms/tick (p95 25 ms).
 - Bỏ (cần báo B trước): lưu IndexedDB + xuất/nhập save (phải gồm túi đồ/rương/căn cứ của B + định dạng ở shared/types); thùng thưởng huyền thoại (loot) — HUD đã có chỗ, B nối khi `horde.survived === true`.
+
+## GĐ 6 – kế hoạch & kết quả
+
+- Làm: chết hẳn → xác ở lại, sau 8s thành zombie tại chỗ (`SimWorld.corpses`, `ZombieState.turnedFrom`), nhuộm màu người đó; kéo người gục đã làm ở 2c.
+- Bỏ (cần báo B trước): hành động 2 người (két sắt, cửa cuốn, kho quân sự = chỗ chứa loot / tương tác E; cửa cuốn còn cần đối tượng map); "mặc nguyên đồ của mình" (túi đồ) — B thả đồ khi giết zombie có `turnedFrom`.
