@@ -15,7 +15,11 @@ const SPAN = MAX_CHUNK * 2 + 1;
  * ở đây mỗi chunk chỉ lưu 1 byte/ô (trống/tường/cửa), khóa số, nhớ chunk vừa tra.
  */
 export class MapgenSource implements MapSource {
-  /** Giữa ngã tư của chunk (0, 0): đường ở ô 15–16 của mọi chunk (xem generateChunk). */
+  /**
+   * Giữa ngã tư của chunk (0, 0). TẠM: giả định bố cục đường của B (đường ở ô 15–16 của mọi chunk,
+   * xem generateChunk). Đổi sang API spawnPoint/ô đường của B khi có (đã đề nghị ở review PR #3).
+   * Test "điểm xuất phát nằm trên đường" sẽ báo nếu B đổi bố cục.
+   */
   readonly spawn: Vec2 = { x: 16, y: 16 };
   private chunks = new Map<number, Uint8Array>();
   private lastKey = NaN;
