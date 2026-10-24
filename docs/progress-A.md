@@ -22,8 +22,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8        | Xong, chờ merge                                                                                              |
 | 2b' | —                                             | —         | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
 | 2c  | `a/2c-party` (base `a/2b-net-advanced`)       | #9        | Xong, chờ merge                                                                                              |
-| 4   | `a/4-night-noise` (base `a/2c-party`)         | (đang mở) | Xong, chờ merge                                                                                              |
-| 5   | —                                             | —         | Chưa (phần lưu IndexedDB: cần báo B trước)                                                                   |
+| 4   | `a/4-night-noise` (base `a/2c-party`)         | #10       | Xong, chờ merge                                                                                              |
+| 5   | `a/5-horde` (base `a/4-night-noise`)          | (đang mở) | Xong phần đợt tràn; lưu IndexedDB: cần báo B trước                                                           |
 | 6   | —                                             | —         | Cần báo B trước (hành động 2 người = chỗ chứa loot); kéo người gục làm ở 2c                                  |
 | 7   | —                                             | —         | Chưa (bot, đo tải)                                                                                           |
 
@@ -55,3 +55,10 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Kế hoạch: ngày/đêm suy từ tick (`shared/sim/dayNight.ts`, 11 phút/ngày); tầm nhìn nón + đèn pin (F) vẽ ở HUD; tiếng ồn (`SimWorld.emitNoise`, zombie "investigate"); 6 loại zombie (`shared/sim/tuning/zombieKinds.ts`); vũng độc/axit; khổng lồ phá cửa. `?gio=0.9` để thử ban đêm.
 - Kết quả: 138 test; Browser pane: ngày/đêm/đèn pin hiển thị đúng; 200 zombie: frame TB 2.6 ms (lớp bóng tối 0.5 ms).
 - Bỏ (cần B): giảm thanh (phụ kiện súng), axit mòn giáp (giáp), súng phát tiếng ồn (B gọi `world.emitNoise(x, y, r)`). Khổng lồ phá tường: chưa làm (phải đồng bộ thay đổi map). Tường chưa che tầm nhìn.
+
+## GĐ 5 – kế hoạch & kết quả
+
+- Kế hoạch: đợt tràn vào đêm ngày 15k (`SimWorld.directHorde`, `shared/sim/tuning/horde.ts`), số lượng 150 → +100/đợt (tối đa 500) + Boss (1..4, đập đất/gầm); zombie đợt tràn được dẫn tới người chơi; kết thúc khi sáng/giết hết/cả đội chết; bảng thành tích (giết/gục). HUD: "Đợt tràn còn Y ngày", trời đỏ từ ngày 13. `?ngay=15&gio=0.79` để thử.
+- Băng thông: ngân sách 200 zombie/snapshot (130 gần nhất + xoay vòng), sao lưu thế giới xoay vòng 1 người/10s → 4 người + 648 zombie: 24.5 KB/s mỗi người.
+- Kết quả: 147 test. Đo không giao diện (4 người bất tử, 648 zombie): host TB 10–20 ms/tick (p95 25 ms).
+- Bỏ (cần báo B trước): lưu IndexedDB + xuất/nhập save (phải gồm túi đồ/rương/căn cứ của B + định dạng ở shared/types); thùng thưởng huyền thoại (loot) — HUD đã có chỗ, B nối khi `horde.survived === true`.
