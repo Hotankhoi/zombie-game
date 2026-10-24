@@ -5,7 +5,8 @@ import { ZOMBIE_NORMAL } from '@shared/data/zombies';
 import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/world';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
-import { isAlive, type PlayerState } from '@shared/sim/player';
+import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
+import { PARTY } from '@shared/sim/tuning/party';
 import type { SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
 import type { NetGame } from '../net/netGame';
@@ -69,6 +70,8 @@ export class WorldScene extends Phaser.Scene {
     'W' | 'A' | 'S' | 'D' | 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'SHIFT' | 'E',
     Phaser.Input.Keyboard.Key
   >;
+  /** R cứu, G kéo người gục (GĐ 2c) — đăng ký riêng, không đụng phím E. */
+  private partyKeys!: Record<'R' | 'G', Phaser.Input.Keyboard.Key>;
   /** Bấm nhanh giữa 2 tick vẫn được tính. */
   private attackQueued = false;
   private interactQueued = false;
@@ -131,6 +134,7 @@ export class WorldScene extends Phaser.Scene {
     this.keys.E.on('down', () => {
       if (!isTyping()) this.interactQueued = true;
     });
+    this.partyKeys = kb.addKeys('R,G', false) as typeof this.partyKeys;
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -202,6 +206,10 @@ export class WorldScene extends Phaser.Scene {
       if (k.E.isDown || this.interactQueued) buttons |= Btn.Interact;
       if (this.input.activePointer.leftButtonDown() || this.attackQueued) buttons |= Btn.Attack;
     }
+    if (!typing) {
+      if (this.partyKeys.R.isDown) buttons |= Btn.Revive;
+      if (this.partyKeys.G.isDown) buttons |= Btn.Drag;
+    }
     this.attackQueued = false;
     this.interactQueued = false;
     return { seq: ++this.seq, moveX: mx, moveY: my, aim: this.myAim, buttons };
@@ -271,11 +279,14 @@ export class WorldScene extends Phaser.Scene {
     }
     for (let i = zombies.length; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
     for (const p of others) {
-      if (p.alive) this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
+      if (!p.alive) continue;
+      if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
+      else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
     }
     const me = this.me();
     const pos = this.myDrawPos(alpha);
-    if (me && isAlive(me))
+    if (me && isDowned(me)) this.drawDowned(g, pos.x * T, pos.y * T, this.myColor, me.reviveProgress);
+    else if (me && isAlive(me))
       this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
@@ -297,6 +308,12 @@ export class WorldScene extends Phaser.Scene {
 
   private colorOf(id: PeerId): number {
     return this.session.peers.get(id)?.color ?? 0xcccccc;
+  }
+
+  /** Tên + màu của một người (HUD vẽ mũi tên/khung đội). */
+  peerInfo(id: PeerId): { name: string; color: number } {
+    const p = this.session.peers.get(id);
+    return { name: p?.name ?? 'Đồng đội', color: p?.color ?? 0xcccccc };
   }
 
   /** Map của B vẽ cửa đóng; cửa đang mở (theo snapshot host) vẽ đè: nền trống + cánh cửa áp một bên. */
@@ -338,6 +355,21 @@ export class WorldScene extends Phaser.Scene {
       for (const side of [-1, 1]) g.fillCircle(c + r * 0.55, c + side * r * 0.35, TEX_SCALE);
       g.generateTexture(key, size, size);
       g.destroy();
+    }
+  }
+
+  /** Người gục: nằm (hình dẹt, mờ) + viền đỏ nhấp nháy; đang được cứu thì có vòng tiến độ. */
+  private drawDowned(g: Phaser.GameObjects.Graphics, x: number, y: number, color: number, revive: number) {
+    const r = PLAYER.radius * TILE_SIZE;
+    g.fillStyle(color, 0.55).fillEllipse(x, y, r * 2.6, r * 1.3);
+    const blink = 0.4 + 0.4 * Math.abs(Math.sin(this.time.now / 250));
+    g.lineStyle(1, 0xef5350, blink).strokeCircle(x, y, r + 3);
+    if (revive > 0) {
+      const t = Math.min(1, revive / PARTY.reviveSec);
+      g.lineStyle(2, 0x66bb6a, 1);
+      g.beginPath();
+      g.arc(x, y, r + 5, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
+      g.strokePath();
     }
   }
 

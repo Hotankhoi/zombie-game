@@ -21,6 +21,9 @@ const snap: SnapshotMsg = {
       exhausted: true,
       sprinting: false,
       prevButtons: 3,
+      downedFor: 12.5,
+      reviveProgress: 1.5,
+      dragging: true,
     },
   ],
   zombies: [
@@ -103,8 +106,19 @@ describe('gameCodec', () => {
 
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
-    for (let n = 0; n < full.length; n++) expect(decodeGame(full.subarray(0, n))).toBeNull();
+    const ext = 1 + snap.players.length * 10; // khối mở rộng GĐ 2c ở cuối gói
+    for (let n = 0; n < full.length; n++) {
+      if (n !== full.length - ext) expect(decodeGame(full.subarray(0, n))).toBeNull();
+    }
     expect(decodeGame(new Uint8Array([1, 2, 3]))).toBeNull(); // gói phòng chờ
     expect(decodeGame(new Uint8Array([GameMsg.Events, 0, 0, 0, 0, 0, 1, 99]))).toBeNull();
+  });
+
+  it('snapshot bản cũ (không có khối mở rộng gục/cứu) vẫn đọc được, trạng thái gục = 0', () => {
+    const full = encodeGame(snap);
+    const old = decodeGame(full.subarray(0, full.length - (1 + snap.players.length * 10))) as SnapshotMsg;
+    expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });
+    const now = decodeGame(full) as SnapshotMsg;
+    expect(now.players[0]).toMatchObject({ downedFor: 12.5, reviveProgress: 1.5, dragging: true });
   });
 });

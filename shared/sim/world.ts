@@ -9,7 +9,9 @@ import { Doors, circleOverlapsTile, nearestDoor } from './doors';
 import { FlowField } from './flowField';
 import type { MapSource } from './grid';
 import { Btn, hasBtn, type PlayerInput } from './input';
-import { createPlayer, isAlive, stepPlayer, type PlayerState } from './player';
+import { createPlayer, isAlive, isDowned, isUp, stepPlayer, type PlayerState } from './player';
+import { moveCircle } from './collision';
+import { PARTY } from './tuning/party';
 import { countdown } from './timer';
 import { createZombie, stepZombie, type ZombieState } from './zombie';
 
@@ -149,10 +151,14 @@ export class SimWorld {
       if (!isAlive(p)) {
         p.respawnIn = countdown(p.respawnIn, DT);
         if (p.respawnIn === 0) this.respawn(p);
+      } else if (isDowned(p)) {
+        p.downedFor = countdown(p.downedFor, DT);
+        if (p.downedFor === 0) this.die(p);
       }
       if (input) this.applyInput(p, input);
       else p.sprinting = false;
     }
+    this.partyActions(players, inputs);
     this.zombies = this.zombies.filter((z) => z.hp > 0);
 
     const alive = players.filter(isAlive);
@@ -193,9 +199,90 @@ export class SimWorld {
     stepPlayer(p, input, DT, this.blocked);
     if (isAlive(p)) {
       if (hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
-      if (hasBtn(input, Btn.Attack)) this.attack(p);
+      // gục thì không chém được (luồng E ở trên giữ nguyên — B đang nối loot vào đó)
+      if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p);
     }
     p.prevButtons = input.buttons;
+  }
+
+  /**
+   * Cứu và kéo người gục (GĐ 2c). Người đứng được, giữ R và đứng yên cạnh người gục → cộng thời gian cứu;
+   * đủ PARTY.reviveSec thì người gục đứng dậy. Không ai cứu trong tick thì thời gian cứu giảm dần
+   * (PARTY.reviveDecayRate lần nhanh hơn lúc cứu) — mạng giật mất 1–2 input của người cứu không làm mất hết.
+   * Giữ G cạnh người gục → kéo họ theo sau lưng (người kéo đi chậm lại từ tick sau).
+   * Duyệt theo thứ tự id → tất định.
+   */
+  private partyActions(players: readonly PlayerState[], inputs: ReadonlyMap<PeerId, PlayerInput>): void {
+    const reviving = new Set<PeerId>();
+    for (const p of players) {
+      const input = inputs.get(p.id);
+      p.dragging = false;
+      if (!input || !isUp(p)) continue;
+      const still = input.moveX === 0 && input.moveY === 0;
+      if (hasBtn(input, Btn.Revive) && still) {
+        const d = this.nearestDowned(p, PARTY.reviveRange);
+        if (!d || reviving.has(d.id)) continue;
+        reviving.add(d.id);
+        d.reviveProgress += DT;
+        if (d.reviveProgress >= PARTY.reviveSec - 1e-6) this.standUp(d);
+      } else if (hasBtn(input, Btn.Drag)) {
+        const d = this.nearestDowned(p, PARTY.dragRange);
+        if (!d) continue;
+        p.dragging = true;
+        const tx = p.x - Math.cos(p.facing) * PARTY.dragOffset;
+        const ty = p.y - Math.sin(p.facing) * PARTY.dragOffset;
+        moveCircle(d, tx - d.x, ty - d.y, PLAYER.radius, this.blocked);
+      }
+    }
+    for (const p of players) {
+      if (isDowned(p) && !reviving.has(p.id)) {
+        p.reviveProgress = Math.max(0, p.reviveProgress - DT * PARTY.reviveDecayRate);
+      }
+    }
+  }
+
+  private nearestDowned(p: PlayerState, range: number): PlayerState | null {
+    let best: PlayerState | null = null;
+    let bestD = range;
+    for (const o of this.sortedPlayers()) {
+      if (o === p || !isDowned(o)) continue;
+      const d = Math.hypot(o.x - p.x, o.y - p.y);
+      if (d <= bestD && (best === null || d < bestD)) {
+        best = o;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  private standUp(p: PlayerState): void {
+    p.downedFor = 0;
+    p.reviveProgress = 0;
+    p.hp = PARTY.reviveHp;
+  }
+
+  /** Hết máu: còn đồng đội đứng được thì gục (chờ cứu), không thì chết hẳn. */
+  private down(p: PlayerState): void {
+    const someoneUp = [...this.players.values()].some((o) => o !== p && isUp(o));
+    if (!someoneUp) {
+      this.die(p);
+      return;
+    }
+    p.hp = 0;
+    p.downedFor = PARTY.downedSec;
+    p.reviveProgress = 0;
+    p.sprinting = false;
+  }
+
+  private die(p: PlayerState): void {
+    p.hp = 0;
+    p.downedFor = 0;
+    p.reviveProgress = 0;
+    p.dragging = false;
+    p.respawnIn = PLAYER.respawnSec;
+    p.sprinting = false;
+    this.flowDirty = true;
+    this.events.push({ type: 'death', player: p.id });
   }
 
   /**
@@ -216,7 +303,8 @@ export class SimWorld {
     for (const p of this.sortedPlayers()) {
       parts.push(
         `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
-          `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)}`,
+          `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
+          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)}`,
       );
     }
     for (const z of this.zombies) {
@@ -242,6 +330,9 @@ export class SimWorld {
     p.staminaIdle = 0;
     p.attackCd = 0;
     p.respawnIn = 0;
+    p.downedFor = 0;
+    p.reviveProgress = 0;
+    p.dragging = false;
     this.flowDirty = true;
     this.events.push({ type: 'respawn', player: p.id });
   }
@@ -283,14 +374,14 @@ export class SimWorld {
   }
 
   private bite(z: ZombieState, p: PlayerState): void {
-    p.hp = Math.max(0, p.hp - Z.biteDamage);
     this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
-    if (p.hp === 0) {
-      p.respawnIn = PLAYER.respawnSec;
-      p.sprinting = false;
-      this.flowDirty = true;
-      this.events.push({ type: 'death', player: p.id });
+    if (isDowned(p)) {
+      p.downedFor = Math.max(0, p.downedFor - PARTY.downedBitePenaltySec);
+      if (p.downedFor === 0) this.die(p);
+      return;
     }
+    p.hp = Math.max(0, p.hp - Z.biteDamage);
+    if (p.hp === 0) this.down(p);
   }
 
   /** Tách zombie chồng lên nhau (spatial hash ô 1×1) và đẩy zombie ra khỏi người chơi. */

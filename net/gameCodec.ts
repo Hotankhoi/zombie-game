@@ -30,6 +30,10 @@ export interface WirePlayer {
   exhausted: boolean;
   sprinting: boolean;
   prevButtons: number;
+  /** Gục/cứu/kéo (GĐ 2c) — gửi trong khối mở rộng cuối snapshot; gói thiếu khối thì = 0/false. */
+  downedFor: number;
+  reviveProgress: number;
+  dragging: boolean;
 }
 
 export interface WireZombie {
@@ -174,6 +178,8 @@ export class Reader {
   i32 = () => this.view.getInt32(this.at(4));
   f32 = () => this.view.getFloat32(this.at(4));
   f64 = () => this.view.getFloat64(this.at(8));
+  /** Còn dữ liệu chưa đọc (để đọc khối mở rộng nối cuối gói nếu có). */
+  more = () => this.pos < this.buf.length;
   bytes = (n: number) => {
     const p = this.at(n);
     return this.buf.subarray(p, p + n);
@@ -225,6 +231,14 @@ export function encodeGame(msg: GameMessage): Uint8Array {
       for (const d of msg.doors) {
         w.i16(clampI16(d.x - msg.originX));
         w.i16(clampI16(d.y - msg.originY));
+      }
+      // khối mở rộng GĐ 2c (nối cuối gói: bản cũ đọc tới cửa là dừng, không đọc nhầm)
+      w.u8(msg.players.length);
+      for (const p of msg.players) {
+        w.u8(p.slot);
+        w.f32(p.downedFor);
+        w.f32(p.reviveProgress);
+        w.u8(p.dragging ? 1 : 0);
       }
       break;
     case GameMsg.Events:
@@ -328,6 +342,9 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             exhausted: (flags & 1) !== 0,
             sprinting: (flags & 2) !== 0,
             prevButtons,
+            downedFor: 0,
+            reviveProgress: 0,
+            dragging: false,
           });
         }
         const zombies: WireZombie[] = [];
@@ -340,6 +357,16 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
         }
         const doors: { x: number; y: number }[] = [];
         for (let i = 0, n = r.u8(); i < n; i++) doors.push({ x: originX + r.i16(), y: originY + r.i16() });
+        if (r.more()) {
+          const bySlot = new Map(players.map((p) => [p.slot, p]));
+          for (let i = 0, n = r.u8(); i < n; i++) {
+            const p = bySlot.get(r.u8());
+            const downedFor = r.f32();
+            const reviveProgress = r.f32();
+            const dragging = r.u8() === 1;
+            if (p) Object.assign(p, { downedFor, reviveProgress, dragging });
+          }
+        }
         return { type, tick, ack, originX, originY, players, zombies, doors };
       }
       case GameMsg.Events: {

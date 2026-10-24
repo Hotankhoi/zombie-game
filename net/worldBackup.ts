@@ -36,8 +36,10 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(p.staminaIdle);
     w.f32(p.attackCd);
     w.f32(p.respawnIn);
-    w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0));
+    w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0) | (p.dragging ? 4 : 0));
     w.u8(p.prevButtons);
+    w.f32(p.downedFor);
+    w.f32(p.reviveProgress);
   }
   w.u16(s.zombies.length);
   for (const z of s.zombies) {
@@ -88,6 +90,8 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       const respawnIn = r.f32();
       const flags = r.u8();
       const prevButtons = r.u8();
+      const downedFor = r.f32();
+      const reviveProgress = r.f32();
       players.push({
         id,
         x,
@@ -101,6 +105,9 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         attackCd,
         prevButtons,
         respawnIn,
+        downedFor,
+        reviveProgress,
+        dragging: (flags & 4) !== 0,
       });
     }
     const zombies: ZombieState[] = [];

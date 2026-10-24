@@ -19,6 +19,10 @@ export const Btn = {
   Sprint: 1,
   Attack: 2,
   Interact: 4,
+  /** Giữ R cạnh đồng đội đang gục để cứu (GĐ 2c). Không dùng E để khỏi đụng mở cửa/đồ vật. */
+  Revive: 8,
+  /** Giữ G cạnh đồng đội đang gục để kéo đi (GĐ 2c/6). */
+  Drag: 16,
 } as const;
 
 export const IDLE_INPUT: PlayerInput = { seq: 0, moveX: 0, moveY: 0, aim: 0, buttons: 0 };

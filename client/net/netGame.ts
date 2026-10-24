@@ -2,6 +2,7 @@ import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
 import type { Transport } from '@net/transport';
+import { decodeRoomFull } from '@net/roomFull';
 import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
 import { INTEREST_RADIUS } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
@@ -41,6 +42,8 @@ export class NetGame {
   readonly simBenchMs: number;
   /** Bản sao lưu thế giới mới nhất từ host (≤10s tuổi) — dùng khi mình phải lên làm host. */
   backup: WorldState | null = null;
+  /** Host báo phòng đã đủ người (số tối đa) — mình chỉ xem, không vào trận được. */
+  roomFull: number | null = null;
   private worker: Worker | null = null;
   private timer: ReturnType<typeof setInterval>;
   private zombieCount: number | undefined;
@@ -69,8 +72,10 @@ export class NetGame {
     this.election.changed.on((h) => this.onHostChanged(h));
     transport.onMessage((data, from) => this.onMessage(data, from));
     transport.onMessage((data, from) => {
-      if (data[0] === WORLD_BACKUP_MSG && from === this.election.hostId)
-        this.backup = decodeBackup(data) ?? this.backup;
+      if (from !== this.election.hostId) return;
+      if (data[0] === WORLD_BACKUP_MSG) this.backup = decodeBackup(data) ?? this.backup;
+      const full = decodeRoomFull(data);
+      if (full !== null) this.roomFull = full;
     });
     transport.onPeerLeave((id) => this.toWorker({ t: 'leave', peer: id }));
     // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm
@@ -121,6 +126,7 @@ export class NetGame {
     if (host === self) this.startHost();
     else this.stopHost();
     if (this.sync.latest) this.migrations++;
+    this.roomFull = null;
     this.sync.resetHost();
   }
 
