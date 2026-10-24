@@ -19,7 +19,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 | --- | --------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------ |
 | 1a  | `a/1a-core-gameplay`                          | #4  | Xong, chờ merge                                                                                              |
 | 2a  | `a/2a-online-core` (base `b/map-generator`)   | #6  | Xong, chờ merge                                                                                              |
-| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | —   | Code + test xong; chưa push (mất mạng lúc làm) — push + mở PR khi có mạng                                    |
+| 2b  | `a/2b-net-advanced` (base `a/2a-online-core`) | #8  | Xong, chờ merge                                                                                              |
 | 2b' | —                                             | —   | Hoãn: delta snapshot, zombie tất định, ownership, hit client (viết lại đường snapshot, đụng chỗ B ghép loot) |
 | 2c  | —                                             | —   | Chưa                                                                                                         |
 | 4   | —                                             | —   | Chưa                                                                                                         |
@@ -41,5 +41,5 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 ### 2b – kết quả
 
 - Xong cả 4 mục. Test: 112 đạt. Một tab + 200 zombie: host 0.83 ms/tick, frame TB 2.2 ms.
-- Chưa thử được 2 tab qua P2P: internet của máy mất (relay Nostr, GitHub đều timeout) lúc làm.
+- 2 tab qua P2P: kênh unreliable mở, snapshot/input đi qua; chuyển host có bản lưu giữ đủ zombie.
 - Gói mới dùng số loại riêng ngoài gameCodec: 125 = sao lưu thế giới (`net/worldBackup.ts`), 126 = điểm host (`net/hostElection.ts`). B tránh dùng 2 số này.
