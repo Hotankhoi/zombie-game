@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ClientSync } from '@net/clientSync';
-import { GameMsg, decodeGame } from '@net/gameCodec';
+import { GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
+import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
 import { arenaMap } from '@shared/sim/grid';
 import { Btn, type PlayerInput } from '@shared/sim/input';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
-import { HostServer, INTEREST_RADIUS, type Outgoing } from './hostServer';
+import { BACKUP_EVERY, HostServer, INTEREST_RADIUS, type Outgoing } from './hostServer';
 
 interface Wire {
   at: number;
@@ -184,5 +185,76 @@ describe('HostServer + ClientSync', () => {
     }
     expect(next.world.players.get('b')!.x).toBeGreaterThan(before.x);
     expect(next.world.zombies).toHaveLength(25);
+  });
+
+  it('host gửi bản sao lưu toàn thế giới mỗi 10s (reliable) cho mọi người', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 30 });
+    const c = new ClientSync('a', arenaMap());
+    host.receive('a', c.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    const backups: Outgoing[] = [];
+    for (let t = 0; t < BACKUP_EVERY * 2; t++) {
+      for (const o of host.tick()) if (o.data[0] === WORLD_BACKUP_MSG) backups.push(o);
+    }
+    expect(backups).toHaveLength(2);
+    expect(backups[0]!.channel).toBe('reliable');
+    expect(decodeBackup(backups[1]!.data)!.zombies).toHaveLength(30);
+  });
+
+  it('chuyển host có bản sao lưu: giữ cả zombie ở xa người lên host (không chỉ quanh mình)', () => {
+    const m = match(['old', 'b'], { old: 0, b: 1 }, 0, 40);
+    const inputs = { old: wander('a'), b: wander('b') };
+    let backup = null;
+    const orig = m.host.tick.bind(m.host);
+    m.host.tick = () => {
+      const out = orig();
+      for (const o of out) if (o.to === 'b' && o.data[0] === WORLD_BACKUP_MSG) backup = decodeBackup(o.data);
+      return out;
+    };
+    for (let t = 0; t < BACKUP_EVERY + 40; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
+    expect(backup).not.toBeNull();
+    const c = m.clients.get('b')!;
+    const latest = c.latest!;
+    const keep = new Set(['b']);
+    const merged = mergeBackup(
+      backup,
+      c.toWorldState('m', keep),
+      { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS },
+      keep,
+    )!;
+    expect(merged.zombies.length).toBeGreaterThanOrEqual(c.toWorldState('m', keep)!.zombies.length);
+    const next = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 40, restore: merged });
+    expect(next.world.players.get('b')!.x).toBeCloseTo(c.predictor.state!.x, 0);
+  });
+});
+
+describe('ClientSync – ngoại suy khi thiếu snapshot', () => {
+  it('snapshot sau chưa tới: zombie đi tiếp theo vận tốc tối đa 3 tick rồi dừng', () => {
+    let now = 0;
+    const c = new ClientSync('me', arenaMap(), () => now);
+    c.receive(encodeGame({ type: GameMsg.Roster, slots: [{ slot: 0, id: 'me' }] }));
+    const snap = (tick: number, x: number): SnapshotMsg => ({
+      type: GameMsg.Snapshot,
+      tick,
+      ack: 0,
+      originX: 0,
+      originY: 0,
+      players: [],
+      zombies: [{ id: 1, x, y: 5, facing: 0, chasing: false }],
+      doors: [],
+    });
+    for (const [tick, x] of [
+      [10, 5],
+      [12, 6],
+    ] as const) {
+      now = tick * SIM_TICK_MS;
+      c.receive(encodeGame(snap(tick, x)));
+    }
+    // tới thời điểm vẽ ứng với tick 13 (sau snapshot cuối 1 tick): x ≈ 6 + 0.5
+    now = 13 * SIM_TICK_MS + c.interpDelayMs;
+    expect(c.sample().zombies[0]!.x).toBeCloseTo(6.5, 1);
+    // rất lâu sau: chỉ ngoại suy tối đa 3 tick (= +1.5 ô)
+    now = 30 * SIM_TICK_MS + c.interpDelayMs;
+    expect(c.sample().zombies[0]!.x).toBeCloseTo(7.5, 1);
+    expect(c.extrapolated).toBeGreaterThan(0);
   });
 });

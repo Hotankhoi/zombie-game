@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HostElection, type ElectionOptions } from './hostElection';
+import { HostElection, decodeScore, encodeScore, type ElectionOptions } from './hostElection';
 import { LoopbackHub, type LoopbackTransport } from './loopback';
 
 function room() {
@@ -95,5 +95,55 @@ describe('HostElection', () => {
     expect(seen).toEqual(['a', 'm']);
     expect(a.hostId).toBe('m');
     expect(m.isHost).toBe(true);
+  });
+
+  it('chưa có host: máy điểm tốt nhất (ping thấp, máy mạnh) nhận host dù id lớn hơn', () => {
+    const r = room();
+    const slow = r.join('a', { getScore: () => 400 });
+    const fast = r.join('z', { getScore: () => 60 });
+    r.advance(3000);
+    expect(fast.isHost).toBe(true);
+    expect(slow.hostId).toBe('z');
+  });
+
+  it('điểm gần bằng nhau (lệch ≤ 15) thì id nhỏ hơn làm host — mọi máy chọn giống nhau', () => {
+    const r = room();
+    const a = r.join('a', { getScore: () => 70 });
+    const b = r.join('b', { getScore: () => 60 });
+    r.advance(3000);
+    expect(a.isHost).toBe(true);
+    expect(b.hostId).toBe('a');
+  });
+
+  it('máy mạnh hơn vào sau không cướp host đang chạy', () => {
+    const r = room();
+    const old = r.join('m', { getScore: () => 500 });
+    r.advance(5000);
+    const strong = r.join('a', { getScore: () => 10 });
+    r.advance(3000);
+    expect(old.isHost).toBe(true);
+    expect(strong.hostId).toBe('m');
+  });
+
+  it('host rời: máy điểm tốt nhất còn lại lên thay', () => {
+    const r = room();
+    const h = r.join('a', { getScore: () => 10 });
+    const weak = r.join('b', { getScore: () => 300 });
+    const good = r.join('c', { getScore: () => 50 });
+    r.advance(4000);
+    expect(weak.hostId).toBe('a');
+    void r.members[0]!.tr.leave();
+    h.dispose();
+    r.members.splice(0, 1);
+    r.advance(300);
+    expect(good.isHost).toBe(true);
+    expect(weak.hostId).toBe('c');
+  });
+
+  it('gói điểm: mã hóa/giải mã, kẹp trong 0..65535', () => {
+    expect(decodeScore(encodeScore(123))).toBe(123);
+    expect(decodeScore(encodeScore(1e9))).toBe(65535);
+    expect(decodeScore(encodeScore(-5))).toBe(0);
+    expect(decodeScore(new Uint8Array([126]))).toBeNull();
   });
 });

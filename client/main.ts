@@ -36,19 +36,18 @@ let name = safeGet(NAME_KEY) ?? `Người sống sót ${Math.floor(Math.random()
 // ---- Mạng ----
 let netError: string | null = null;
 const iceServers = await loadIceServers();
-const conditioned = new ConditionedTransport(
-  new TrysteroTransport(room, {
-    iceServers,
-    forceRelay: url.searchParams.get('relay') === '1',
-    onError: (e) => {
-      netError = e;
-    },
-  }),
-);
+const trystero = new TrysteroTransport(room, {
+  iceServers,
+  forceRelay: url.searchParams.get('relay') === '1',
+  onError: (e) => {
+    netError = e;
+  },
+});
+const conditioned = new ConditionedTransport(trystero);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
 const session = new Session(net, { name, color });
-const game = new NetGame(net, room, zombieCount);
+const game = new NetGame(net, room, { zombieCount, rttOf: (id) => session.peers.get(id)?.rttMs ?? null });
 
 // ---- Phaser ----
 const phaser = new Phaser.Game({
@@ -98,6 +97,11 @@ function netStatsText(): string[] {
       (game.migrations > 0 ? ` · đổi host ${game.migrations} lần` : ''),
     `Ping tới host: ${ping == null ? '—' : `${Math.round(ping)} ms`}`,
     `Băng thông: ↑ ${net.upKBps.toFixed(1)} KB/s · ↓ ${net.downKBps.toFixed(1)} KB/s`,
+    `Kênh unreliable: ${trystero.unreliableOpen}/${net.peers().length} người`,
+    `Điểm host: mình ${game.election.scoreOf(net.selfId) ?? '—'}` +
+      (hostId && hostId !== net.selfId ? ` · host ${game.election.scoreOf(hostId) ?? '—'}` : '') +
+      ` · chạy thử ${game.simBenchMs.toFixed(1)} ms` +
+      (game.backup ? ` · có bản lưu tick ${game.backup.tick}` : ''),
     `Nhận: ${sync.zombieCount} zombie · snapshot ${sync.received} (muộn ${sync.stale})`,
     `Nội suy ${Math.round(sync.interpDelayMs)} ms · giật ${sync.jitterMs.toFixed(0)} ms`,
     `Dự đoán: lệch ${sync.predictor.lastError.toFixed(3)} ô · chờ ack ${sync.predictor.pendingCount}`,
