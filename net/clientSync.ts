@@ -24,6 +24,8 @@ const KEEP_SNAPSHOTS = 12;
 /** Trễ nội suy tối thiểu/tối đa (ms) cho zombie và đồng đội. */
 const MIN_INTERP_MS = 100;
 const MAX_INTERP_MS = 400;
+/** Snapshot tới muộn: ngoại suy theo vận tốc tối đa bấy nhiêu tick (150ms) rồi đứng chờ, không đoán xa hơn. */
+const MAX_EXTRAP_TICKS = 3;
 
 interface Snap {
   tick: number;
@@ -127,7 +129,13 @@ export class ClientSync {
     return this.snaps[this.snaps.length - 1]?.zombies.size ?? 0;
   }
 
-  /** Zombie + đồng đội tại thời điểm vẽ (lùi lại interpDelayMs để luôn có 2 snapshot kẹp hai đầu). */
+  /** Số lần vẽ phải ngoại suy vì snapshot tới muộn (bảng F3). */
+  extrapolated = 0;
+
+  /**
+   * Zombie + đồng đội tại thời điểm vẽ (lùi lại interpDelayMs để luôn có 2 snapshot kẹp hai đầu).
+   * Snapshot sau chưa tới (mất gói/giật): ngoại suy từ 2 snapshot cuối, tối đa MAX_EXTRAP_TICKS.
+   */
   sample(): { zombies: ZombieView[]; others: RemotePlayerView[] } {
     const zombies: ZombieView[] = [];
     const others: RemotePlayerView[] = [];
@@ -137,10 +145,21 @@ export class ClientSync {
     while (i > 0 && (this.snaps[i] as Snap).tick > t) i--;
     const a = this.snaps[i] as Snap;
     const b = this.snaps[i + 1];
-    const alpha = b ? Math.max(0, Math.min(1, (t - a.tick) / (b.tick - a.tick))) : 0;
-    const to = b ?? a;
+    let from: Snap | undefined;
+    let to = a;
+    let alpha = 0;
+    if (b) {
+      from = a;
+      to = b;
+      alpha = Math.max(0, Math.min(1, (t - a.tick) / (b.tick - a.tick)));
+    } else if (i > 0 && t > a.tick) {
+      // alpha > 1 trên đoạn (snapshot trước → a) = đi tiếp theo vận tốc cũ
+      from = this.snaps[i - 1] as Snap;
+      alpha = 1 + Math.min(t - a.tick, MAX_EXTRAP_TICKS) / (a.tick - from.tick);
+      this.extrapolated++;
+    }
     for (const [id, zb] of to.zombies) {
-      const za = b ? a.zombies.get(id) : undefined;
+      const za = from?.zombies.get(id);
       zombies.push(
         za
           ? {
@@ -155,7 +174,7 @@ export class ClientSync {
     }
     for (const [id, pb] of to.players) {
       if (id === this.selfId) continue;
-      const pa = b ? a.players.get(id) : undefined;
+      const pa = from?.players.get(id);
       const far = pa && Math.hypot(pb.x - pa.x, pb.y - pa.y) > 2; // hồi sinh: nhảy luôn
       const fb = aimToRad(pb.aim);
       others.push({

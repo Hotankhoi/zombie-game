@@ -1,4 +1,5 @@
 import { decodeGame, encodeGame, GameMsg, type WireEvent, type WirePlayer } from '@net/gameCodec';
+import { encodeBackup } from '@net/worldBackup';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
@@ -12,6 +13,8 @@ export const SNAPSHOT_EVERY = 2;
  * (AGENTS.md mục 2.7: ~1.5 màn hình; màn hình zoom 3 rộng khoảng 40 ô).
  */
 export const INTEREST_RADIUS = 32;
+/** Gửi bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất trạng thái. */
+export const BACKUP_EVERY = 200;
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
 const CATCH_UP_ABOVE = 1;
 /** Hàng input tối đa (1 giây). Dài hơn (máy khách treo rồi gửi dồn) thì bỏ input cũ nhất. */
@@ -103,6 +106,7 @@ export class HostServer {
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
+    if (this.world.tick % BACKUP_EVERY === 0) this.sendBackup();
 
     const out = this.out;
     this.out = [];
@@ -132,6 +136,12 @@ export class HostServer {
     if (!next) return null;
     c.ack = next.seq;
     return next;
+  }
+
+  private sendBackup(): void {
+    if (this.clients.size === 0) return;
+    const data = encodeBackup(this.world.state());
+    for (const c of this.clients.values()) this.out.push({ to: c.id, data, channel: 'reliable' });
   }
 
   private sendRoster(): void {

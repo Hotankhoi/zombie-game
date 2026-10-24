@@ -89,7 +89,7 @@ const byteToAngle = (b: number) => (b / 256) * TAU;
 const clampI16 = (v: number) => Math.max(-32768, Math.min(32767, Math.round(v)));
 
 /** Ghi tuần tự vào bộ đệm tự nới rộng. */
-class Writer {
+export class Writer {
   private buf = new Uint8Array(256);
   private view = new DataView(this.buf.buffer);
   len = 0;
@@ -154,7 +154,7 @@ class Writer {
 }
 
 /** Đọc tuần tự; đọc quá cuối gói thì ném lỗi (decode bắt lại và trả null). */
-class Reader {
+export class Reader {
   private view: DataView;
   pos = 0;
   constructor(private buf: Uint8Array) {
