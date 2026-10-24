@@ -32,12 +32,16 @@ export class HudScene extends Phaser.Scene {
   private teamTexts: Phaser.GameObjects.Text[] = [];
   private fpsShown = 0;
   private fpsAt = 0;
-  /** Lớp bóng tối + nón tầm nhìn (GĐ 4): tô tối cả màn hình rồi "khoét" phần nhìn thấy. */
   /**
-   * Lớp tối phủ cả màn hình, che bằng mặt nạ hình học đảo ngược (stencil GPU): phần nón tầm nhìn bị "khoét".
-   * Rẻ hơn hẳn RenderTexture (đo GĐ 7: RenderTexture tô + xóa cả màn hình mỗi frame tốn ~11 ms).
+   * Lớp bóng tối + nón tầm nhìn (GĐ 4): lớp tối phủ cả màn hình, che bằng mặt nạ hình học đảo ngược
+   * (stencil GPU): phần nón tầm nhìn bị "khoét". Rẻ hơn hẳn RenderTexture (đo GĐ 7: ~11 ms → ~2 ms/frame).
    */
   private vision!: Phaser.GameObjects.Rectangle;
+  /**
+   * Máy không có WebGL (Phaser.AUTO lùi về Canvas): Canvas không hỗ trợ mặt nạ đảo ngược (nó sẽ cắt NGƯỢC
+   * lại) → dùng RenderTexture tô tối rồi xóa phần nhìn thấy như trước (chậm hơn nhưng đúng).
+   */
+  private visionRt: Phaser.GameObjects.RenderTexture | null = null;
   private visionShape!: Phaser.GameObjects.Graphics;
   private clockText!: Phaser.GameObjects.Text;
   /** Trời đỏ dần trước đợt tràn (GĐ 5). */
@@ -57,9 +61,17 @@ export class HudScene extends Phaser.Scene {
     // tạo trước để nằm dưới mọi chữ/thanh của HUD
     this.vision = this.add.rectangle(0, 0, width, height, 0x05070c, 0).setOrigin(0, 0);
     this.visionShape = this.make.graphics({}, false);
-    this.vision.setMask(this.visionShape.createGeometryMask().setInvertAlpha(true));
+    if (this.game.renderer.type === Phaser.CANVAS) {
+      this.vision.setVisible(false);
+      this.visionRt = this.add.renderTexture(0, 0, width, height).setOrigin(0, 0);
+    } else {
+      this.vision.setMask(this.visionShape.createGeometryMask().setInvertAlpha(true));
+    }
     this.sky = this.add.graphics();
-    this.scale.on('resize', (size: Phaser.Structs.Size) => this.vision.setSize(size.width, size.height));
+    this.scale.on('resize', (size: Phaser.Structs.Size) => {
+      this.vision.setSize(size.width, size.height);
+      this.visionRt?.resize(size.width, size.height);
+    });
     this.gfx = this.add.graphics();
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
     this.fpsText = this.add.text(0, 0, '', { ...style, fontFamily: 'Consolas, monospace' }).setOrigin(1, 0);
@@ -190,6 +202,7 @@ export class HudScene extends Phaser.Scene {
   ) {
     const view = this.world.myView();
     const me = this.world.me();
+    this.visionRt?.clear();
     if (!view || !me || !isAlive(me)) {
       this.vision.setVisible(false);
       return;
@@ -203,7 +216,8 @@ export class HudScene extends Phaser.Scene {
     });
     const lerp = (a: number, b: number) => a + (b - a) * darkness;
 
-    this.vision.setVisible(true).setFillStyle(0x05070c, lerp(VISION.dimDay, VISION.dimNight));
+    const dim = lerp(VISION.dimDay, VISION.dimNight);
+    if (!this.visionRt) this.vision.setVisible(true).setFillStyle(0x05070c, dim);
     const g = this.visionShape;
     g.clear();
     g.fillStyle(0xffffff, 1);
@@ -223,6 +237,7 @@ export class HudScene extends Phaser.Scene {
         cone(o.x, o.y, o.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
       }
     }
+    if (this.visionRt) this.visionRt.fill(0x05070c, dim).erase(g);
   }
 
   /**
