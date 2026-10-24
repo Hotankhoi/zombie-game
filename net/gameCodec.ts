@@ -105,6 +105,8 @@ export type WireEvent =
       killed: boolean;
       assassination: boolean;
       silent: boolean;
+      /** Máu zombie còn lại sau đòn. */
+      hp: number;
     }
   | { kind: 'bite'; zombie: number; slot: number; x: number; y: number }
   | { kind: 'door'; x: number; y: number; open: boolean }
@@ -343,6 +345,7 @@ function writeEvent(w: Writer, e: WireEvent) {
       w.f32(e.x);
       w.f32(e.y);
       w.u8((e.killed ? 1 : 0) | (e.assassination ? 2 : 0) | (e.silent ? 4 : 0));
+      w.f32(e.hp);
       break;
     case 'bite':
       w.u16(e.zombie & 0xffff);
@@ -525,6 +528,7 @@ function readEvent(r: Reader): WireEvent | null {
         killed: (f & 1) !== 0,
         assassination: (f & 2) !== 0,
         silent: (f & 4) !== 0,
+        hp: r.f32(),
       };
     }
     case EV.bite:

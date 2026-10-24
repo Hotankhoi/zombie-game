@@ -100,6 +100,7 @@ describe('gameCodec', () => {
             killed: true,
             assassination: true,
             silent: true,
+            hp: 0,
           },
           { kind: 'bite', zombie: 3, slot: 0, x: 1, y: 2 },
           { kind: 'door', x: -100, y: 7, open: true },

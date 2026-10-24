@@ -38,3 +38,7 @@ Mở `?map=1&room=MAP001` để xem thử bằng `client/scenes/MapPreviewScene.
 ## Asset
 
 Tilesheet Kenney **Roguelike Modern City 2.0**, giấy phép CC0, được lưu nguyên bản trong `assets/kenney/roguelike-modern-city/` cùng giấy phép và thông tin nguồn. `preloadMapTiles(scene)` nạp ảnh nội bộ; Vite đóng gói URL tương thích GitHub Pages. Renderer ánh xạ TileId logic sang index tile của Kenney, nên thay hình không ảnh hưởng dữ liệu map/va chạm. Minimap dùng bảng màu riêng để dễ đọc.
+
+# API điểm xuất phát và đường
+
+`spawnPoint(chunkX = 0, chunkY = 0)` từ `world.ts` trả tọa độ thế giới theo đơn vị ô, ở tâm một ô đường tại ngã tư. Mặc định là `{ x: 16.5, y: 16.5 }`; A có thể dùng `spawn = spawnPoint()` trong adapter thay tọa độ viết cố định. `isRoadTile(tileX, tileY)` nhận tọa độ ô nguyên, hỗ trợ cả tọa độ âm; `ROAD_MIN`/`ROAD_MAX` công bố các chỉ số đường cục bộ. API này giữ nguyên dữ liệu map v1 và các golden test.
