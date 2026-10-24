@@ -5,6 +5,7 @@ import { arenaMap } from './grid';
 import { Btn, type PlayerInput } from './input';
 import { isAlive, isDowned, isUp } from './player';
 import { Predictor } from './prediction';
+import { testZombie } from './testMaps';
 import { PARTY } from './tuning/party';
 import { SimWorld } from './world';
 import type { ZombieState } from './zombie';
@@ -23,18 +24,7 @@ function duo() {
 }
 
 function biter(w: SimWorld, x: number, y: number): ZombieState {
-  const z: ZombieState = {
-    id: 999,
-    x,
-    y,
-    facing: 0,
-    hp: 100,
-    mode: 'chase',
-    target: 'a',
-    wanderIn: 1,
-    wanderMoving: false,
-    biteCd: 0,
-  };
+  const z = testZombie(999, x, y, { mode: 'chase', target: 'a' });
   w.zombies.push(z);
   return z;
 }

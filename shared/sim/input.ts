@@ -23,6 +23,8 @@ export const Btn = {
   Revive: 8,
   /** Giữ G cạnh đồng đội đang gục để kéo đi (GĐ 2c/6). */
   Drag: 16,
+  /** Nhấn F bật/tắt đèn pin (GĐ 4). */
+  Flashlight: 32,
 } as const;
 
 export const IDLE_INPUT: PlayerInput = { seq: 0, moveX: 0, moveY: 0, aim: 0, buttons: 0 };
