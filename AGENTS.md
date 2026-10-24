@@ -149,14 +149,15 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: đang làm 1a (lõi chơi) — nhánh `a/1a-core-gameplay`
-  - B: có thể bắt đầu 1b (sinh map) — dùng `Rng` trong `shared/util/rng.ts`
+  - A: 1a (lõi chơi) — PR #4, đang merge vào `main`; các giai đoạn sau (#6, #8–#14) merge tiếp theo thứ tự ở `docs/progress-A.md`.
+  - B: 1b (sinh map theo seed/chunk, renderer riêng, minimap, tile Kenney CC0) đã merge vào `main` (PR #3).
 - Ghi chú:
+  - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
   - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
   - **Giới hạn TURN**: đang dùng gói Metered **500 MB/tháng** (gói 20 GB đòi thẻ). Đủ cho phòng chờ/test, nhưng khi chơi thật (~25 KB/s/người) chỉ đủ vài giờ relay mỗi tháng → GĐ 2/7 (A) cần relay dự phòng không thẻ (Cloudflare Workers/Durable Objects free) hoặc TURN miễn phí khác.
-  - Asset Kenney chưa tải (máy dựng GĐ 0 không truy cập được kenney.nl) — tải ở GĐ 1a/1b.
+  - Asset bản đồ (B): Kenney Roguelike Modern City 2.0 đã có trong `assets/kenney/roguelike-modern-city/`, kèm giấy phép CC0 và nguồn trong `CREDITS.md`.
   - GitHub Pages miễn phí yêu cầu repo **public**.
   - Trễ ở bảng F3 chỉ cộng vào gói **gửi đi** của tab đó: đặt 150ms ở 1 tab → ping +150ms; ở cả 2 tab → +300ms.
   - Tab bị ẩn thì trình duyệt dừng vòng lặp game nên tab đó hiện "đang đo…" — bình thường, không phải lỗi mạng.
