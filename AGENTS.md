@@ -149,8 +149,8 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: bắt đầu 1a (lõi chơi)
-  - B: đã triển khai 1b trên `b/map-generator`: sinh map theo seed/chunk, renderer riêng, minimap và tile Kenney CC0; PR #3 chờ A review.
+  - A: 1a (lõi chơi) — PR #4, đang merge vào `main`; các giai đoạn sau (#6, #8–#14) merge tiếp theo thứ tự ở `docs/progress-A.md`.
+  - B: 1b (sinh map theo seed/chunk, renderer riêng, minimap, tile Kenney CC0) đã merge vào `main` (PR #3).
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
