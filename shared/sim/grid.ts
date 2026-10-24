@@ -66,7 +66,7 @@ export class GridMap implements MapSource {
 
 /**
  * Bản đồ thử 48×36 ô: sân trống ở giữa, 5 phòng có cửa, vài cột chắn.
- * TẠM — giai đoạn 1a dùng trong lúc map của B (1b) chưa merge, và dùng cho test.
+ * Dùng cho test (game thật dùng map của B qua MapgenSource).
  */
 export function arenaMap(): GridMap {
   const m = new GridMap(48, 36, { x: 24.5, y: 17.5 });
