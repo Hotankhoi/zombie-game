@@ -162,8 +162,14 @@ export class SimWorld {
   corpses: Corpse[] = [];
 
   /** Ô chặn: tường, hoặc cửa đang đóng. */
-  readonly blocked: BlockedFn = (tx, ty) =>
-    this.map.isWall(tx, ty) || (this.map.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
+  readonly blocked: BlockedFn = (tx, ty) => {
+    const m = this.map;
+    if (m.tileKind) {
+      const k = m.tileKind(tx, ty);
+      return k === 1 || (k === 2 && !this.doors.isOpen(tx, ty));
+    }
+    return m.isWall(tx, ty) || (m.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
+  };
   /** Chỉ tường — khổng lồ đi xuyên cửa đóng (và phá nó). */
   readonly wallsOnly: BlockedFn = (tx, ty) => this.map.isWall(tx, ty);
 
@@ -729,34 +735,44 @@ export class SimWorld {
     if (p.hp === 0) this.down(p);
   }
 
-  /** Tách zombie chồng lên nhau (spatial hash ô 1×1) và đẩy zombie ra khỏi người chơi. */
+  /**
+   * Tách zombie chồng lên nhau (spatial hash ô 1×1) và đẩy zombie ra khỏi người chơi.
+   * Đợt tràn 650 con dồn sát là chỗ nóng nhất của host (GĐ 7): danh sách ô dạng liên kết (không tạo mảng
+   * mỗi tick), so bình phương khoảng cách trước khi lấy căn, chỉ đẩy khỏi tường những con vừa bị xê dịch
+   * (con tự đi đã được moveCircle đẩy rồi).
+   */
   private separate(alive: readonly PlayerState[]): void {
     const zs = this.zombies;
-    const cells = new Map<number, number[]>();
+    const n = zs.length;
+    const head = new Map<number, number>();
+    const next = new Int32Array(n);
+    const radius = new Float64Array(n);
+    const moved = new Uint8Array(n);
     const cellKey = (cx: number, cy: number) => ((cx & 0xffff) << 16) | (cy & 0xffff);
-    for (let i = 0; i < zs.length; i++) {
+    // duyệt ngược để danh sách mỗi ô theo thứ tự chỉ số tăng dần (tất định, giống bản cũ)
+    for (let i = n - 1; i >= 0; i--) {
       const z = zs[i] as ZombieState;
+      radius[i] = radiusOf(z);
       const k = cellKey(Math.floor(z.x), Math.floor(z.y));
-      const list = cells.get(k);
-      if (list) list.push(i);
-      else cells.set(k, [i]);
+      next[i] = head.get(k) ?? -1;
+      head.set(k, i);
     }
-    for (let i = 0; i < zs.length; i++) {
+    for (let i = 0; i < n; i++) {
       const a = zs[i] as ZombieState;
+      const ra = radius[i] as number;
       const cx = Math.floor(a.x);
       const cy = Math.floor(a.y);
       for (let oy = -1; oy <= 1; oy++) {
         for (let ox = -1; ox <= 1; ox++) {
-          const list = cells.get(cellKey(cx + ox, cy + oy));
-          if (!list) continue;
-          for (const j of list) {
+          for (let j = head.get(cellKey(cx + ox, cy + oy)) ?? -1; j !== -1; j = next[j] as number) {
             if (j <= i) continue;
             const b = zs[j] as ZombieState;
-            const minD = radiusOf(a) + radiusOf(b);
+            const minD = ra + (radius[j] as number);
             const dx = b.x - a.x;
             const dy = b.y - a.y;
-            const d = Math.hypot(dx, dy);
-            if (d >= minD) continue;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= minD * minD) continue;
+            const d = Math.sqrt(d2);
             let nx: number;
             let ny: number;
             if (d < 1e-6) {
@@ -773,21 +789,26 @@ export class SimWorld {
             a.y -= ny * half;
             b.x += nx * half;
             b.y += ny * half;
+            moved[i] = 1;
+            moved[j] = 1;
           }
         }
       }
     }
-    for (const z of zs) {
-      const minPD = radiusOf(z) + PLAYER.radius;
+    for (let i = 0; i < n; i++) {
+      const z = zs[i] as ZombieState;
+      const minPD = (radius[i] as number) + PLAYER.radius;
       for (const p of alive) {
         const dx = z.x - p.x;
         const dy = z.y - p.y;
-        const d = Math.hypot(dx, dy);
-        if (d >= minPD || d < 1e-6) continue;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= minPD * minPD || d2 < 1e-12) continue;
+        const d = Math.sqrt(d2);
         z.x = p.x + (dx / d) * minPD;
         z.y = p.y + (dy / d) * minPD;
+        moved[i] = 1;
       }
-      pushOut(z, radiusOf(z), breaksDoors(z.kind) ? this.wallsOnly : this.blocked);
+      if (moved[i]) pushOut(z, radius[i] as number, breaksDoors(z.kind) ? this.wallsOnly : this.blocked);
     }
   }
 
