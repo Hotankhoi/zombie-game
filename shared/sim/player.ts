@@ -2,6 +2,7 @@ import { PLAYER } from '@shared/data/player';
 import type { PeerId, Vec2 } from '@shared/types';
 import { moveCircle, type BlockedFn } from './collision';
 import { Btn, aimToRad, hasBtn, type PlayerInput } from './input';
+import { countdown, reached } from './timer';
 
 export interface PlayerState {
   id: PeerId;
@@ -48,7 +49,7 @@ export function isAlive(p: PlayerState): boolean {
 
 /** Di chuyển + stamina cho 1 tick. Đánh/mở cửa xử lý ở SimWorld vì cần biết zombie/cửa. */
 export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, blocked: BlockedFn): void {
-  p.attackCd = Math.max(0, p.attackCd - dt);
+  p.attackCd = countdown(p.attackCd, dt);
   if (!isAlive(p)) {
     p.sprinting = false;
     return;
@@ -81,7 +82,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
 
 function regenStamina(p: PlayerState, dt: number): void {
   p.staminaIdle += dt;
-  if (p.staminaIdle >= PLAYER.staminaRegenDelaySec) {
+  if (reached(p.staminaIdle, PLAYER.staminaRegenDelaySec)) {
     p.stamina = Math.min(PLAYER.maxStamina, p.stamina + PLAYER.staminaRegenPerSec * dt);
   }
   if (p.exhausted && p.stamina >= PLAYER.maxStamina * PLAYER.sprintResumeFraction) {

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { KNIFE } from '@shared/data/melee';
 import { ZOMBIE_NORMAL } from '@shared/data/zombies';
+import { SIM_TICK_MS } from '@shared/types';
 import { Rng } from '@shared/util/rng';
 import { arenaMap } from './grid';
 import { Btn, type PlayerInput } from './input';
@@ -93,5 +95,40 @@ describe('SimWorld', () => {
       }
     }
     expect(overlaps).toBe(0);
+  });
+  it('giữ nút chém: dao chém đúng mỗi cooldownSec (không trễ 1 tick vì sai số số thực)', () => {
+    const w = new SimWorld({ seed: 'cd', map: arenaMap(), zombieCount: 0 });
+    w.addPlayer('p');
+    const hold: PlayerInput = { seq: 0, moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack };
+    const swingTicks: number[] = [];
+    for (let t = 0; t < 40; t++) {
+      w.step(new Map([['p', hold]]));
+      if (w.events.some((e) => e.type === 'swing')) swingTicks.push(t);
+    }
+    const every = Math.round((KNIFE.cooldownSec * 1000) / SIM_TICK_MS);
+    expect(swingTicks).toEqual([0, every, every * 2, every * 3, every * 4]);
+  });
+
+  it('mã băm tính cả trạng thái ẩn (nút tick trước, bộ đếm lang thang, RNG)', () => {
+    const make = () => {
+      const w = new SimWorld({ seed: 'h', map: arenaMap(), zombieCount: 5 });
+      w.addPlayer('p');
+      w.step(new Map());
+      return w;
+    };
+    const base = make().hash();
+    expect(make().hash()).toBe(base);
+
+    const a = make();
+    a.players.get('p')!.prevButtons = Btn.Interact;
+    expect(a.hash()).not.toBe(base);
+
+    const b = make();
+    b.zombies[0]!.wanderIn += 1;
+    expect(b.hash()).not.toBe(base);
+
+    const c = make();
+    c.rng.next();
+    expect(c.hash()).not.toBe(base);
   });
 });

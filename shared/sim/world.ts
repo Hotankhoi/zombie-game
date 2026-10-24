@@ -10,6 +10,7 @@ import { FlowField } from './flowField';
 import type { MapSource } from './grid';
 import { Btn, IDLE_INPUT, hasBtn, type PlayerInput } from './input';
 import { createPlayer, isAlive, stepPlayer, type PlayerState } from './player';
+import { countdown } from './timer';
 import { createZombie, stepZombie, type ZombieState } from './zombie';
 
 /** Sự kiện trong một tick — client dùng để vẽ hiệu ứng (GĐ 2 gửi qua kênh reliable). */
@@ -95,8 +96,8 @@ export class SimWorld {
     for (const p of players) {
       const input = inputs.get(p.id) ?? IDLE_INPUT;
       if (!isAlive(p)) {
-        p.respawnIn -= DT;
-        if (p.respawnIn <= 0) this.respawn(p);
+        p.respawnIn = countdown(p.respawnIn, DT);
+        if (p.respawnIn === 0) this.respawn(p);
       }
       stepPlayer(p, input, DT, this.blocked);
       if (isAlive(p)) {
@@ -126,17 +127,31 @@ export class SimWorld {
     this.tick++;
   }
 
-  /** Mã băm trạng thái — để test tính tất định (và GĐ 2 so khớp host/client). */
+  /**
+   * Mã băm trạng thái — để test tính tất định (và GĐ 2 so khớp host/client).
+   * Gồm MỌI trường ảnh hưởng tới tick sau (cả trạng thái ẩn: nút tick trước, bộ đếm, RNG),
+   * để hai bản cùng hash thì chạy tiếp cùng input sẽ ra cùng kết quả.
+   */
   hash(): string {
     const f = (n: number) => n.toFixed(4);
-    const parts: string[] = [`t${this.tick}`];
+    const b = (v: boolean) => (v ? 1 : 0);
+    const parts: string[] = [
+      `t${this.tick}`,
+      `r${this.rng.stateValue}`,
+      `n${this.nextZombieId}`,
+      `f${b(this.flowDirty)}`,
+    ];
     for (const p of this.sortedPlayers()) {
       parts.push(
-        `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${f(p.attackCd)},${f(p.respawnIn)}`,
+        `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
+          `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)}`,
       );
     }
     for (const z of this.zombies) {
-      parts.push(`z${z.id}:${f(z.x)},${f(z.y)},${f(z.facing)},${f(z.hp)},${z.mode},${z.target ?? ''}`);
+      parts.push(
+        `z${z.id}:${f(z.x)},${f(z.y)},${f(z.facing)},${f(z.hp)},${z.mode},${z.target ?? ''},` +
+          `${f(z.wanderIn)},${b(z.wanderMoving)},${f(z.biteCd)}`,
+      );
     }
     parts.push(`d${this.doors.openList().join(';')}`);
     return hashString(parts.join('|')).toString(16).padStart(8, '0');

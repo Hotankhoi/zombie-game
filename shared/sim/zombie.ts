@@ -5,6 +5,7 @@ import type { Rng } from '@shared/util/rng';
 import { angleDiff, hasLineOfSight, moveCircle, type BlockedFn } from './collision';
 import type { FlowField } from './flowField';
 import { isAlive, type PlayerState } from './player';
+import { countdown } from './timer';
 
 export type ZombieMode = 'wander' | 'chase';
 
@@ -71,7 +72,7 @@ export interface ZombieStepCtx {
 
 export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
   const { dt, blocked } = ctx;
-  z.biteCd = Math.max(0, z.biteCd - dt);
+  z.biteCd = countdown(z.biteCd, dt);
 
   if (z.mode === 'wander') {
     for (const p of ctx.players) {
@@ -118,8 +119,8 @@ export function startChase(z: ZombieState, target: PeerId): void {
 }
 
 function wander(z: ZombieState, ctx: ZombieStepCtx): void {
-  z.wanderIn -= ctx.dt;
-  if (z.wanderIn <= 0) {
+  z.wanderIn = countdown(z.wanderIn, ctx.dt);
+  if (z.wanderIn === 0) {
     z.wanderIn = 2 + ctx.rng.next() * 3;
     z.wanderMoving = ctx.rng.chance(0.6);
     z.facing = ctx.rng.next() * Math.PI * 2;
