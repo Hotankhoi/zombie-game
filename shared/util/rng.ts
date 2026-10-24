@@ -9,6 +9,11 @@ export class Rng {
     this.state = typeof seed === 'string' ? hashString(seed) : seed >>> 0;
   }
 
+  /** Trạng thái hiện tại (chỉ đọc) — để băm/so khớp mô phỏng giữa các máy. */
+  get stateValue(): number {
+    return this.state;
+  }
+
   /** Số thực trong [0, 1). */
   next(): number {
     let t = (this.state = (this.state + 0x6d2b79f5) >>> 0);

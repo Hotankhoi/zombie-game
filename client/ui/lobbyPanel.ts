@@ -29,6 +29,13 @@ export function mountLobbyPanel(root: HTMLElement, opts: LobbyOptions) {
     <div class="status"></div>`;
   root.appendChild(el);
 
+  const preview = new URLSearchParams(window.location.search);
+  if (preview.get('loot') === '1') {
+    void import('./loot/preview').then(({ mountLootPreview }) => mountLootPreview(root));
+  } else if (preview.get('inventory') === '1') {
+    void import('./inventory/preview').then(({ mountInventoryPreview }) => mountInventoryPreview(root));
+  }
+
   const code = el.querySelector<HTMLDivElement>('.code')!;
   const input = el.querySelector<HTMLInputElement>('input')!;
   const list = el.querySelector<HTMLUListElement>('.peers')!;
