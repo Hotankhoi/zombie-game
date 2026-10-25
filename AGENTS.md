@@ -143,18 +143,18 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
 
 ## 8. Trạng thái
 
-- Giai đoạn hiện tại: **0 – xong hẳn** (đã đạt cả 3 tiêu chí "Xong khi"). Đang làm 1a (A) và 1b (B).
+- Giai đoạn hiện tại: 0, 1a, 1b, 2 (trừ 2b'), 4, 5 (đợt tràn), 6 (phần A), 7 (phần A) **đã vào `main`** (2026-10-25). Đang làm GĐ 3 (B: loot online). Chờ bàn A↔B: file save (`docs/save-format.md`, PR #21), hành động 2 người, 2b'.
 - Repo: https://github.com/Hotankhoi/zombie-game · Game: https://hotankhoi.github.io/zombie-game/
   - Đã kiểm tra: 2 tab cùng `?room=` thấy nhau, có ping/pong; trễ 150ms ở cả 2 tab → ping ≈ 300ms.
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
 - Ai đang làm gì:
-  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13); đang merge 7b relay dự phòng (#14, xem `docs/relay.md`); phần còn lại theo thứ tự ở `docs/progress-A.md`.
-  - B: 1b (sinh map theo seed/chunk, renderer riêng, minimap, tile Kenney CC0) đã merge vào `main` (PR #3); hợp đồng loot online + giao thức v3 đã vào `main` (PR #15).
+  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13), relay dự phòng (#14, `docs/relay.md`), điểm xuất phát theo map B (#17), tường che tầm nhìn (#18), hồi sinh an toàn (#19), khổng lồ phá tường (#20). Mở chờ B góp ý: đề xuất file save (#21). Chi tiết ở `docs/progress-A.md`.
+  - B: đã vào `main`: 1b (#3), hợp đồng loot online + giao thức v3 (#15). Đang mở: #5 (túi đồ), #7 (rương), #16 (loot online) — B tự rebase lên `main` rồi merge.
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
-  - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
+  - Kênh unreliable thật (DataChannel unordered) đã có (GĐ 2b). Gói riêng của A: 124 phòng đầy, 125 sao lưu thế giới (có byte phiên bản, hiện 4), 126 điểm host; gói trong trận 16–21 (21 = `MapDelta`, ô map đã đổi). Loot của B: 110–113.
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
   - **Giới hạn TURN**: đang dùng gói Metered **500 MB/tháng** (gói 20 GB đòi thẻ). Đủ cho phòng chờ/test, nhưng khi chơi thật (~25 KB/s/người) chỉ đủ vài giờ relay mỗi tháng → GĐ 2/7 (A) cần relay dự phòng không thẻ (Cloudflare Workers/Durable Objects free) hoặc TURN miễn phí khác.
   - Asset bản đồ (B): Kenney Roguelike Modern City 2.0 đã có trong `assets/kenney/roguelike-modern-city/`, kèm giấy phép CC0 và nguồn trong `CREDITS.md`.
