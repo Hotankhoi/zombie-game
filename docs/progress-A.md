@@ -25,8 +25,6 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Phần 2b (`a/safe-respawn`): hồi sinh ở ô đường gần đồng đội còn sống nhất (không còn ai → gần điểm xuất phát), không zombie trong 10 ô; bất tử 4s (`PlayerState.shield`, không mất máu vì cắn/vũng/Boss); vòng sáng quanh người vừa hồi sinh. Bản lưu thế giới lên phiên bản 3 (thêm `shield`).
 - Phần 2b: PR #19 đã merge.
 - Phần 2c (`a/giant-walls`): khổng lồ/Boss đuổi người trong 9 ô thì đi thẳng, húc tường trước mặt (tường 100 máu, 30/s, Boss ×2) → ô trống mãi mãi. `SimWorld.mapChanges` → host gửi `GameMsg.MapDelta` (21, reliable: ô vừa vỡ cho mọi người; cả danh sách cho người mới vào/khi đổi host). Bản lưu thế giới phiên bản 4 (`brokenWalls`, `wallDamage`). Loadtest: đợt tràn tối đa 22.2 KB/s TB, đỉnh 24.7.
-- Phần 2c: PR #20 đã merge.
-- Phần 2d (`a/save-format`): `docs/save-format.md` — đề xuất file save JSON có `saveVersion` + phiên bản riêng cho `world` (A, = WORLD_BACKUP_VERSION 4), `loot` (B, LootReplicaWire v1), `map.changes` (ô đã đổi); cần `playerKey` bền thay PeerId. PR chỉ tài liệu, CHỜ B GÓP Ý (không tự merge).
 
 ## Các giai đoạn
 
