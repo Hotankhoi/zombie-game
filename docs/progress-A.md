@@ -88,6 +88,15 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Module mới (`shared/inventory`, `shared/loot`, `shared/mapgen/chests.ts`, `client/ui/inventory|loot`) **chưa được gọi
   từ trận**. Việc tiếp: nối loot vào trận theo `docs/loot-online-plan.md` (hợp đồng, codec, host/worker/UI, đổi host).
 
+## Phiên 2026-10-25 (đêm): nối loot phần 2A (cloud session, không trình duyệt)
+
+Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` (nhánh `claude/magical-brahmagupta-cuezvn`, làm lại từ
+`main` sau mỗi lần merge), CI xanh thì merge commit.
+
+- Bước 1 — codec 110–113 (`net/lootCodec.ts`, PR #29): danh mục theo số thứ tự (độ hiếm/món lấy từ danh mục), kiểm tra
+  chặt, ID rương gọn, replica đầy đủ + phần đổi (`applyLootPatch`, `isValidReplica`, `isValidPatch`). 279 test.
+- Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.
