@@ -84,7 +84,7 @@ Gói 125 hiện chỉ mang `WorldState` của A (chưa có túi đồ/rương). 
 
 - Mẩu 0 đã là chỗ của mọi trạng thái "chỉ có một bản" (cửa, vũng, tường vỡ, đợt tràn, xác); mẩu 1–9 chỉ chứa zombie `id % 10 === k` + danh sách người chơi.
 - Phần loot chèn vào cuối phần chung của mẩu 0 dưới dạng khối có độ dài (`u32` + byte; B tự định bố cục, A chỉ cắt/ghép byte) và tăng `WORLD_BACKUP_VERSION` lên 6.
-- Mẩu 0 sẽ to hơn các mẩu khác (rương + túi đồ có thể vài chục KB). Nếu mẩu 0 vượt ~5 KB thì tách thành mẩu riêng gửi thưa hơn (30s) — cần đo lại ngân sách: đợt tràn tối đa đang ở 19.70 KB/s đỉnh 1 người, B còn ~0.3 KB/s trong ngưỡng 20 KB/s. B đo kích thước thật rồi báo A.
+- Mẩu 0 sẽ to hơn các mẩu khác (rương + túi đồ có thể vài chục KB). Nếu mẩu 0 vượt ~5 KB thì tách thành mẩu riêng gửi thưa hơn (30s) — cần đo lại ngân sách. Ngưỡng chính thức là **25 KB/s mỗi người** (AGENTS.md mục 2); 20 KB/s chỉ là mức A tự đặt để chừa chỗ cho B. Ở đợt tràn tối đa, đỉnh 5s của 1 người hiện là 19.70 KB/s → B có ~5 KB/s tới ngưỡng 25 cho loot (nên giữ loot ≤ 3 KB/s để còn dư). B đo kích thước thật rồi báo A.
 - File save (mục 2) không bị ràng buộc bởi mẩu: `loot` ở file là `LootReplicaWire` nguyên vẹn.
 
 ## 4. Danh tính bền của người chơi (`playerKey`) — cần thống nhất trước
