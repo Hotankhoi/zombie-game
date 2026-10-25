@@ -1,5 +1,8 @@
+import { ClientLoot } from '@net/clientLoot';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
+import { isLootPacket } from '@net/lootCodec';
+import { WORLD_BACKUP_MSG, decodeBackupPart } from '@net/worldBackup';
 import { HostServer } from '@host/hostServer';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import { tickOfDay } from '@shared/sim/dayNight';
@@ -8,6 +11,7 @@ import { DAY } from '@shared/sim/tuning/night';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
 import { Bot } from './bot';
+import { LootBot } from './lootBot';
 
 export interface LoadTestOptions {
   /** Tên kịch bản (in trong báo cáo). */
@@ -24,6 +28,8 @@ export interface LoadTestOptions {
   /** Người chơi không chết (để đo tải đợt tràn trọn vẹn, không bị thua giữa chừng). */
   immortal?: boolean;
   room?: string;
+  /** Bot mở rương mỗi bấy nhiêu tick (khoảng ngẫu nhiên). Mặc định 15–30 s; `false` = không loot. */
+  loot?: [number, number] | false;
 }
 
 export interface LoadReport {
@@ -43,6 +49,16 @@ export interface LoadReport {
   /** Cửa sổ 5s cao nhất của NGƯỜI nhận nhiều nhất (KB/s) — đỉnh thật mà một máy phải chịu. */
   downPeakMaxKBps: number;
   upKBps: number;
+  /**
+   * Loot (gói 110–113 + khối loot trong mẩu 0 bản lưu 125): nhận TB mỗi người, đỉnh 5s của người nhận nhiều nhất,
+   * gửi TB mỗi người (KB/s); số lần tới rương / thao tác thành công / đồ đang có trong túi cả nhóm.
+   */
+  lootDownKBps: number;
+  lootPeakMaxKBps: number;
+  lootUpKBps: number;
+  lootVisits: number;
+  lootOk: number;
+  lootItems: number;
   /**
    * Sai lệch dự đoán lớn nhất (ô), bỏ qua lần "nhảy" > 2 ô (hồi sinh, bị đồng đội kéo — đúng luật, không phải lỗi
    * dự đoán) — và số lần phải sửa > 0.05 ô mỗi phút mỗi người.
@@ -84,6 +100,48 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
   const bots = new Map(ids.map((id) => [id, new Bot(syncs.get(id)!, id)]));
   const rng = new Rng('loss');
   const toHost: { at: number; from: PeerId; data: Uint8Array }[] = [];
+  let lootUp = 0;
+  let lootDown = 0;
+  let t = 0;
+  const loots = new Map(
+    ids.map((id) => [
+      id,
+      new ClientLoot({
+        seed,
+        key: `bot-${id}`.padEnd(22, '0').slice(0, 22),
+        // loot đi kênh reliable: không mất, cùng độ trễ
+        send: (data) => {
+          lootUp += data.length;
+          up += data.length;
+          toHost.push({ at: t + lagTicks, from: id, data });
+        },
+        now: () => now,
+      }),
+    ]),
+  );
+  const lootBots =
+    opts.loot === false
+      ? new Map<PeerId, LootBot>()
+      : new Map(
+          ids.map((id) => [
+            id,
+            new LootBot(
+              loots.get(id)!,
+              seed,
+              id,
+              (x, y) => {
+                const p = host.world.players.get(id);
+                if (p) {
+                  p.x = x;
+                  p.y = y;
+                }
+              },
+              opts.loot || [300, 600],
+            ),
+          ]),
+        );
+  const lootOwn = new Map(ids.map((id) => [id, { sum: 0, ticks: [] as number[] }]));
+  let lootPeakMax = 0;
   const toClient = new Map<PeerId, { at: number; data: Uint8Array }[]>(ids.map((id) => [id, []]));
 
   const ticks = seconds * (1000 / SIM_TICK_MS);
@@ -106,10 +164,12 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
   let kills = 0;
   let seq = 0;
 
-  for (let t = 0; t < ticks; t++) {
+  for (t = 0; t < ticks; t++) {
     seq++;
     for (const id of ids) {
       const t0 = performance.now();
+      lootBots.get(id)?.tick(t, syncs.get(id)!.predictor.state);
+      loots.get(id)!.tick();
       const input = bots.get(id)!.decide(t);
       const { packet } = syncs.get(id)!.tick({ ...input, seq });
       clientTime += performance.now() - t0;
@@ -136,7 +196,18 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
     }
     let tickBytes = 0;
     const perPeer = new Map<PeerId, number>();
+    const lootPeer = new Map<PeerId, number>();
     for (const o of out) {
+      // phần loot: gói 110–113 + khối loot trong mẩu 0 của bản lưu
+      const lb = isLootPacket(o.data)
+        ? o.data.length
+        : o.data[0] === WORLD_BACKUP_MSG
+          ? (decodeBackupPart(o.data)?.loot?.length ?? 0)
+          : 0;
+      if (lb > 0) {
+        lootDown += lb;
+        lootPeer.set(o.to, (lootPeer.get(o.to) ?? 0) + lb);
+      }
       if (o.data[0] === GameMsg.Snapshot) snapsSent++;
       if (o.channel === 'unreliable' && loss > 0 && rng.chance(loss)) {
         if (o.data[0] === GameMsg.Snapshot) snapsLost++;
@@ -154,6 +225,13 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
       if (w.ticks.length > 100) w.sum -= w.ticks.shift()!;
       if (w.ticks.length === 100) peakMax = Math.max(peakMax, w.sum / 5);
     }
+    for (const [id, w] of lootOwn) {
+      const b = lootPeer.get(id) ?? 0;
+      w.ticks.push(b);
+      w.sum += b;
+      if (w.ticks.length > 100) w.sum -= w.ticks.shift()!;
+      if (w.ticks.length === 100) lootPeakMax = Math.max(lootPeakMax, w.sum / 5);
+    }
     window.push(tickBytes / players);
     if (window.length > 100) window.shift();
     if (window.length === 100) peak = Math.max(peak, window.reduce((a, b) => a + b, 0) / 5);
@@ -162,9 +240,19 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
       const sync = syncs.get(id)!;
       const t0 = performance.now();
       while (q.length > 0 && q[0]!.at <= t) {
+        const data = q.shift()!.data;
+        if (isLootPacket(data)) {
+          loots.get(id)!.receive(data);
+          continue;
+        }
+        if (data[0] === WORLD_BACKUP_MSG) {
+          const block = decodeBackupPart(data)?.loot;
+          if (block) loots.get(id)!.receiveBackup(block);
+          continue;
+        }
         const before = sync.received;
         const status = statusOf(sync.predictor.state);
-        sync.receive(q.shift()!.data);
+        sync.receive(data);
         if (sync.received === before) continue; // không phải snapshot mới
         const err = sync.predictor.lastError;
         // nhảy chỗ hợp lệ: hồi sinh/chết/gục/đứng dậy (host quyết), hoặc bị đồng đội kéo xa
@@ -202,6 +290,14 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
     downPeakKBps: r2(peak / 1024),
     downPeakMaxKBps: r2(peakMax / 1024),
     upKBps: r2(up / players / 1024 / seconds),
+    lootDownKBps: r2(lootDown / players / 1024 / seconds),
+    lootPeakMaxKBps: r2(lootPeakMax / 1024),
+    lootUpKBps: r2(lootUp / players / 1024 / seconds),
+    lootVisits: [...lootBots.values()].reduce((n, b) => n + b.stats.visits, 0),
+    lootOk: host.loot.stats.ok,
+    lootItems: host.loot
+      .replica()
+      .inventories.reduce((n, e) => n + e.state.slots.reduce((a, s) => a + (s?.quantity ?? 0), 0), 0),
     predictionErrMax: r2(predErr),
     correctionsPerMin: r2(corrections / players / (seconds / 60)),
     snapshotsLostPct: r2((snapsLost / Math.max(1, snapsSent)) * 100),
