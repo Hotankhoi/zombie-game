@@ -152,8 +152,9 @@ export class HostServer {
 
   removePeer(id: PeerId): void {
     this.rejectedAt.delete(id);
-    if (!this.clients.delete(id)) return;
+    // cả người chưa vào trận: host mới đang thu bản loot thì khỏi chờ người đã rời
     this.loot.removePeer(id);
+    if (!this.clients.delete(id)) return;
     this.world.removePlayer(id);
     this.rosterDirty = true;
   }
