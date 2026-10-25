@@ -132,6 +132,23 @@ Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` 
 
 - Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
 
+## Phiên 2026-10-25 (khuya): phần 2B — hiển thị + điều khiển loot (máy thật, Browser pane)
+
+Nhánh `a/loot-ui` (mỗi bước 1 PR từ `main`, CI xanh thì merge commit). Bước 1 (vẽ rương) = PR #34 đã merge.
+
+- Bước 2 — phím + panel (`client/loot/lootUi.ts`, `lootMessages.ts`, `outcome.ts`, `lootUi.css`): F cạnh rương = mở
+  rương (gửi `open` rồi hiện panel rương của B), F lần nữa = đóng; xa rương F vẫn là đèn pin (lần nhấn dùng cho rương
+  không bật đèn). I = túi, Esc = đóng mọi panel (bắt ở pha capture). Panel mở → không đi/chém/ngắm/E (chuột đang giữ
+  lúc đóng panel không thành chém); thế giới vẫn chạy. Gục/chết → đóng hết; xa rương > 2 ô hoặc bị che → đóng panel
+  rương (`canKeepChestOpen`). Chờ host: panel B khóa nút (`aria-busy`); ClientLoot trả `busy`. Lỗi → câu tiếng Việt
+  (`LOOT_ERROR_TEXT` đủ mọi mã host + máy khách, typecheck bắt thiếu). Sửa vùng B tối thiểu: `inventoryPanel.ts`,
+  `lootPanel.ts` nhận `describeError` + kiểu kết quả có mã lỗi online; panel rương đã mở sẵn thì câu đầu đúng.
+  Không đóng panel khi chỉ bị cắn (yêu cầu: gục mới đóng). Thử Browser pane (cửa sổ Claude bị ẩn → requestAnimationFrame
+  dừng, khung hình đứng ở 19; tôi đẩy vòng lặp bằng `setInterval(game.loop.step)` trong trang, ảnh chụp không được):
+  F mở panel rương (6 ô thật), I thêm túi, giữ W khi panel mở → đứng yên, Esc → đóng hết + đi lại được, lấy 1 món → túi
+  1 → 2 món, lúc chờ `aria-busy=true`; thao tác khi đang chờ → "Đang chờ host xác nhận thao tác trước."; F khi đang mở
+  → đóng, đèn pin tắt; F xa rương → đèn pin bật. 327 test.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.

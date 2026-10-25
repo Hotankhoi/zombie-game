@@ -56,10 +56,14 @@ function icon(category: ItemCategory, itemId?: ItemId) {
   return el;
 }
 
+/** Online authority may also fail with network/host codes (net/clientLoot); text comes from `describeError`. */
+export type InventoryPanelResult = InventoryResult | { ok: false; state: InventoryState; error: string };
 export interface InventoryPanelOptions {
   initial: InventoryState;
   /** Send intent to authority; render only the returned or pushed authoritative snapshot. */
-  onCommand(command: InventoryCommand): InventoryResult | Promise<InventoryResult>;
+  onCommand(command: InventoryCommand): InventoryPanelResult | Promise<InventoryPanelResult>;
+  /** Text for error codes outside INVENTORY_MESSAGES (online: host/network codes). */
+  describeError?(code: string): string;
 }
 
 /** One panel per inventory identity. No global keyboard listeners, optimistic grants or render loop. */
@@ -223,7 +227,9 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
             ? command.type === 'sort'
               ? 'Đã sắp xếp và gộp các vật phẩm cùng loại.'
               : 'Đã chuyển vật phẩm.'
-            : INVENTORY_MESSAGES[result.error],
+            : (options.describeError?.(result.error) ??
+                INVENTORY_MESSAGES[result.error as InventoryError] ??
+                'Thao tác chưa được xác nhận.'),
           !result.ok,
         );
     } catch {

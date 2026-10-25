@@ -17,6 +17,8 @@ import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
 import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 import { ChestLayer, preloadChestSprites } from '../loot/chestLayer';
+import { LootUi } from '../loot/lootUi';
+import { canKeepChestOpen } from '../loot/nearChest';
 
 /** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
 export { TILE_SIZE };
@@ -70,6 +72,8 @@ export class WorldScene extends Phaser.Scene {
   private mapRenderer!: MapRenderer;
   /** Rương (phần 2B loot): thùng trong nhà, gợi ý F khi tới gần. */
   chests!: ChestLayer;
+  /** Panel túi (I) / rương (F); mở thì khóa điều khiển nhân vật. */
+  lootUi!: LootUi;
   /** Vùng chunk đang vẽ "x0,y0,x1,y1" — chỉ sync renderer khi đổi. */
   private chunkRange = '';
   private acc = 0;
@@ -93,12 +97,16 @@ export class WorldScene extends Phaser.Scene {
   >;
   /** R cứu, G kéo người gục (GĐ 2c) — đăng ký riêng, không đụng phím E. */
   private partyKeys!: Record<'R' | 'G', Phaser.Input.Keyboard.Key>;
-  /** F bật/tắt đèn pin (GĐ 4). */
+  /** F bật/tắt đèn pin (GĐ 4); đứng cạnh rương thì F mở rương thay vì đèn pin. */
   private lightKey!: Phaser.Input.Keyboard.Key;
+  /** Lần nhấn F này đã dùng để mở/đóng rương → không tính là bật đèn pin tới khi nhả phím. */
+  private fForChest = false;
   /** Vũng độc/axit (vẽ lại mỗi frame). */
   private gfxPools!: Phaser.GameObjects.Graphics;
   /** Bấm nhanh giữa 2 tick vẫn được tính. */
   private attackQueued = false;
+  /** Chuột đang giữ từ lúc panel túi/rương còn mở (vd bấm nền để đóng) → không tính là chém tới khi nhả. */
+  private mouseHeldFromPanel = false;
   private interactQueued = false;
   private myAim = 0;
 
@@ -142,6 +150,7 @@ export class WorldScene extends Phaser.Scene {
     this.gfxDyn = this.add.graphics().setDepth(4);
     this.makeZombieTextures();
     this.chests = new ChestLayer(this, this.net.loot, ZOOM);
+    this.lootUi = new LootUi(document.getElementById('hud') ?? document.body, this.net.loot);
 
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
@@ -164,6 +173,21 @@ export class WorldScene extends Phaser.Scene {
     });
     this.partyKeys = kb.addKeys('R,G', false) as typeof this.partyKeys;
     this.lightKey = kb.addKey('F', false);
+    this.lightKey.on('down', () => {
+      if (isTyping()) return;
+      const me = this.me();
+      if (this.lootUi.chest) {
+        this.fForChest = true;
+        this.lootUi.closeChest();
+      } else if (this.chests.nearest && me && isUp(me)) {
+        this.fForChest = true;
+        void this.lootUi.openChest(this.chests.nearest);
+      }
+    });
+    this.lightKey.on('up', () => (this.fForChest = false));
+    kb.addKey('I', false).on('down', () => {
+      if (!isTyping()) this.lootUi.toggleInventory();
+    });
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -225,7 +249,11 @@ export class WorldScene extends Phaser.Scene {
 
   private readInput(): PlayerInput {
     const k = this.keys;
-    const typing = isTyping();
+    // đang gõ chữ hoặc đang mở panel túi/rương: nhân vật đứng yên, không chém/mở cửa (thế giới vẫn chạy)
+    const typing = isTyping() || this.lootUi.open;
+    const mouseDown = this.input.activePointer.leftButtonDown();
+    if (this.lootUi.open) this.mouseHeldFromPanel = mouseDown;
+    else if (!mouseDown) this.mouseHeldFromPanel = false;
     let mx = 0;
     let my = 0;
     let buttons = 0;
@@ -234,12 +262,12 @@ export class WorldScene extends Phaser.Scene {
       my = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
       if (k.SHIFT.isDown) buttons |= Btn.Sprint;
       if (k.E.isDown || this.interactQueued) buttons |= Btn.Interact;
-      if (this.input.activePointer.leftButtonDown() || this.attackQueued) buttons |= Btn.Attack;
+      if ((mouseDown && !this.mouseHeldFromPanel) || this.attackQueued) buttons |= Btn.Attack;
     }
     if (!typing) {
       if (this.partyKeys.R.isDown) buttons |= Btn.Revive;
       if (this.partyKeys.G.isDown) buttons |= Btn.Drag;
-      if (this.lightKey.isDown) buttons |= Btn.Flashlight;
+      if (this.lightKey.isDown && !this.fForChest) buttons |= Btn.Flashlight;
     }
     this.attackQueued = false;
     this.interactQueued = false;
@@ -247,7 +275,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateAim() {
-    if (!this.me()) return;
+    if (!this.me() || this.lootUi.open) return;
     const pos = this.myDrawPos(this.acc / SIM_TICK_MS);
     const ptr = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
     this.myAim = radToAim(Math.atan2(ptr.y - pos.y * TILE_SIZE, ptr.x - pos.x * TILE_SIZE));
@@ -296,7 +324,9 @@ export class WorldScene extends Phaser.Scene {
     const { zombies, others } = this.net.sync.sample();
     const seen = this.zombieSeer(others, alpha);
     const me0 = this.me();
-    this.chests.update(me0 && isUp(me0) ? me0 : null, seen, false);
+    const up = me0 && isUp(me0) ? me0 : null;
+    this.chests.update(up, seen, this.lootUi.open);
+    this.autoCloseLoot(up, seen);
     let shown = 0;
     for (const z of zombies) {
       if (!seen(z)) continue; // sau tường/cửa đóng: không vẽ (lớp tối không che được hết lúc ban ngày)
@@ -363,6 +393,17 @@ export class WorldScene extends Phaser.Scene {
       z.y * T > view.bottom + T ||
       hasLineOfSight(eye, z, blocked) ||
       torches.some((t) => seesPoint(t, t.facing, t.halfAngle, t.range, z, blocked));
+  }
+
+  /** Gục/chết → đóng mọi panel; đi xa rương (> tầm với) hoặc bị tường/cửa đóng che → đóng panel rương. */
+  private autoCloseLoot(me: Vec2 | null, seen: (p: Vec2) => boolean) {
+    if (!this.lootUi.open) return;
+    if (!me) {
+      if (this.me()) this.lootUi.closeAll();
+      return;
+    }
+    const c = this.lootUi.chest;
+    if (c && !canKeepChestOpen(c, me, seen)) this.lootUi.closeChest();
   }
 
   /** Chỗ vẽ nhân vật mình: nội suy giữa 2 tick dự đoán + độ lệch làm mượt sau khi host sửa. */
