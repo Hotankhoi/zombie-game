@@ -19,6 +19,17 @@ function worldNearDoor() {
 }
 
 describe('cửa', () => {
+  it('người đang gục không mở hoặc đóng cửa bằng E', () => {
+    const { w, p, step } = worldNearDoor();
+    w.addPlayer('rescuer');
+    p.downedFor = 20;
+    step(press);
+    expect(w.doors.isOpen(DOOR.x, DOOR.y)).toBe(false);
+    w.doors.set(DOOR.x, DOOR.y, true);
+    step(none);
+    step(press);
+    expect(w.doors.isOpen(DOOR.x, DOOR.y)).toBe(true);
+  });
   it('mặc định đóng (chặn đường), E mở, E lần nữa đóng', () => {
     const { w, step } = worldNearDoor();
     expect(w.blocked(DOOR.x, DOOR.y)).toBe(true);

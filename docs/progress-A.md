@@ -6,7 +6,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 - KHÔNG sửa điểm nối loot trong `host/`, `net/`, `client/scenes/WorldScene.ts` (luồng E/Interact với đồ vật, chỗ B thêm gói/handler loot).
 - KHÔNG sửa `shared/types`. KHÔNG sửa vùng của B (`shared/mapgen`, `shared/data`, `client/ui`, `shared/inventory`, `shared/loot`).
-- Không xếp chồng lên `b/loot-online` hay PR #7.
+- Không xếp chồng lên `b/loot-online` hay PR #7. (Hết hiệu lực 2026-10-25: B cho A merge #16 và làm tiếp phần nối loot.)
 - Hệ quả: dữ liệu cân bằng mới của A để tạm ở `shared/sim/tuning/`; đổi định dạng gói theo cách tương thích (không tăng `PROTOCOL_VERSION`). Cả hai cần báo B.
 
 ## Thứ tự merge (phiên 2026-10-24, merge commit, không squash)
@@ -72,9 +72,26 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
   Kịch bản khác sau #26 (TB · đỉnh nhóm · đỉnh 1 người): bình thường 10.31 · 14.88 · 15.01; trễ 150ms + mất 5% 9.28 · 14.58 ·
   15.08; đợt tràn 1: 5.65 · 15.21 · 15.55. Còn ~0.3 KB/s đỉnh dưới ngưỡng 20 KB/s cho loot của B ở đợt tràn tối đa.
 
+## Phiên 2026-10-25 (tối): đưa #16 của B vào `main`
+
+- B đồng ý cho A merge PR loot và làm tiếp phần nối loot. Không viết tính năng mới trong bước này.
+- #16 (`b/loot-online`) đã chứa đủ #5 (`b/inventory-core` 160a591) và #7 (`b/loot-containers` 7406d83).
+- Merge `main` vào `b/loot-online` (merge commit f7f1458, không rebase/force-push). Xung đột:
+  - `shared/sim/mapgenSource.ts`: lấy bản `main` (B chỉ có `spawn = spawnPoint()`, `main` đã bao trùm + `spawns` + `isRoadTile`).
+  - `AGENTS.md` mục 8: giữ dòng A + B theo hiện trạng.
+  - `shared/sim/world.ts` tự gộp, còn chặn người gục bấm E (`isUp`) của B.
+- File vùng A bị B sửa: `shared/sim/world.ts` (1 dòng `isUp`), `shared/sim/doors.test.ts` (+1 test). Vùng chung: `AGENTS.md`.
+- `npm run check`: typecheck + lint + **271 test** (31 file, +63 so với 208). `npm run build` đạt.
+- Browser pane: `?inventory=1` (chọn món, sắp xếp & gộp), `?loot=1` (mở rương, lấy hết 4 món vào túi) chạy, không lỗi
+  console; 2 tab cùng `?room=` vào trận (host "2 người · 41 zombie", khách nhận snapshot + bản lưu 10 mẩu, ping ~95 ms).
+- #16 đổi tên "3: module túi đồ + rương + loot authority (chưa nối gameplay)", merge bằng merge commit.
+- Module mới (`shared/inventory`, `shared/loot`, `shared/mapgen/chests.ts`, `client/ui/inventory|loot`) **chưa được gọi
+  từ trận**. Việc tiếp: nối loot vào trận theo `docs/loot-online-plan.md` (hợp đồng, codec, host/worker/UI, đổi host).
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
-- Chờ B: file save (#21), hành động 2 người, 2b' (delta snapshot, zombie tất định, ownership, hit do client) — làm sau khi #16 vào `main`.
+- Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.
+- Chờ B: file save (#21), hành động 2 người, 2b' (delta snapshot, zombie tất định, ownership, hit do client) — #16 đã vào `main`.
 - Người dùng tự thử: chơi 2–4 máy thật, TURN trên 4G (Browser pane của Claude bị ẩn nên chạy 1–15 FPS, không thử chém/di chuyển được).
 - Giao diện: vào trận mất ~10–25 s khi tab bị ẩn (hẹn giờ bị trình duyệt làm chậm) — kiểm tra lại trên tab hiện bình thường.
 

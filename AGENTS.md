@@ -143,18 +143,19 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
 
 ## 8. Trạng thái
 
-- Giai đoạn hiện tại: 0, 1a, 1b, 2 (trừ 2b'), 4, 5 (đợt tràn), 6 (phần A), 7 (phần A) **đã vào `main`** (2026-10-25). Đang làm GĐ 3 (B: loot online). Chờ bàn A↔B: file save (`docs/save-format.md`, PR #21), hành động 2 người, 2b'.
+- Giai đoạn hiện tại: 0, 1a, 1b, 2 (trừ 2b'), 4, 5 (đợt tràn), 6 (phần A), 7 (phần A) **đã vào `main`** (2026-10-25). GĐ 3: module túi đồ + rương + loot authority đã vào `main` (#16), chưa nối gameplay — tiếp theo: nối loot vào trận. Chờ bàn A↔B: file save (`docs/save-format.md`, PR #21), hành động 2 người, 2b'.
 - Repo: https://github.com/Hotankhoi/zombie-game · Game: https://hotankhoi.github.io/zombie-game/
   - Đã kiểm tra: 2 tab cùng `?room=` thấy nhau, có ping/pong; trễ 150ms ở cả 2 tab → ping ≈ 300ms.
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
-  - **Số test (`npm test`) trên `main` sau #26: 208** (28 file). Mốc: 186 sau #19 → 194 sau #20 (+8) → 199 sau #23 (+5) → 201 sau #24 (+2) → 204 sau #25 (+3) → 208 sau #26 (+4). Báo cáo trước ghi 194 (đúng ở `main` sau #20); máy reviewer đếm 186 vì chạy ở `main` trước khi merge #20. `npm test` không gồm `tools/*.loadtest.ts` (chạy riêng bằng `npm run loadtest`).
+  - **Số test (`npm test`) trên `main` sau #16: 271** (31 file). Mốc: 186 sau #19 → 194 sau #20 (+8) → 199 sau #23 (+5) → 201 sau #24 (+2) → 204 sau #25 (+3) → 208 sau #26 (+4) → 271 sau #16 (+63, túi đồ/rương/loot authority của B). Báo cáo trước ghi 194 (đúng ở `main` sau #20); máy reviewer đếm 186 vì chạy ở `main` trước khi merge #20. `npm test` không gồm `tools/*.loadtest.ts` (chạy riêng bằng `npm run loadtest`).
 - Ai đang làm gì:
   - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13), relay dự phòng (#14, `docs/relay.md`), điểm xuất phát theo map B (#17), tường che tầm nhìn (#18), hồi sinh an toàn (#19), khổng lồ phá tường (#20), chặn khác phiên bản (#23), chừa băng thông cho loot (#24, đợt tràn tối đa 19.7 KB/s), mã bí mật relay (#25), rải bản sao lưu + gộp sự kiện cắn (#26, đỉnh 5s đợt tràn tối đa 19.7 KB/s). Mở chờ B góp ý: đề xuất file save (#21). Chi tiết ở `docs/progress-A.md`.
   - **Quyết định (A): chết = phạt nhẹ (không mất đồ, hồi sinh an toàn gần đội sau 3s, bất tử 4s). Không làm hồi sinh ở giường căn cứ.**
-  - B: đã vào `main`: 1b (#3), hợp đồng loot online + giao thức v3 (#15). Đang mở: #5 (túi đồ), #7 (rương), #16 (loot online) — B tự rebase lên `main` rồi merge.
+  - B: đã vào `main`: 1b (#3), hợp đồng loot online + giao thức v3 (#15), module túi đồ + rương + loot authority (#16, gồm #5 và #7; A merge theo đồng ý của B, **chưa nối gameplay** — kế hoạch nối ở `docs/loot-online-plan.md`).
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
+  - Túi đồ (B): bảng vật phẩm ở `shared/data/items.ts`, reducer ở `shared/inventory`, UI ở `client/ui/inventory`. Xem mẫu bằng `?inventory=1`; authority/mạng ghép sau GĐ 2. Chưa có hiệu ứng dùng/trang bị/trao đồ.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
   - Kênh unreliable thật (DataChannel unordered) đã có (GĐ 2b). Gói riêng của A: 124 phòng đầy, 125 sao lưu thế giới (có byte phiên bản, hiện 5; chia 10 mẩu, 1 mẩu/giây), 126 điểm host; gói trong trận 16–21 (21 = `MapDelta`, ô map đã đổi). Loot của B: 110–113.
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
