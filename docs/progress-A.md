@@ -46,6 +46,13 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Rủi ro 5 (kịch bản thường 17 → 12 KB/s): tụt đúng ở #19 (hồi sinh an toàn). Cho bot bất tử thì trước/sau #19 y hệt
   (16.94 KB/s) → không phải lỗi gói/đo; do luật chơi: người hồi sinh ở chỗ không zombie trong 10 ô + bất tử 4s → chết
   24 → 4 lần, mỗi snapshot TB 120 zombie thay vì 181.
+  PR #24 đã merge.
+- Việc 3 — mã bí mật relay (nhánh `a/relay-key`): `RelayTransport` tạo mã ngẫu nhiên 16 byte 1 lần/trang (`newRelayKey`),
+  gửi `&k=` mỗi lần nối/nối lại; relay lưu mã trong attachment, `admitPeer()` (net/relayProtocol.ts): cùng id + đúng mã
+  → thay kết nối cũ, khác mã → 409, không đá ai. `RELAY_PROTOCOL` 1 → 2 (bản game cũ gặp relay mới bị 409, việc 1 nhắc
+  tải lại). 204 test. `wrangler dev`: 2 bài relay thật đạt (người lạ cùng id bị 409); bài đo tải hụt 7.96 < 8 snapshot/s
+  vì `setInterval(50)` trên Windows chạy 62.5 ms (16 tick/s) — lỗi đồng hồ của công cụ đo, không phải relay.
+- Số test: AGENTS.md mục 8 (186 = `main` trước #20; 194 = sau #20).
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

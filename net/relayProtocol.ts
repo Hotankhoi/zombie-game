@@ -14,7 +14,7 @@
  *   [Data] lặp: [slot người gửi u8][độ dài u32][gói]
  * Khung chữ "ping" → relay tự trả "pong" (không đánh thức Durable Object), giữ kết nối khi đang rảnh.
  */
-export const RELAY_PROTOCOL = 1;
+export const RELAY_PROTOCOL = 2;
 /** Tối đa người trong 1 phòng relay (game giới hạn 4 người chơi; dư cho người xem khi phòng đầy). */
 export const RELAY_MAX_PEERS = 16;
 /** Khung lớn nhất relay nhận (byte) — chặn gửi rác. Sao lưu thế giới lớn nhất ~ vài chục KB. */
@@ -26,6 +26,40 @@ export const RelayMsg = { Welcome: 1, Join: 2, Leave: 3, Data: 4 } as const;
 
 /** PeerId hợp lệ trên relay (id của Trystero là chữ/số). */
 export const RELAY_PEER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * Mã bí mật của kết nối (RELAY_PROTOCOL 2): máy chơi tự tạo ngẫu nhiên 1 lần lúc vào (chỉ giữ trong bộ nhớ trang),
+ * gửi kèm mỗi lần nối/nối lại. Relay chỉ cho kết nối mới THAY kết nối cũ cùng peer id khi mã khớp → người khác
+ * biết peer id (cả phòng đều thấy id) cũng không đá được ai ra.
+ */
+export const RELAY_KEY = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** 16 byte ngẫu nhiên dạng base64url (22 ký tự). */
+export function newRelayKey(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...b))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
+ * Phía relay: có cho kết nối mới (peer id + mã) vào không.
+ * 'new' = chưa ai dùng id này · 'replace' = cùng id, đúng mã (nối lại) → đóng kết nối cũ ·
+ * 'reject' = id đang có người dùng với mã khác (không đụng tới kết nối đang có).
+ */
+export function admitPeer(
+  members: Iterable<{ id: string; key: string }>,
+  id: string,
+  key: string,
+): 'new' | 'replace' | 'reject' {
+  let found: 'new' | 'replace' = 'new';
+  for (const m of members) {
+    if (m.id !== id) continue;
+    if (m.key !== key) return 'reject';
+    found = 'replace';
+  }
+  return found;
+}
 
 export interface OutEntry {
   /** Rỗng = gửi cả phòng. */
@@ -147,13 +181,13 @@ export function decodeServer(buf: Uint8Array): ServerMsg | null {
   }
 }
 
-/** `wss://abc.workers.dev` (hoặc https://…) + mã phòng + id → địa chỉ WebSocket của phòng. */
-export function relayRoomUrl(base: string, room: string, peer: string): string {
+/** `wss://abc.workers.dev` (hoặc https://…) + mã phòng + id + mã bí mật → địa chỉ WebSocket của phòng. */
+export function relayRoomUrl(base: string, room: string, peer: string, key: string): string {
   const b = base
     .trim()
     .replace(/\/+$/, '')
     .replace(/^http(s?):\/\//, 'ws$1://');
-  return `${b}/room/${encodeURIComponent(room)}?peer=${encodeURIComponent(peer)}&v=${RELAY_PROTOCOL}`;
+  return `${b}/room/${encodeURIComponent(room)}?peer=${encodeURIComponent(peer)}&k=${encodeURIComponent(key)}&v=${RELAY_PROTOCOL}`;
 }
 
 /**

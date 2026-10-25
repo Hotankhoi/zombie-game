@@ -34,9 +34,17 @@ describe.skipIf(!url)('relay thật', () => {
     await nets[2]!.leave();
     await until(() => nets[0]!.peers().length === 2);
     expect(nets[0]!.peers().sort()).toEqual(['n2', 'n4']);
-    // cùng id vào lại (mạng chập chờn, mở tab lại): thay kết nối cũ
+    // cùng id vào lại sau khi đã rời (mở tab lại): vào bình thường
     const again = new RelayTransport(url, room, 'n3');
     await until(() => nets[0]!.peers().includes('n3') && again.peers().length === 3);
+    // người lạ dùng id đang có người (khác mã bí mật): bị từ chối, n3 vẫn ở trong phòng
+    const errors: string[] = [];
+    const stranger = new RelayTransport(url, room, 'n3', { onError: (e) => errors.push(e) });
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(stranger.connected).toBe(false);
+    expect(again.connected).toBe(true);
+    expect(nets[0]!.peers().sort()).toEqual(['n2', 'n3', 'n4']);
+    await stranger.leave();
     await Promise.all([...nets, again].map((n) => n.leave()));
   });
 

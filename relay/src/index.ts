@@ -2,9 +2,11 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   RELAY_MAX_FRAME,
   RELAY_PEER_ID,
+  RELAY_KEY,
   RELAY_PING,
   RELAY_PONG,
   RELAY_PROTOCOL,
+  admitPeer,
   decodeClientBatch,
   encodeJoin,
   encodeLeave,
@@ -30,6 +32,8 @@ export interface Env {
 interface Member {
   id: string;
   slot: number;
+  /** Mã bí mật máy đó gửi lúc vào (RELAY_KEY) — chỉ kết nối cùng mã mới được thay kết nối này. */
+  key: string;
 }
 
 const ROOM_PATH = /^\/room\/([A-Z0-9]{4,12})$/;
@@ -53,6 +57,7 @@ export default {
     }
     const peer = url.searchParams.get('peer') ?? '';
     if (!RELAY_PEER_ID.test(peer)) return new Response('peer sai', { status: 400 });
+    if (!RELAY_KEY.test(url.searchParams.get('k') ?? '')) return new Response('thiếu mã', { status: 400 });
     if (url.searchParams.get('v') !== String(RELAY_PROTOCOL)) {
       return new Response('khác phiên bản relay', { status: 409 });
     }
@@ -69,9 +74,14 @@ export class RelayRoom extends DurableObject<Env> {
   }
 
   override async fetch(req: Request): Promise<Response> {
-    const id = new URL(req.url).searchParams.get('peer') ?? '';
+    const params = new URL(req.url).searchParams;
+    const id = params.get('peer') ?? '';
+    const key = params.get('k') ?? '';
     const members = this.members();
-    // cùng id nối lại (mạng chập chờn): đóng kết nối cũ
+    // cùng id nối lại (mạng chập chờn): đóng kết nối cũ — chỉ khi đúng mã của kết nối cũ (không thì ai biết id cũng đá được)
+    if (admitPeer(members.values(), id, key) === 'reject') {
+      return new Response('peer id đang được dùng', { status: 409 });
+    }
     for (const [ws, m] of members) {
       if (m.id !== id) continue;
       members.delete(ws);
@@ -85,7 +95,7 @@ export class RelayRoom extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ id, slot } satisfies Member);
+    server.serializeAttachment({ id, slot, key } satisfies Member);
     server.send(encodeWelcome(slot));
     for (const [ws, m] of members) {
       server.send(encodeJoin(m.slot, m.id));
