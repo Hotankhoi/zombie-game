@@ -77,7 +77,7 @@ Mục tiêu hiệu năng: 4 người + 500 zombie trong đợt tràn, ≤ 25 KB/
 
 - Mũi tên mép màn hình (tên, khoảng cách, màu riêng), viền xuyên tường, minimap có đồng đội, điểm hẹn trên bản đồ lớn, khung trạng thái đội.
 - Ping, vòng câu nói nhanh ("Cần đạn", "Theo tôi", "Rút lui", "Cứu tôi", "Có đồ ngon").
-- Gục thay vì chết, 30s để đồng đội cứu, kéo người gục đi. Chết → sau một lúc thành zombie mặc nguyên đồ của mình. Hồi sinh ở giường căn cứ (mất đồ trên người, giữ đồ trong rương).
+- Gục thay vì chết, 30s để đồng đội cứu, kéo người gục đi. Chết → xác thành zombie sau 8s. Hồi sinh sau 3s ở ô đường an toàn gần đội, bất tử 4s, không mất đồ (phạt nhẹ).
 - Hành động cần 2 người (két sắt, cửa cuốn, kho quân sự, nâng trèo tường). Kéo thả đồ lên tên đồng đội để đưa. Đánh dấu giữ đồ trong rương.
 - Tinh thần đồng đội: đứng gần nhau hồi stamina nhanh hơn. Vai trò: Y tá, Thợ máy, Trinh sát, Lính.
 - Súng pháo sáng, dụ zombie (ném chai, đồng hồ báo thức), ca gác đêm, nhiệm vụ giữ vị trí.
