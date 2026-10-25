@@ -266,6 +266,7 @@ export class SimWorld {
 
     for (const p of players) {
       const input = inputs.get(p.id);
+      if (p.shield > 0) p.shield = countdown(p.shield, DT);
       if (!isAlive(p)) {
         p.respawnIn = countdown(p.respawnIn, DT);
         if (p.respawnIn === 0) this.respawn(p);
@@ -363,7 +364,7 @@ export class SimWorld {
       pool.ttl = countdown(pool.ttl, DT);
       if (pool.armIn > 0) continue;
       for (const p of players) {
-        if (!isUp(p) || Math.hypot(p.x - pool.x, p.y - pool.y) > pool.radius) continue;
+        if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - pool.x, p.y - pool.y) > pool.radius) continue;
         p.hp = Math.max(0, p.hp - pool.dps * DT);
         if (p.hp === 0) this.down(p);
       }
@@ -375,7 +376,7 @@ export class SimWorld {
   private slam(z: ZombieState): void {
     const reach = radiusOf(z) + BOSS.slamRange;
     for (const p of this.sortedPlayers()) {
-      if (!isUp(p) || Math.hypot(p.x - z.x, p.y - z.y) > reach) continue;
+      if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - z.x, p.y - z.y) > reach) continue;
       p.hp = Math.max(0, p.hp - BOSS.slamDamage);
       this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
       if (p.hp === 0) this.down(p);
@@ -643,7 +644,7 @@ export class SimWorld {
       parts.push(
         `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
           `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
-          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)}`,
+          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)}`,
       );
     }
     for (const z of this.zombies) {
@@ -683,10 +684,54 @@ export class SimWorld {
     return { ...(spots.find((s) => !taken(s)) ?? (spots[0] as Vec2)) };
   }
 
+  /**
+   * Chỗ hồi sinh an toàn: ô đường (MapSource.isRoad, thiếu thì ô trống) gần đồng đội còn sống nhất (không còn
+   * ai thì gần điểm xuất phát), không zombie nào trong PARTY.respawnSafeRadius, không trùng chỗ ai đang đứng.
+   * Duyệt vòng vuông nở dần quanh từng mốc, dừng khi vòng đã xa hơn chỗ tốt nhất. Không có chỗ nào an toàn
+   * trong PARTY.respawnSearchRadius thì về chỗ xuất phát như cũ.
+   */
+  private safeRespawn(self: PeerId): Vec2 {
+    const team = this.sortedPlayers().filter((q) => q.id !== self && isAlive(q));
+    const anchors: readonly Vec2[] = team.length > 0 ? team : [this.map.spawn];
+    const safe2 = PARTY.respawnSafeRadius ** 2;
+    const zs = this.zombies;
+    const road = this.map.isRoad?.bind(this.map);
+    const ok = (tx: number, ty: number, x: number, y: number) => {
+      if (this.blocked(tx, ty) || (road && !road(tx, ty))) return false;
+      for (const z of zs) if (z.hp > 0 && (z.x - x) ** 2 + (z.y - y) ** 2 < safe2) return false;
+      for (const q of this.players.values()) {
+        if (q.id !== self && isAlive(q) && Math.hypot(q.x - x, q.y - y) < PLAYER.radius * 2) return false;
+      }
+      return true;
+    };
+    let best: Vec2 | null = null;
+    let bestD = Infinity;
+    for (const a of anchors) {
+      const ax = Math.floor(a.x);
+      const ay = Math.floor(a.y);
+      for (let r = 0; r <= PARTY.respawnSearchRadius && r <= bestD + 1; r++) {
+        for (let ty = ay - r; ty <= ay + r; ty++) {
+          const edge = ty === ay - r || ty === ay + r;
+          for (let tx = ax - r; tx <= ax + r; tx += edge || r === 0 ? 1 : 2 * r) {
+            const x = tx + 0.5;
+            const y = ty + 0.5;
+            const d = Math.min(...anchors.map((b) => Math.hypot(b.x - x, b.y - y)));
+            if (d < bestD && ok(tx, ty, x, y)) {
+              best = { x, y };
+              bestD = d;
+            }
+          }
+        }
+      }
+    }
+    return best ?? this.freeSpawn(self);
+  }
+
   private respawn(p: PlayerState): void {
-    const at = this.freeSpawn(p.id);
+    const at = this.safeRespawn(p.id);
     p.x = at.x;
     p.y = at.y;
+    p.shield = PARTY.respawnShieldSec;
     p.hp = PLAYER.maxHp;
     p.stamina = PLAYER.maxStamina;
     p.exhausted = false;
@@ -741,6 +786,7 @@ export class SimWorld {
   }
 
   private bite(z: ZombieState, p: PlayerState): void {
+    if (p.shield > 0) return; // vừa hồi sinh: bất tử
     this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
     if (isDowned(p)) {
       p.downedFor = Math.max(0, p.downedFor - PARTY.downedBitePenaltySec);

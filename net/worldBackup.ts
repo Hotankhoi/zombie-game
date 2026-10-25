@@ -15,7 +15,7 @@ export const WORLD_BACKUP_MSG = 125;
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 2;
+export const WORLD_BACKUP_VERSION = 3;
 
 const MODES = ['wander', 'investigate', 'chase'] as const;
 /** Các đồng hồ đếm ngược của zombie, theo thứ tự bit trong mặt nạ. */
@@ -64,6 +64,7 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.u8(p.prevButtons);
     w.f32(p.downedFor);
     w.f32(p.reviveProgress);
+    w.f32(p.shield);
   }
   // zombie gọn (~25 byte/con thay vì 61): hướng 1 byte, đồng hồ đếm ngược 1/100 giây và chỉ ghi cái khác 0,
   // đích đi tới bỏ qua nếu trùng vị trí — đợt tràn 650 con vẫn giữ được ≤ 25 KB/s khi mỗi người nhận 10s/lần
@@ -178,6 +179,7 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       const prevButtons = r.u8();
       const downedFor = r.f32();
       const reviveProgress = r.f32();
+      const shield = r.f32();
       players.push({
         id,
         x,
@@ -195,6 +197,7 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         reviveProgress,
         dragging: (flags & 4) !== 0,
         flashlight: (flags & 8) !== 0,
+        shield,
       });
     }
     const zombies: ZombieState[] = [];

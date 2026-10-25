@@ -72,6 +72,8 @@ export class WorldScene extends Phaser.Scene {
   private acc = 0;
   private seq = 0;
   private hitFlash = new Map<number, number>();
+  /** Người vừa hồi sinh → bất tử tới lúc này (ms, đồng hồ scene) — vẽ vòng bảo vệ quanh họ. */
+  private shieldUntil = new Map<PeerId, number>();
   private fx: Fx[] = [];
   /** Thời gian xử lý 1 frame (ms, làm mượt) — bảng F3. */
   frameMs = 0;
@@ -267,6 +269,8 @@ export class WorldScene extends Phaser.Scene {
         if (e.player === self) this.cameras.main.flash(300, 120, 0, 0);
         break;
       case 'respawn':
+        this.shieldUntil.set(e.player, now + PARTY.respawnShieldSec * 1000);
+        break;
       case 'door':
         break;
     }
@@ -311,12 +315,14 @@ export class WorldScene extends Phaser.Scene {
       if (!p.alive) continue;
       if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
       else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
+      this.drawShield(g, p.x * T, p.y * T, p.id, now);
     }
     const me = this.me();
     const pos = this.myDrawPos(alpha);
     if (me && isDowned(me)) this.drawDowned(g, pos.x * T, pos.y * T, this.myColor, me.reviveProgress);
     else if (me && isAlive(me))
       this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
+    if (me && isAlive(me)) this.drawShield(g, pos.x * T, pos.y * T, this.session.selfId, now);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
     for (const f of this.fx) this.drawFx(g, f, (now - f.born) / f.life);
@@ -457,6 +463,14 @@ export class WorldScene extends Phaser.Scene {
       g.arc(x, y, r + 5, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
       g.strokePath();
     }
+  }
+
+  /** Vòng sáng nhấp nháy quanh người vừa hồi sinh, còn bất tử (PARTY.respawnShieldSec). */
+  private drawShield(g: Phaser.GameObjects.Graphics, x: number, y: number, id: PeerId, now: number) {
+    const left = (this.shieldUntil.get(id) ?? 0) - now;
+    if (left <= 0) return;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 90);
+    g.lineStyle(1.5, 0x80d8ff, 0.4 + 0.5 * pulse).strokeCircle(x, y, TILE_SIZE * 0.6);
   }
 
   private drawPlayer(g: Phaser.GameObjects.Graphics, x: number, y: number, facing: number, color: number) {
