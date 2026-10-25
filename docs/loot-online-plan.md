@@ -2,8 +2,8 @@
 
 ## Kế hoạch phần 2A — A nối tầng mạng + host (2026-10-25)
 
-B giao phần nối loot cho A. Phần 2A chỉ làm logic + test (cloud session, không trình duyệt); **phần 2B** (session sau,
-máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab. Không làm: súng/giáp/đói khát, thùng thưởng, đồ rơi.
+B giao phần nối loot cho A. Phần 2A chỉ làm logic + test (cloud session, không trình duyệt); **phần 2B** (máy thật,
+đã xong #34, #36, #37): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab. Không làm: súng/giáp/đói khát, thùng thưởng, đồ rơi.
 Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
 
 1. **Codec 110–113** (`net/lootCodec.ts`, reliable). Nhị phân gọn: vật phẩm/độ hiếm/balo/khu = số thứ tự trong danh mục
@@ -30,18 +30,31 @@ Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
    đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s). Đã làm: đỉnh 20.84 KB/s, loot 0.13 KB/s (0.34 khi bot mở rương liên tục);
    bảng đầy đủ ở `docs/progress-A.md`.
 
-### Điều kiện hoàn thành — trạng thái sau phần 2A (test chứng minh)
+### Điều kiện hoàn thành — trạng thái sau phần 2B (2026-10-25)
 
-| Điều kiện (kế hoạch gốc của B)                                     | 2A                      | Test                                                                                              |
-| ------------------------------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------- |
-| Hai người thấy cùng rương; cùng lấy 1 món → 1 thành công, bảo toàn | Đạt (logic)             | `host/lootMatch.test.ts` (4 người, 2 người cùng ô), `host/hostLoot.test.ts`                       |
-| Túi đầy, lượng sai, yêu cầu lặp, revision cũ không mất/nhân đôi    | Đạt                     | `lootMatch` "túi đầy…", `hostLoot` "yêu cầu lặp…", `clientLoot` "lệnh của panel…"                 |
-| Từ chối ngoài tầm, xuyên tường/cửa đóng, chết, sửa túi người khác  | Đạt                     | `hostLoot` "từ chối…" (map thêm cửa), `lootMatch` "ngoài tầm, đang gục", `hostLoot` "xem (view)…" |
-| Người vào sau đúng túi + rương đã lấy; đổi chunk không hồi loot    | Đạt                     | `host/lootOnline.test.ts` "người vào sau…", "tải lại trang…"                                      |
-| Host rời khi nhặt: không xác nhận kết quả host mới không khôi phục | Đạt                     | `lootOnline` "host rời giữa lúc nhặt" ×3, "host mới là người vừa vào"; `lootMatch` "host rời…"    |
-| Test logic, typecheck, lint, build; 2–4 client trễ 150ms mất 5%    | Đạt phần logic          | `npm run check`, `npx vite build`, `lootMatch`                                                    |
-| Bàn phím/chuột không xuyên xuống gameplay                          | **Chưa — phần 2B (UI)** | —                                                                                                 |
-| Thử 2 tab / máy thật                                               | **Chưa — phần 2B**      | —                                                                                                 |
+Phần 2B (A): vẽ rương (#34), phím F/I/Esc + panel túi/rương của B trong trận (#36), HUD số ô túi + thông báo nhặt đồ
+(#37), thử 2 tab trong Browser pane. Cách chơi: tới gần rương → "F: mở rương"; F mở/đóng panel rương, I túi, Esc đóng hết,
+E vẫn là cửa; mở panel thì nhân vật đứng yên (thế giới vẫn chạy); gục hoặc rời > 2 ô / bị che → panel rương tự đóng.
+
+| Điều kiện (kế hoạch gốc của B)                                     | Trạng thái               | Bằng chứng                                                                                                               |
+| ------------------------------------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Hai người thấy cùng rương; cùng lấy 1 món → 1 thành công, bảo toàn | Đạt (logic + 2 tab)      | `host/lootMatch.test.ts`, `host/hostLoot.test.ts`; 2 tab bấm "Lấy" cùng mili-giây → 1 được, 1 bị từ chối, rương cập nhật |
+| Túi đầy, lượng sai, yêu cầu lặp, revision cũ không mất/nhân đôi    | Đạt                      | `lootMatch` "túi đầy…", `hostLoot` "yêu cầu lặp…", `clientLoot` "lệnh của panel…"                                        |
+| Từ chối ngoài tầm, xuyên tường/cửa đóng, chết, sửa túi người khác  | Đạt                      | `hostLoot` "từ chối…", `lootMatch` "ngoài tầm, đang gục", `hostLoot` "xem (view)…"                                       |
+| Người vào sau đúng túi + rương đã lấy; đổi chunk không hồi loot    | Đạt (logic + 2 tab)      | `host/lootOnline.test.ts`; 2 tab: tải lại tab khách → túi còn (sau ~0,5 s, xem rủi ro bên dưới)                          |
+| Host rời khi nhặt: không xác nhận kết quả host mới không khôi phục | Đạt (logic + 2 tab)      | `lootOnline` "host rời giữa lúc nhặt" ×3; 2 tab: đóng tab host → túi 2 người + rương giữ đúng                            |
+| Test logic, typecheck, lint, build; 2–4 client trễ 150ms mất 5%    | Đạt phần logic           | `npm run check`, `lootMatch` (4 người trễ 150ms + mất 5%)                                                                |
+| Bàn phím/chuột không xuyên xuống gameplay                          | Đạt                      | Browser pane: panel mở → giữ W không đi, chuột giữ lúc đóng không chém, F không bật đèn pin                              |
+| Thử 2 tab / máy thật                                               | Đạt 2 tab; máy thật chưa | 2 tab cùng trình duyệt (cửa sổ Claude ẩn → vòng lặp được đẩy tay); 2 máy khác mạng: chưa thử                             |
+
+Lỗi 2A tìm thấy khi thử 2 tab (chưa sửa, cần duyệt vì đụng `/net`, `/host`):
+
+1. **2 tab cùng trình duyệt có thể cướp túi nhau.** `loadPlayerKey` ghi khóa chung của localStorage vào sessionStorage ngay
+   khi mở trang → tab thứ 2 tải lại (trước khi host trả `key_in_use`) được coi là `resume` và lấy túi của tab 1; host cũng cho
+   lấy nếu tab 1 im ≥ 3 s (tab ẩn/thu nhỏ). Tab 1 không được báo: vẫn hiện túi của tab 2 như túi mình, mọi thao tác
+   `unknown_player`. Hướng sửa: chỉ ghi sessionStorage sau khi `claim` thành công; ClientLoot gặp `unknown_player` → claim lại.
+2. **Tab vừa tải lại tự làm host riêng ~0,5 s** (thế giới trống, túi mới chỉ có dao) rồi mới nhập vào host thật; kết quả cuối
+   đúng nhưng HUD nháy "Túi 1/12" và nếu mạng chậm thì người chơi có thể nhặt đồ trong thế giới tạm rồi mất.
 
 ## API ClientLoot (cho phần 2B: UI/scene)
 
@@ -103,7 +116,7 @@ Người dùng đã chọn triển khai phương án 1: đi trên map, mở rư�
 ## Hành vi người chơi
 
 - Rương xuất hiện ở vị trí cố định trong nhà, có dấu hiệu nhận biết và gợi ý tương tác khi tới gần.
-- Dự kiến F mở rương, I mở túi, Esc đóng; giữ E mở cửa của A. Phím là đề xuất triển khai, cần đối chiếu với thay đổi input mới nhất của A.
+- F mở/đóng rương (xa rương F vẫn là đèn pin), I mở/đóng túi, Esc đóng mọi panel; E giữ nguyên là cửa (đã làm ở #36).
 - UI dùng snapshot host; khi chờ thì khóa gửi lặp, khi bị từ chối thì giữ đồ và hiển thị lý do.
 - Mở UI ngăn nhân vật tự di chuyển/chém do thao tác trên panel; thế giới online vẫn tiếp tục chạy.
 - Rời xa rương hoặc chết thì chặn nhặt. Quay lại chunk không sinh lại đồ đã lấy.

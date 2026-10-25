@@ -151,7 +151,19 @@ Nhánh `a/loot-ui` (mỗi bước 1 PR từ `main`, CI xanh thì merge commit). 
 - Bước 3 — HUD (nhánh `a/loot-hud`): dòng "Túi 4/12 ô" cạnh thanh stamina (cam khi kín ô; tính lại chỉ khi ClientLoot
   báo đổi), gợi ý phím thêm "F đèn pin/mở rương · I túi · Esc đóng". Nhặt từ rương thành công → thông báo ngắn
   "+2 Đồ hộp (Tốt)" màu độ hiếm (`gainedItems` so tổng theo món + độ hiếm trước/sau, sắp xếp/gộp không báo). Browser
-  pane: lấy hết rương → HUD 1/12 → 4/12, 3 thông báo đúng màu; ảnh chụp được khi cửa sổ Claude hiện. 330 test.
+  pane: lấy hết rương → HUD 1/12 → 4/12, 3 thông báo đúng màu; ảnh chụp được khi cửa sổ Claude hiện. 330 test. PR #37 đã merge.
+- Bước 4 — thử 2 tab (Browser pane, `?zombies=0`, vòng lặp đẩy tay bằng `setInterval(game.loop.step)` vì cửa sổ Claude
+  hay bị ẩn; chụp ảnh được lúc cửa sổ hiện). Kết quả: 2 tab cùng tới 1 rương, thấy cùng 3 món; bấm "Lấy" cùng 1 ô **cùng
+  mili-giây** → tab host được 3 Nước sạch, tab khách bị từ chối "Rương hoặc túi vừa thay đổi…" và ô thành trống (bảo toàn).
+  Lần trước (lệch 208 ms) tab còn lại thấy ô trống trước khi kịp bấm. Tải lại tab khách → túi còn (dao + gậy). Đóng tab
+  host → tab còn lại lên host (term 2) sau ~3 s, túi 2 người + rương (còn 2 đồ hộp) đúng. Ảnh: 6 tấm (báo cáo session).
+  **Lỗi 2A tìm thấy** (chưa sửa, đụng `/net`/`/host` → cần duyệt): (1) 2 tab cùng trình duyệt cướp túi nhau —
+  `loadPlayerKey` ghi khóa chung vào sessionStorage trước khi host chấp nhận → tab 2 tải lại sớm = `resume` → lấy túi tab 1;
+  host cũng cho lấy khi tab 1 im ≥ 3 s (tab ẩn). Tab 1 không được báo (hiện túi tab 2, mọi thao tác `unknown_player`).
+  (2) Tab vừa tải lại tự làm host riêng ~0,5 s (thế giới trống, túi chỉ có dao) rồi mới nhập host thật.
+- Bước 5 — tài liệu (nhánh `a/loot-docs`): bảng "Điều kiện hoàn thành" ở `docs/loot-online-plan.md` (sau 2B + 2 lỗi 2A),
+  AGENTS.md mục 8, ghi chú tương thích của PR #35 (B, đã đóng) gộp vào `shared/types/loot-protocol.md` (bản hiện tại 5,
+  sao lưu 125 bản bố cục 6).
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
