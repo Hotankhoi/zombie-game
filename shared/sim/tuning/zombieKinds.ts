@@ -57,4 +57,9 @@ export const SPECIAL = {
   spit: { minRange: 2.5, maxRange: 7, cooldownSec: 3.5, flightSec: 0.6, radius: 1.1, ttlSec: 3, dps: 14 },
   /** Trốn: người (đứng được) tới gần bấy nhiêu ô thì lao ra, tăng tốc bấy nhiêu giây. */
   hider: { revealRange: 2.6, burstSec: 1.5, burstSpeed: 1.8 },
+  /**
+   * Khổng lồ/Boss phá tường: đuổi người trong tầm `range` ô thì đi thẳng (không vòng), húc tường trước mặt.
+   * Tường có `wallHp` máu, mất `dps` mỗi giây bị húc (Boss × `bossFactor`); vỡ thành ô trống mãi mãi.
+   */
+  wallSmash: { range: 9, wallHp: 100, dps: 30, bossFactor: 2, reach: 0.3, frontDeg: 70 },
 } as const;

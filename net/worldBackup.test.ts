@@ -183,6 +183,32 @@ describe('worldBackup', () => {
     expect(m.zombies).toHaveLength(s.zombies.length);
   });
 
+  it('tường vỡ + tường đang bị húc dở có trong bản lưu; ghép gộp tường vỡ của cả hai bên', () => {
+    const s = played(5).state();
+    s.brokenWalls = [
+      { x: 3, y: -4 },
+      { x: -100000, y: 7 },
+    ];
+    s.wallDamage = [{ x: 5, y: 5, hp: 42.5 }];
+    const d = decodeBackup(encodeBackup(s))!;
+    expect(d.brokenWalls).toEqual(s.brokenWalls);
+    expect(d.wallDamage).toEqual(s.wallDamage);
+    const fresh = {
+      ...played(10).state(),
+      brokenWalls: [
+        { x: 3, y: -4 },
+        { x: 9, y: 9 },
+      ],
+    };
+    const m = mergeBackup(d, fresh, { x: 0, y: 0, radius: 32 }, new Set(['a', 'b']))!;
+    expect(m.brokenWalls).toEqual([
+      { x: 3, y: -4 },
+      { x: -100000, y: 7 },
+      { x: 9, y: 9 },
+    ]);
+    expect(m.wallDamage).toEqual([{ x: 5, y: 5, hp: 42.5 }]);
+  });
+
   it('bản lưu khác phiên bản bố cục → bỏ qua (null), không đọc lệch', () => {
     const buf = encodeBackup(played(5).state());
     buf[1] = (buf[1]! + 1) & 255;

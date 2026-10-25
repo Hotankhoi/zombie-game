@@ -11,7 +11,7 @@ import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
 import { seesPoint, visionShapes } from '@shared/sim/vision';
 import { KIND, ZOMBIE_KINDS, type ZombieKind } from '@shared/sim/tuning/zombieKinds';
-import type { SimEvent } from '@shared/sim/world';
+import { keyTile, type SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
 import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
@@ -401,6 +401,20 @@ export class WorldScene extends Phaser.Scene {
       g.fillStyle(0x6d4c41);
       if (horizontalWall) g.fillRect(x, y, 3, T);
       else g.fillRect(x, y, T, 3);
+    }
+    // tường bị khổng lồ húc vỡ (TẠM vẽ bằng code: nền + gạch vụn) — chỉ vẽ ô trong khung camera
+    const view = this.cameras.main.worldView;
+    for (const k of this.net.sync.brokenWalls) {
+      const { x: tx, y: ty } = keyTile(k);
+      const x = tx * T;
+      const y = ty * T;
+      if (x + T < view.x || y + T < view.y || x > view.right || y > view.bottom) continue;
+      g.fillStyle(0x8a8580).fillRect(x, y, T, T);
+      g.fillStyle(0x5d5955);
+      for (let i = 0; i < 5; i++) {
+        const h = ((tx * 73856093) ^ (ty * 19349663) ^ (i * 83492791)) >>> 0;
+        g.fillRect(x + (h % (T - 3)), y + ((h >>> 8) % (T - 3)), 3, 2);
+      }
     }
   }
 

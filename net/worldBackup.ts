@@ -15,7 +15,7 @@ export const WORLD_BACKUP_MSG = 125;
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 3;
+export const WORLD_BACKUP_VERSION = 4;
 
 const MODES = ['wander', 'investigate', 'chase'] as const;
 /** Các đồng hồ đếm ngược của zombie, theo thứ tự bit trong mặt nạ. */
@@ -140,6 +140,19 @@ export function encodeBackup(s: WorldState): Uint8Array {
   const horde = enc.encode(s.horde ? JSON.stringify(s.horde) : '');
   w.u32(horde.length);
   w.bytes(horde);
+  const walls = s.brokenWalls ?? [];
+  w.u32(walls.length);
+  for (const t of walls) {
+    w.i32(t.x);
+    w.i32(t.y);
+  }
+  const damaged = s.wallDamage ?? [];
+  w.u16(Math.min(0xffff, damaged.length));
+  for (const t of damaged.slice(0, 0xffff)) {
+    w.i32(t.x);
+    w.i32(t.y);
+    w.f32(t.hp);
+  }
   const corpses = s.corpses ?? [];
   w.u8(Math.min(255, corpses.length));
   for (const c of corpses.slice(0, 255)) {
@@ -270,6 +283,10 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
     for (let i = 0, n = r.u16(); i < n; i++) noises.push({ x: r.f32(), y: r.f32(), radius: r.f32() });
     const hordeText = dec.decode(r.bytes(r.u32()));
     const horde = hordeText ? (JSON.parse(hordeText) as HordeState) : null;
+    const brokenWalls: { x: number; y: number }[] = [];
+    for (let i = 0, n = r.u32(); i < n; i++) brokenWalls.push({ x: r.i32(), y: r.i32() });
+    const wallDamage: { x: number; y: number; hp: number }[] = [];
+    for (let i = 0, n = r.u16(); i < n; i++) wallDamage.push({ x: r.i32(), y: r.i32(), hp: r.f32() });
     const corpses: Corpse[] = [];
     for (let i = 0, n = r.u8(); i < n; i++) {
       const player = dec.decode(r.bytes(r.u8()));
@@ -290,6 +307,8 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       noises,
       horde,
       corpses,
+      brokenWalls,
+      wallDamage,
     };
   } catch {
     return null;
@@ -369,10 +388,25 @@ export function mergeBackup(
       .filter((p) => p.ttl > 0),
     nextPoolId: backup.nextPoolId ?? 1,
     brokenDoors: (backup.brokenDoors ?? []).map((d) => ({ ...d })),
+    // tường vỡ thì vỡ mãi: gộp cả hai (máy mình biết qua MapDelta có thể mới hơn bản lưu)
+    brokenWalls: unionTiles(backup.brokenWalls ?? [], fresh.brokenWalls ?? []),
+    wallDamage: (backup.wallDamage ?? []).map((d) => ({ ...d })),
     noises: (backup.noises ?? []).map((n) => ({ ...n })),
     horde: backup.horde ? structuredClone(backup.horde) : null,
     corpses,
   };
+}
+
+function unionTiles(a: readonly { x: number; y: number }[], b: readonly { x: number; y: number }[]) {
+  const seen = new Set<string>();
+  const out: { x: number; y: number }[] = [];
+  for (const t of [...a, ...b]) {
+    const k = `${t.x},${t.y}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ x: t.x, y: t.y });
+  }
+  return out;
 }
 
 function aliveTargets(players: PlayerState[]) {

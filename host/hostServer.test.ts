@@ -361,3 +361,55 @@ describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
     expect(c.sample().zombies).toHaveLength(300);
   });
 });
+
+describe('tường vỡ qua mạng (danh sách ô đã đổi)', () => {
+  it('host gửi ô vừa vỡ cho mọi người; người vào sau nhận cả danh sách; máy khách coi ô đó là trống', () => {
+    const m = match(['a', 'b'], { a: 1, b: 1 }, 0, 0);
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const w = m.host.world;
+    // arenaMap: tường bao quanh; chọn ô tường ở mép phải cùng hàng với a
+    const a = w.players.get('a')!;
+    let wx = Math.floor(a.x);
+    while (!w.isWall(wx, Math.floor(a.y))) wx++;
+    const wy = Math.floor(a.y);
+    const s = w.state();
+    s.brokenWalls = [{ x: wx, y: wy }];
+    // giả lập tick vừa vỡ tường: dựng host mới từ trạng thái có tường vỡ, cùng người chơi
+    const host2 = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0, restore: s });
+    const late = new ClientSync('c', arenaMap());
+    host2.receive('c', late.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    const out = host2.tick();
+    const deltas = out.filter((o) => o.to === 'c' && decodeGame(o.data)?.type === GameMsg.MapDelta);
+    expect(deltas).toHaveLength(1);
+    expect(late.blocked(wx, wy)).toBe(true);
+    for (const o of out) if (o.to === 'c') late.receive(o.data);
+    expect(late.blocked(wx, wy)).toBe(false);
+  });
+
+  it('khổng lồ húc vỡ tường trong trận → mọi máy khách nhận MapDelta (reliable)', () => {
+    const m = match(['a', 'b'], { a: 1, b: 2 }, 0, 0);
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const w = m.host.world;
+    // arenaMap: phòng (19,3)–(30,10), tường dưới ở hàng y = 10; a đứng ngoài, khổng lồ trong phòng
+    const a = w.players.get('a')!;
+    a.x = 27.5;
+    a.y = 13.5;
+    w.zombies.push(
+      testZombie(5, 27.5, 7.5, {
+        kind: 'giant',
+        mode: 'chase',
+        target: 'a',
+        facing: Math.PI / 2,
+        biteCd: 99,
+      }),
+    );
+    const [wx, wy] = [27, 10];
+    expect(w.isWall(wx, wy)).toBe(true);
+    for (let t = 0; t < 8 * 20 && w.isWall(wx, wy); t++) m.step(idle);
+    expect(w.isWall(wx, wy)).toBe(false);
+    for (let t = 0; t < 5; t++) m.step(idle);
+    for (const id of ['a', 'b']) expect(m.clients.get(id)!.blocked(wx, wy)).toBe(false);
+  });
+});

@@ -117,6 +117,13 @@ describe('gameCodec', () => {
         ],
       },
       { type: GameMsg.HostClaim, hostedMs: 42 },
+      {
+        type: GameMsg.MapDelta,
+        tiles: [
+          { x: -5, y: 70000, change: 1 },
+          { x: 12, y: -3, change: 1 },
+        ],
+      },
     ];
     for (const m of msgs) expect(decodeGame(encodeGame(m))).toEqual(m);
   });

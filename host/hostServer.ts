@@ -2,6 +2,7 @@ import {
   decodeGame,
   encodeGame,
   GameMsg,
+  TileChange,
   type SnapshotMsg,
   type WireEvent,
   type WireHorde,
@@ -134,6 +135,7 @@ export class HostServer {
 
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
+    if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
     const every = Math.max(1, Math.floor(BACKUP_EVERY / Math.max(1, this.clients.size)));
     if (this.world.tick % every === 0) this.sendBackup();
@@ -163,8 +165,20 @@ export class HostServer {
       this.clients.set(id, c);
       this.world.addPlayer(id);
       this.rosterDirty = true;
+      // người mới (hoặc mọi người khi host mới dựng lại thế giới): gửi cả danh sách ô map đã đổi
+      const changed = this.world.brokenWallList();
+      if (changed.length > 0) this.sendMapDelta(changed, [id]);
     }
     return c;
+  }
+
+  /** Danh sách ô tường đã vỡ → người nhận (reliable, không lọc theo vùng quan tâm: map dùng chung). */
+  private sendMapDelta(tiles: readonly { x: number; y: number }[], to: readonly PeerId[]): void {
+    const data = encodeGame({
+      type: GameMsg.MapDelta,
+      tiles: tiles.map((t) => ({ x: t.x, y: t.y, change: TileChange.WallBroken })),
+    });
+    for (const id of to) this.out.push({ to: id, data, channel: 'reliable' });
   }
 
   /**

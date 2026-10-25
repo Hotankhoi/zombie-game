@@ -3,7 +3,7 @@ import { PLAYER } from '@shared/data/player';
 import { ZOMBIE_NORMAL as Z } from '@shared/data/zombies';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Rng, hashString } from '@shared/util/rng';
-import { pushOut, type BlockedFn } from './collision';
+import { angleDiff, pushOut, type BlockedFn } from './collision';
 import { dayClock, tickOfDay } from './dayNight';
 import { meleeAttack } from './combat';
 import { Doors, circleOverlapsTile, nearestDoor } from './doors';
@@ -111,6 +111,10 @@ export interface WorldState {
   nextPoolId?: number;
   /** Cửa bị khổng lồ phá: mở mãi, không đóng lại được. */
   brokenDoors?: Vec2[];
+  /** Tường bị khổng lồ/Boss húc vỡ → ô trống mãi mãi (chỉ gửi danh sách ô đã đổi, không gửi lại map). */
+  brokenWalls?: Vec2[];
+  /** Tường đang bị húc dở: máu còn lại. */
+  wallDamage?: { x: number; y: number; hp: number }[];
   noises?: Noise[];
   /** GĐ 5. */
   horde?: HordeState | null;
@@ -156,6 +160,11 @@ export class SimWorld {
   private nextPoolId = 1;
   /** Cửa đã bị phá ("x,y"). */
   private brokenDoors = new Set<string>();
+  /** Tường đã vỡ (khóa số `tileKey`) và tường đang bị húc dở (khóa → máu còn). */
+  private brokenWalls = new Set<number>();
+  private wallHp = new Map<number, number>();
+  /** Ô map vừa đổi trong tick (tường vỡ) — host gửi cho mọi người dạng danh sách ô (GameMsg.MapDelta). */
+  mapChanges: Vec2[] = [];
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
@@ -168,12 +177,26 @@ export class SimWorld {
     const m = this.map;
     if (m.tileKind) {
       const k = m.tileKind(tx, ty);
-      return k === 1 || (k === 2 && !this.doors.isOpen(tx, ty));
+      return (k === 1 && !this.isBroken(tx, ty)) || (k === 2 && !this.doors.isOpen(tx, ty));
     }
-    return m.isWall(tx, ty) || (m.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
+    return this.isWall(tx, ty) || (m.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
   };
   /** Chỉ tường — khổng lồ đi xuyên cửa đóng (và phá nó). */
-  readonly wallsOnly: BlockedFn = (tx, ty) => this.map.isWall(tx, ty);
+  readonly wallsOnly: BlockedFn = (tx, ty) => this.isWall(tx, ty);
+
+  /** Tường còn nguyên (tường của map trừ tường đã vỡ). */
+  isWall(tx: number, ty: number): boolean {
+    return this.map.isWall(tx, ty) && !this.isBroken(tx, ty);
+  }
+
+  private isBroken(tx: number, ty: number): boolean {
+    return this.brokenWalls.size > 0 && this.brokenWalls.has(tileKey(tx, ty));
+  }
+
+  /** Danh sách tường đã vỡ (sắp xếp — tất định). */
+  brokenWallList(): Vec2[] {
+    return [...this.brokenWalls].sort((a, b) => a - b).map(keyTile);
+  }
 
   constructor(opts: SimWorldOptions) {
     this.map = opts.map;
@@ -191,6 +214,8 @@ export class SimWorld {
     this.zombies = s.zombies.map((z) => ({ ...z }));
     for (const d of s.openDoors) this.doors.set(d.x, d.y, true);
     this.flowTargets = s.flowTargets.map((t) => ({ ...t }));
+    for (const w of s.brokenWalls ?? []) this.brokenWalls.add(tileKey(w.x, w.y));
+    for (const w of s.wallDamage ?? []) this.wallHp.set(tileKey(w.x, w.y), w.hp);
     this.flow.build(this.flowTargets, this.blocked);
     this.flowDirty = s.flowDirty;
     this.pools = (s.pools ?? []).map((p) => ({ ...p }));
@@ -221,6 +246,8 @@ export class SimWorld {
         const [x, y] = k.split(',').map(Number);
         return { x: x as number, y: y as number };
       }),
+      brokenWalls: this.brokenWallList(),
+      wallDamage: [...this.wallHp].sort((a, b) => a[0] - b[0]).map(([k, hp]) => ({ ...keyTile(k), hp })),
       noises: this.noises.map((n) => ({ ...n })),
       horde: this.horde ? structuredCopy(this.horde) : null,
       corpses: this.corpses.map((c) => ({ ...c })),
@@ -262,6 +289,7 @@ export class SimWorld {
    */
   step(inputs: ReadonlyMap<PeerId, PlayerInput>): void {
     this.events = [];
+    this.mapChanges = [];
     const players = this.sortedPlayers();
 
     for (const p of players) {
@@ -307,6 +335,7 @@ export class SimWorld {
     };
     for (const z of this.zombies) stepZombie(z, ctx);
     this.smashDoors();
+    this.smashWalls();
     this.separate(alive);
     this.directHorde(alive);
     this.refillZombies();
@@ -515,6 +544,39 @@ export class SimWorld {
     }
   }
 
+  /**
+   * Khổng lồ/Boss đang đuổi người ở gần (SPECIAL.wallSmash.range) húc tường trước mặt: tường mất máu, hết máu
+   * thì vỡ thành ô trống (flow field dựng lại, tiếng ồn lớn, ghi vào `mapChanges` để host gửi đi).
+   */
+  private smashWalls(): void {
+    const W = SPECIAL.wallSmash;
+    const front = (W.frontDeg * Math.PI) / 180;
+    for (const z of this.zombies) {
+      if (!breaksDoors(z.kind) || z.mode !== 'chase' || z.target === null || z.hp <= 0) continue;
+      const t = this.players.get(z.target);
+      if (!t || Math.hypot(t.x - z.x, t.y - z.y) > W.range) continue;
+      const r = radiusOf(z) + W.reach;
+      const dmg = W.dps * DT * (z.kind === 'boss' ? W.bossFactor : 1);
+      for (let ty = Math.floor(z.y - r); ty <= Math.floor(z.y + r); ty++) {
+        for (let tx = Math.floor(z.x - r); tx <= Math.floor(z.x + r); tx++) {
+          if (!this.isWall(tx, ty) || !circleOverlapsTile(z.x, z.y, r, tx, ty)) continue;
+          if (angleDiff(z.facing, Math.atan2(ty + 0.5 - z.y, tx + 0.5 - z.x)) > front) continue;
+          const key = tileKey(tx, ty);
+          const hp = (this.wallHp.get(key) ?? W.wallHp) - dmg;
+          if (hp > 0) {
+            this.wallHp.set(key, hp);
+            continue;
+          }
+          this.wallHp.delete(key);
+          this.brokenWalls.add(key);
+          this.flowDirty = true;
+          this.mapChanges.push({ x: tx, y: ty });
+          this.emitNoise(tx + 0.5, ty + 0.5, NOISE.doorBreak);
+        }
+      }
+    }
+  }
+
   /** Phần "theo input" của người chơi: đi/chạy, mở cửa, chém. Giống hệt Predictor phía client. */
   private applyInput(p: PlayerState, input: PlayerInput): void {
     stepPlayer(p, input, DT, this.blocked);
@@ -662,6 +724,17 @@ export class SimWorld {
     }
     parts.push(`n${this.noises.map((n) => `${f(n.x)},${f(n.y)},${f(n.radius)}`).join(';')}`);
     parts.push(`x${[...this.brokenDoors].sort().join(';')}`);
+    parts.push(
+      `w${this.brokenWallList()
+        .map((t) => `${t.x},${t.y}`)
+        .join(';')}`,
+    );
+    parts.push(
+      `wd${[...this.wallHp]
+        .sort((a, b) => a[0] - b[0])
+        .map(([k, hp]) => `${k}:${f(hp)}`)
+        .join(';')}`,
+    );
     if (this.horde) parts.push(`h${JSON.stringify(sortKeys(this.horde))}`);
     for (const c of this.corpses) parts.push(`c${c.player}:${f(c.x)},${f(c.y)},${f(c.turnIn)}`);
     parts.push(`d${this.doors.openList().join(';')}`);
@@ -937,4 +1010,14 @@ function sortKeys(h: HordeState): unknown {
   const sorted = (o: Record<string, number>) =>
     Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
   return { ...h, kills: sorted(h.kills), downs: sorted(h.downs) };
+}
+
+/** Khóa số của ô (tx, ty) — chính xác với mọi tọa độ map hỗ trợ (|tx|, |ty| < 2^25). */
+const KEY_OFF = 2 ** 25;
+const KEY_MUL = 2 ** 26;
+export function tileKey(tx: number, ty: number): number {
+  return (tx + KEY_OFF) * KEY_MUL + (ty + KEY_OFF);
+}
+export function keyTile(k: number): Vec2 {
+  return { x: Math.floor(k / KEY_MUL) - KEY_OFF, y: (k % KEY_MUL) - KEY_OFF };
 }

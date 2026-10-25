@@ -4,7 +4,7 @@ import type { MapSource } from '@shared/sim/grid';
 import { aimToRad, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
 import { Predictor } from '@shared/sim/prediction';
-import type { Corpse, SimEvent, WorldState } from '@shared/sim/world';
+import { keyTile, tileKey, type Corpse, type SimEvent, type WorldState } from '@shared/sim/world';
 import { PARTY } from '@shared/sim/tuning/party';
 import type { ZombieKind } from '@shared/sim/tuning/zombieKinds';
 import { maxHpOf, type ZombieState } from '@shared/sim/zombie';
@@ -12,6 +12,7 @@ import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { hashString } from '@shared/util/rng';
 import {
   GameMsg,
+  TileChange,
   decodeGame,
   encodeGame,
   type SnapshotMsg,
@@ -102,6 +103,8 @@ export class ClientSync {
    * zombie (snapshot không gửi máu cho đỡ tốn băng thông). Giới hạn ZOMBIE_HP_KEEP con gần nhất bị đánh.
    */
   private zombieHp = new Map<number, number>();
+  /** Tường đã vỡ (khóa `tileKey`) — theo GameMsg.MapDelta của host; dự đoán, tầm nhìn và vẽ đều dùng. */
+  readonly brokenWalls = new Set<number>();
   /** Xác đồng đội chưa thành zombie (sự kiện death + vị trí cuối) — chuyển host không làm mất xác. */
   private corpses: { player: PeerId; x: number; y: number; tick: number }[] = [];
   private recent: PlayerInput[] = [];
@@ -116,12 +119,15 @@ export class ClientSync {
   ) {
     // tileKind (nếu có): 1 lần tra thay vì 2 — tầm nhìn bắn vài nghìn tia ô mỗi frame
     const kind = map.tileKind?.bind(map);
+    const broken = (tx: number, ty: number) =>
+      this.brokenWalls.size > 0 && this.brokenWalls.has(tileKey(tx, ty));
     this.blocked = kind
       ? (tx, ty) => {
           const k = kind(tx, ty);
-          return k === 1 || (k === 2 && !this.doors.isOpen(tx, ty));
+          return (k === 1 && !broken(tx, ty)) || (k === 2 && !this.doors.isOpen(tx, ty));
         }
-      : (tx, ty) => map.isWall(tx, ty) || (map.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
+      : (tx, ty) =>
+          (map.isWall(tx, ty) && !broken(tx, ty)) || (map.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
     this.predictor = new Predictor(this.blocked);
   }
 
@@ -143,6 +149,10 @@ export class ClientSync {
         return true;
       case GameMsg.Snapshot:
         this.onSnapshot(msg);
+        return true;
+      case GameMsg.MapDelta:
+        for (const t of msg.tiles)
+          if (t.change === TileChange.WallBroken) this.brokenWalls.add(tileKey(t.x, t.y));
         return true;
       case GameMsg.Events:
         for (const e of msg.events) {
@@ -333,6 +343,7 @@ export class ClientSync {
       nextZombieId: maxId + 1,
       players,
       zombies,
+      brokenWalls: [...this.brokenWalls].sort((a, b) => a - b).map(keyTile),
       corpses: this.corpses
         .map((c): Corpse => ({
           player: c.player,

@@ -230,11 +230,12 @@ export function stepZombie(z: ZombieState, ctx: ZombieStepCtx): void {
     (1 + ZOMBIE_NIGHT.speedBonus * ctx.darkness) *
     (z.burstFor > 0 ? SPECIAL.hider.burstSpeed : 1);
   // thấy thẳng thì lao tới, bị che thì đi theo flow field (vòng qua tường, không qua cửa đóng)
-  let goal: { x: number; y: number } | null = hasLineOfSight(z, target, blocked)
-    ? target
-    : ctx.flow.nextStep(z, blocked);
-  // khổng lồ/Boss không có đường (bị cửa đóng chặn) thì đi thẳng tới, phá cửa
   const smash = breaksDoors(z.kind);
+  let goal: { x: number; y: number } | null =
+    hasLineOfSight(z, target, blocked) || (smash && d <= SPECIAL.wallSmash.range)
+      ? target // khổng lồ/Boss ở gần: đi thẳng, húc vỡ tường/cửa chắn đường (SimWorld.smashWalls)
+      : ctx.flow.nextStep(z, blocked);
+  // khổng lồ/Boss không có đường (bị cửa đóng chặn) thì đi thẳng tới, phá cửa
   const moveBlocked = smash ? ctx.wallsOnly : blocked;
   if (!goal && smash) goal = target;
   if (!goal) return;
