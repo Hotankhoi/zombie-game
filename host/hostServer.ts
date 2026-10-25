@@ -10,7 +10,7 @@ import {
   type WirePlayer,
 } from '@net/gameCodec';
 import { encodeRoomFull } from '@net/roomFull';
-import { encodeBackup } from '@net/worldBackup';
+import { BACKUP_PARTS, encodeBackupPart } from '@net/worldBackup';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
@@ -31,12 +31,13 @@ export const INTEREST_RADIUS = 32;
  * con ngoài màn hình (> FAR_ZOMBIE_TILES ô) chỉ được tối đa ZOMBIE_OFFSCREEN_ROOM chỗ. Client giữ vị trí cũ
  * của con vắng mặt một lúc (net/clientSync.ts). Cách làm triệt để (delta + zombie tất định) để GĐ 2b'.
  */
-export const ZOMBIE_BUDGET = 170;
+export const ZOMBIE_BUDGET = 165;
 export const ZOMBIE_NEAR_ALWAYS = 130;
 export const ZOMBIE_OFFSCREEN_ROOM = 8;
 /**
- * Mỗi người nhận bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
- * trạng thái. Gửi so le (mỗi BACKUP_EVERY / số người tick gửi cho 1 người) để không dồn cùng một tick.
+ * Mỗi người nhận đủ bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
+ * trạng thái. Chia BACKUP_PARTS mẩu, mỗi BACKUP_EVERY / BACKUP_PARTS tick (1s) gửi 1 mẩu cho mọi người: băng thông
+ * đều (~2 KB/s lúc đợt tràn tối đa) thay vì ~23 KB dồn 1 lần làm vọt đỉnh.
  */
 export const BACKUP_EVERY = 200;
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
@@ -79,7 +80,7 @@ export class HostServer {
   private clients = new Map<PeerId, Client>();
   private out: Outgoing[] = [];
   private rosterDirty = false;
-  /** Lượt gửi bản sao lưu (xoay vòng người nhận). */
+  /** Mẩu sao lưu gửi lần tới (xoay vòng 0..BACKUP_PARTS-1). */
   private backupTurn = 0;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
@@ -140,8 +141,7 @@ export class HostServer {
     this.sendEvents(this.world.events);
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
-    const every = Math.max(1, Math.floor(BACKUP_EVERY / Math.max(1, this.clients.size)));
-    if (this.world.tick % every === 0) this.sendBackup();
+    if (this.world.tick % (BACKUP_EVERY / BACKUP_PARTS) === 0) this.sendBackup();
 
     const out = this.out;
     this.out = [];
@@ -222,8 +222,9 @@ export class HostServer {
   private sendBackup(): void {
     const list = [...this.clients.values()].sort((a, b) => a.slot - b.slot);
     if (list.length === 0) return;
-    const c = list[this.backupTurn++ % list.length] as Client;
-    this.out.push({ to: c.id, data: encodeBackup(this.world.state()), channel: 'reliable' });
+    // mã hóa 1 lần, cùng một gói cho mọi người
+    const data = encodeBackupPart(this.world.state(), this.backupTurn++ % BACKUP_PARTS, BACKUP_PARTS);
+    for (const c of list) this.out.push({ to: c.id, data, channel: 'reliable' });
   }
 
   private sendRoster(): void {
@@ -239,7 +240,11 @@ export class HostServer {
     return this.clients.get(id)?.slot ?? 255;
   }
 
-  private sendEvents(events: readonly SimEvent[]): void {
+  private sendEvents(all: readonly SimEvent[]): void {
+    // bị cả bầy cắn cùng lúc: máy khách chỉ vẽ 1 vệt máu ở chỗ người bị cắn + rung màn hình (máu đã trừ trong mô phỏng,
+    // gửi qua snapshot) → mỗi người chỉ gửi 1 sự kiện cắn mỗi tick (đợt tràn tối đa: ~8 → 1, bớt ~2 KB/s mỗi người)
+    const bitten = new Set<PeerId>();
+    const events = all.filter((e) => e.type !== 'bite' || (!bitten.has(e.player) && !!bitten.add(e.player)));
     if (events.length === 0) return;
     const wire = events.map((e) => this.toWire(e));
     for (const c of this.clients.values()) {

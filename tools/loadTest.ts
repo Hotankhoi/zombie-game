@@ -37,9 +37,11 @@ export interface LoadReport {
   hostTickMaxMs: number;
   /** Thời gian xử lý phía máy khách mỗi tick (nhận gói + nội suy + bot), trung bình mỗi người. */
   clientTickAvgMs: number;
-  /** Băng thông nhận của mỗi người (KB/s): trung bình và cửa sổ 5s cao nhất. */
+  /** Băng thông nhận của mỗi người (KB/s): trung bình và cửa sổ 5s cao nhất (tính trung bình cả nhóm). */
   downKBps: number;
   downPeakKBps: number;
+  /** Cửa sổ 5s cao nhất của NGƯỜI nhận nhiều nhất (KB/s) — đỉnh thật mà một máy phải chịu. */
+  downPeakMaxKBps: number;
   upKBps: number;
   /**
    * Sai lệch dự đoán lớn nhất (ô), bỏ qua lần "nhảy" > 2 ô (hồi sinh, bị đồng đội kéo — đúng luật, không phải lỗi
@@ -91,6 +93,9 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
   let up = 0;
   const window: number[] = [];
   let peak = 0;
+  // cửa sổ 5s riêng từng người: tổng byte trong cửa sổ + hàng byte từng tick
+  const own = new Map(ids.map((id) => [id, { sum: 0, ticks: [] as number[] }]));
+  let peakMax = 0;
   let zSum = 0;
   let zMax = 0;
   let predErr = 0;
@@ -130,6 +135,7 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
       }
     }
     let tickBytes = 0;
+    const perPeer = new Map<PeerId, number>();
     for (const o of out) {
       if (o.data[0] === GameMsg.Snapshot) snapsSent++;
       if (o.channel === 'unreliable' && loss > 0 && rng.chance(loss)) {
@@ -139,6 +145,14 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
       toClient.get(o.to)!.push({ at: t + lagTicks, data: o.data });
       down += o.data.length;
       tickBytes += o.data.length;
+      perPeer.set(o.to, (perPeer.get(o.to) ?? 0) + o.data.length);
+    }
+    for (const [id, w] of own) {
+      const b = perPeer.get(id) ?? 0;
+      w.ticks.push(b);
+      w.sum += b;
+      if (w.ticks.length > 100) w.sum -= w.ticks.shift()!;
+      if (w.ticks.length === 100) peakMax = Math.max(peakMax, w.sum / 5);
     }
     window.push(tickBytes / players);
     if (window.length > 100) window.shift();
@@ -186,6 +200,7 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
     clientTickAvgMs: r2(clientTime / ticks / players),
     downKBps: r2(down / players / 1024 / seconds),
     downPeakKBps: r2(peak / 1024),
+    downPeakMaxKBps: r2(peakMax / 1024),
     upKBps: r2(up / players / 1024 / seconds),
     predictionErrMax: r2(predErr),
     correctionsPerMin: r2(corrections / players / (seconds / 60)),

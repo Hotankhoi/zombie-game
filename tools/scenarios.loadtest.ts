@@ -35,7 +35,7 @@ it('đo tải 4 người', { timeout: 30 * 60_000 }, () => {
       'Zombie TB/max': `${r.zombiesAvg}/${r.zombiesMax}`,
       'Host ms/tick TB·p95·max': `${r.hostTickAvgMs} · ${r.hostTickP95Ms} · ${r.hostTickMaxMs}`,
       'Khách ms/tick': r.clientTickAvgMs,
-      'Nhận KB/s TB·đỉnh5s': `${r.downKBps} · ${r.downPeakKBps}`,
+      'Nhận KB/s TB·đỉnh5s·đỉnh5s 1 người': `${r.downKBps} · ${r.downPeakKBps} · ${r.downPeakMaxKBps}`,
       'Gửi KB/s': r.upKBps,
       'Lệch dự đoán max (ô) · sửa/phút': `${r.predictionErrMax} · ${r.correctionsPerMin}`,
       'Mất snapshot %': r.snapshotsLostPct,
