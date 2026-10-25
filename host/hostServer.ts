@@ -9,14 +9,18 @@ import {
   type WireHorde,
   type WirePlayer,
 } from '@net/gameCodec';
+import { isLootPacket } from '@net/lootCodec';
 import { encodeRoomFull } from '@net/roomFull';
 import { BACKUP_PARTS, encodeBackupPart } from '@net/worldBackup';
+import { hasLineOfSight } from '@shared/sim/collision';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
-import type { PlayerState } from '@shared/sim/player';
+import { isUp, type PlayerState } from '@shared/sim/player';
 import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
 import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
+import type { LootReplicaWire } from '@shared/types/loot';
+import { HostLoot } from './hostLoot';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -59,6 +63,8 @@ export interface HostServerOptions {
   startTick?: number;
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
+  /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
+  loot?: { restore?: LootReplicaWire; epoch?: number; random?: () => string };
 }
 
 interface Client {
@@ -77,6 +83,8 @@ interface Client {
  */
 export class HostServer {
   readonly world: SimWorld;
+  /** Túi đồ + rương (gói 110–113, reliable). */
+  readonly loot: HostLoot;
   private clients = new Map<PeerId, Client>();
   private out: Outgoing[] = [];
   private rosterDirty = false;
@@ -93,10 +101,26 @@ export class HostServer {
       restore: opts.restore,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
+    this.loot = new HostLoot({
+      seed: opts.seed,
+      ...opts.loot,
+      world: {
+        inMatch: (id) => this.clients.has(id),
+        position: (id) => {
+          const p = this.world.players.get(id);
+          return p ? { x: p.x, y: p.y, up: isUp(p) } : null;
+        },
+        sees: (from, chest) => hasLineOfSight(from, chest, this.world.blocked),
+      },
+    });
   }
 
   /** Gói từ mạng (hoặc từ chính máy host). Người gửi input lần đầu = vào trận. */
   receive(from: PeerId, data: Uint8Array): void {
+    if (isLootPacket(data)) {
+      this.loot.receive(from, data);
+      return;
+    }
     const msg = decodeGame(data);
     if (!msg || msg.type !== GameMsg.Input) return;
     const c = this.client(from);
@@ -116,6 +140,7 @@ export class HostServer {
   removePeer(id: PeerId): void {
     this.rejectedAt.delete(id);
     if (!this.clients.delete(id)) return;
+    this.loot.removePeer(id);
     this.world.removePlayer(id);
     this.rosterDirty = true;
   }
@@ -142,6 +167,8 @@ export class HostServer {
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
     if (this.world.tick % (BACKUP_EVERY / BACKUP_PARTS) === 0) this.sendBackup();
+    this.loot.flush(this.world.tick);
+    for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
 
     const out = this.out;
     this.out = [];
@@ -167,6 +194,7 @@ export class HostServer {
       c = { id, slot, queue: [], ack: 0 };
       this.clients.set(id, c);
       this.world.addPlayer(id);
+      this.loot.admit(id);
       this.rosterDirty = true;
       // người mới (hoặc mọi người khi host mới dựng lại thế giới): gửi cả danh sách ô map đã đổi
       const changed = this.world.brokenWallList();

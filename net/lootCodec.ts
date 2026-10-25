@@ -336,6 +336,10 @@ function readEntries(r: Reader) {
 
 // ---------- hành động ----------
 
+function writeQuantity(w: Writer, q: number): void {
+  if (!Number.isSafeInteger(q) || q < 1 || q > MAX_QUANTITY) throw new RangeError('số lượng');
+  writeVarint(w, q);
+}
 function writeAction(w: Writer, a: LootAction): void {
   w.u8(code(ACTIONS, a.type));
   switch (a.type) {
@@ -354,7 +358,7 @@ function writeAction(w: Writer, a: LootAction): void {
         if (!Number.isSafeInteger(a.slot) || a.slot < 0 || a.slot >= CHEST_SLOTS)
           throw new RangeError('ô rương');
         w.u8(a.slot);
-        writeVarint(w, a.quantity);
+        writeQuantity(w, a.quantity);
       }
       return;
     case 'move':
@@ -363,7 +367,7 @@ function writeAction(w: Writer, a: LootAction): void {
         if (!Number.isSafeInteger(s) || s < 0 || s >= MAX_BACKPACK) throw new RangeError('ô túi');
       w.u8(a.from);
       w.u8(a.to);
-      writeVarint(w, a.quantity);
+      writeQuantity(w, a.quantity);
       return;
     case 'sort':
       writeVarint(w, a.expectedRevision);

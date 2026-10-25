@@ -3,8 +3,11 @@
  * VÙNG CHUNG: sửa file này phải làm PR riêng và báo người kia (AGENTS.md mục 6–7).
  */
 
-/** Phiên bản giao thức mạng. Tăng khi đổi định dạng gói tin để 2 bản khác nhau không nói chuyện nhầm. */
-export const PROTOCOL_VERSION = 3;
+/**
+ * Phiên bản giao thức mạng. Tăng khi đổi định dạng gói tin để 2 bản khác nhau không nói chuyện nhầm.
+ * 3: hợp đồng loot (B). 4: host gửi gói loot 110–113 thật (codec `net/lootCodec.ts`, A).
+ */
+export const PROTOCOL_VERSION = 4;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

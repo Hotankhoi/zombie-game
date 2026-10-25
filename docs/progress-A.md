@@ -95,6 +95,10 @@ Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` 
 
 - Bước 1 — codec 110–113 (`net/lootCodec.ts`, PR #29): danh mục theo số thứ tự (độ hiếm/món lấy từ danh mục), kiểm tra
   chặt, ID rương gọn, replica đầy đủ + phần đổi (`applyLootPatch`, `isValidReplica`, `isValidPatch`). 279 test.
+- Bước 2 — loot ở host (`host/hostLoot.ts`, PR #30): authority trong HostServer, người gửi = `from` của Transport, chỉ
+  người trong trận, `isUp`, tầm với + `hasLineOfSight(world.blocked)`, requestId lặp → gửi lại kết quả cũ, 10 yêu cầu/s,
+  term `<epoch>.<ngẫu nhiên>`; replica đầy đủ khi vào trận + phần đổi mỗi tick; kết quả chỉ gửi khi mọi người ACK.
+  Sửa vùng B: `LootAuthority.currentRevision/chest/view` (thêm, không đổi cũ). `PROTOCOL_VERSION` 3 → 4. 287 test.
 - Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
