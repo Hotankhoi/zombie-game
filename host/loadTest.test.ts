@@ -14,6 +14,7 @@ describe('đo tải (bản nhanh)', () => {
       latencyMs: 150,
       loss: 0.05,
       zombieCount: 60,
+      loot: [60, 120],
     });
     expect(r.players).toBe(4);
     expect(r.zombiesMax).toBeGreaterThanOrEqual(60);
@@ -22,5 +23,10 @@ describe('đo tải (bản nhanh)', () => {
     // mất 3 gói input liên tiếp mới lệch: rất hiếm, và nhỏ
     expect(r.predictionErrMax).toBeLessThan(1);
     expect(r.snapshotsLostPct).toBeGreaterThan(0);
+    // bot mở rương thật qua mạng (trễ 150ms): có thao tác thành công, đồ vào túi, loot ≤ 3 KB/s mỗi người
+    expect(r.lootVisits).toBeGreaterThan(0);
+    expect(r.lootOk).toBeGreaterThan(4);
+    expect(r.lootItems).toBeGreaterThan(4);
+    expect(r.lootPeakMaxKBps).toBeLessThan(3);
   });
 });

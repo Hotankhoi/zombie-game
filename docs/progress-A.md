@@ -109,6 +109,27 @@ Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` 
   NetGame nhận `test` (đồng hồ giả + host trong tiến trình) → `host/testMatch.ts` chạy nhiều NetGame thật trên
   LoopbackHub. `host/lootOnline.test.ts`: người vào sau, tải lại trang, 2 tab cùng khóa, host rời giữa lúc nhặt (3 thời
   điểm), host mới là người vừa vào. Quyết định playerKey ghi vào `docs/save-format.md` mục 4 (PR #21). 310 test.
+- Bước 5 — test nhiều máy + đo tải (PR #33): `host/lootMatch.test.ts` (4 NetGame, trễ 150ms + mất 5%): 4 người cùng lấy
+  hết 1 rương → đúng 1 thành công; 2 người cùng lấy 1 ô; túi đầy / lượng sai / gói intent lặp 3 lần / revision cũ; ngoài
+  tầm, đang gục; host rời khi 2 người đang nhặt → mọi máy về cùng bản, tổng đồ bảo toàn. `tools/lootBot.ts`: bot tới
+  rương gần nhất mỗi 15–30 s (dịch nhân vật phía host tới rương vì bot không tự đi vào nhà), mở, lấy hết, túi đầy thì
+  sắp xếp. `npm test` (bản nhanh) kiểm tra loot ≤ 3 KB/s. 315 test.
+
+  Bảng đo `npm run loadtest` (4 bot, KB/s mỗi người; loot = gói 110–113 + khối loot trong mẩu 0 gói 125):
+
+  | Kịch bản                                    | Nhận TB · đỉnh 5s nhóm · đỉnh 5s 1 người | Loot TB · đỉnh 5s 1 người · gửi | Tới rương / thành công / đồ |
+  | ------------------------------------------- | ---------------------------------------- | ------------------------------- | --------------------------- |
+  | Bình thường, mạng tốt                       | 10.90 · 14.92 · 15.16                    | 0.04 · 0.13 · 0.01              | 10 / 12 / 40                |
+  | Trễ 150ms + mất 5%                          | 9.15 · 14.50 · 14.87                     | 0.05 · 0.16 · 0.01              | 10 / 16 / 75                |
+  | Đợt tràn tối đa (500 + 4 Boss), bất tử      | 17.86 · 20.41 · **20.84**                | 0.03 · **0.13** · 0             | 16 / 13 / 126               |
+  | Đợt tràn 1, bot tự chơi                     | 5.33 · 15.17 · 15.65                     | 0.05 · 0.18 · 0.01              | 21 / 29 / 105               |
+  | Đợt tràn tối đa + mở rương liên tục (3–6 s) | 14.44 · 16.69 · 16.99                    | 0.13 · **0.34** · 0.02          | 67 / 70 / 244               |
+  | Đợt tràn tối đa, bot KHÔNG loot (đối chứng) | 17.57 · 19.37 · 19.74                    | 0.08 (chỉ khối mẩu 0) · —       | —                           |
+
+  Đợt tràn tối đa: đỉnh 1 người 19.74 → 20.84 (+1.1) nhưng phần loot chỉ 0.13 — phần tăng còn lại do bot bị dịch tới rương
+  (đứng ở chỗ khác so với bầy zombie), không phải gói loot. Cùng lý do: "lệch dự đoán max 1.4 ô" và 29 lần "chết" ở kịch
+  bản bất tử (dịch nhân vật < 2 ô bị tính là lệch dự đoán). Trên máy thật người chơi tự đi tới rương.
+
 - Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)

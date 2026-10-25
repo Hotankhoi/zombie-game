@@ -27,7 +27,21 @@ Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
      chưa có term của host hiện tại thì gửi bản mình giữ (hoặc bản rỗng) mỗi giây. `host/testMatch.ts` = trận thử nhiều
      `NetGame` thật trên LoopbackHub (host chạy trong tiến trình thay Worker).
 5. **Test** LoopbackHub 2–4 client, trễ 150ms + mất 5%; bot loadtest thỉnh thoảng mở rương; đo băng thông (đợt tràn tối
-   đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s).
+   đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s). Đã làm: đỉnh 20.84 KB/s, loot 0.13 KB/s (0.34 khi bot mở rương liên tục);
+   bảng đầy đủ ở `docs/progress-A.md`.
+
+### Điều kiện hoàn thành — trạng thái sau phần 2A (test chứng minh)
+
+| Điều kiện (kế hoạch gốc của B)                                     | 2A                      | Test                                                                                              |
+| ------------------------------------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------- |
+| Hai người thấy cùng rương; cùng lấy 1 món → 1 thành công, bảo toàn | Đạt (logic)             | `host/lootMatch.test.ts` (4 người, 2 người cùng ô), `host/hostLoot.test.ts`                       |
+| Túi đầy, lượng sai, yêu cầu lặp, revision cũ không mất/nhân đôi    | Đạt                     | `lootMatch` "túi đầy…", `hostLoot` "yêu cầu lặp…", `clientLoot` "lệnh của panel…"                 |
+| Từ chối ngoài tầm, xuyên tường/cửa đóng, chết, sửa túi người khác  | Đạt                     | `hostLoot` "từ chối…" (map thêm cửa), `lootMatch` "ngoài tầm, đang gục", `hostLoot` "xem (view)…" |
+| Người vào sau đúng túi + rương đã lấy; đổi chunk không hồi loot    | Đạt                     | `host/lootOnline.test.ts` "người vào sau…", "tải lại trang…"                                      |
+| Host rời khi nhặt: không xác nhận kết quả host mới không khôi phục | Đạt                     | `lootOnline` "host rời giữa lúc nhặt" ×3, "host mới là người vừa vào"; `lootMatch` "host rời…"    |
+| Test logic, typecheck, lint, build; 2–4 client trễ 150ms mất 5%    | Đạt phần logic          | `npm run check`, `npx vite build`, `lootMatch`                                                    |
+| Bàn phím/chuột không xuyên xuống gameplay                          | **Chưa — phần 2B (UI)** | —                                                                                                 |
+| Thử 2 tab / máy thật                                               | **Chưa — phần 2B**      | —                                                                                                 |
 
 ## API ClientLoot (cho phần 2B: UI/scene)
 
