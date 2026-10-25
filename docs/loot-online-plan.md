@@ -26,6 +26,32 @@ Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
 5. **Test** LoopbackHub 2–4 client, trễ 150ms + mất 5%; bot loadtest thỉnh thoảng mở rương; đo băng thông (đợt tràn tối
    đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s).
 
+## API ClientLoot (cho phần 2B: UI/scene)
+
+`NetGame.loot` (`net/clientLoot.ts`) — lớp dữ liệu, không có UI. Mọi máy (kể cả host) dùng như nhau; NetGame tự chuyển gói.
+
+| API                                                          | Ý nghĩa                                                                                      |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `ready: boolean`                                             | đã có replica của host hiện tại + biết túi mình → mới cho thao tác                           |
+| `inventory: InventoryState \| null`                          | túi của mình **đã xác nhận** (bản sao, sửa thoải mái)                                        |
+| `chest(id): ChestState \| null`                              | rương đã biết; `null` = chưa ai đụng/chưa xem → gọi `view(id)` khi tới gần                   |
+| `busy: boolean`                                              | đang chờ kết quả 1 thao tác sửa đồ (khóa nút)                                                |
+| `changed.on(e => …)`                                         | `ready` / `reset` (đổi host) / `inventory` / `chest` (kèm `chestId`) — UI đọc lại trạng thái |
+| `view(id)`, `open(id)`, `take(id, slot, qty)`, `takeAll(id)` | intent rương; revision tự điền từ trạng thái đã biết                                         |
+| `move(from, to, qty)`, `sort()`, `refresh()`                 | túi của mình                                                                                 |
+| `command(cmd)`                                               | nhận nguyên `LootCommand` / `InventoryCommand` của panel B (`client/ui/loot`, `inventory`)   |
+
+Mọi intent trả `Promise<LootOutcome>` (không bao giờ reject): `{ ok: true, inventory, chest }` hoặc
+`{ ok: false, error, inventory, chest }` — khi lỗi vẫn kèm trạng thái mới nhất để UI vẽ lại. Mã lỗi: của host
+(`LOOT_ERRORS` trong `net/lootCodec.ts`: `out_of_reach`, `blocked`, `player_not_up`, `stale_revision`, `inventory_full`,
+`rate_limited`, `inventory_limit`…) + của máy khách: `not_ready`, `busy`, `host_changed` (đổi host lúc chờ: KHÔNG biết thao
+tác có xảy ra không — UI đọc lại `inventory`/`chest` sau sự kiện `ready`), `timeout` (15s). Panel của B cần thêm câu
+tiếng Việt cho các mã này (`LOOT_MESSAGES` hiện chỉ có mã của reducer).
+
+Gợi ý nối (2B): tới gần rương (≤ `LOOT_INTERACTION.reach`) → `view(id)` một lần để hiện gợi ý; F → `open(id)` rồi mở
+panel với `{ chest, inventory }`, `onCommand: (c) => loot.command(c)` (đổi `LootOutcome` → `LootResult` của panel); rời
+xa/gục → đóng panel (host cũng từ chối). Vị trí rương: `chestLocations(chunk)` (`shared/mapgen/chests.ts`).
+
 ---
 
 ## Kế hoạch gốc của B

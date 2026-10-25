@@ -99,6 +99,9 @@ Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` 
   người trong trận, `isUp`, tầm với + `hasLineOfSight(world.blocked)`, requestId lặp → gửi lại kết quả cũ, 10 yêu cầu/s,
   term `<epoch>.<ngẫu nhiên>`; replica đầy đủ khi vào trận + phần đổi mỗi tick; kết quả chỉ gửi khi mọi người ACK.
   Sửa vùng B: `LootAuthority.currentRevision/chest/view` (thêm, không đổi cũ). `PROTOCOL_VERSION` 3 → 4. 287 test.
+- Bước 3 — ClientLoot (`net/clientLoot.ts`, PR #31): intent tự điền revision, túi đã xác nhận, rương đã biết, replica
+  đầy đủ đã kiểm tra (để lên host), `busy`/`not_ready`/`host_changed`/`timeout`; `NetGame.loot` chuyển gói (host: tới
+  worker). API cho 2B: `docs/loot-online-plan.md` mục "API ClientLoot". 293 test.
 - Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)

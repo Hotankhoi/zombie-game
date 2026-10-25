@@ -1,6 +1,8 @@
+import { ClientLoot } from '@net/clientLoot';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
+import { isLootPacket } from '@net/lootCodec';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
 import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
@@ -32,6 +34,8 @@ const SIM_MS_WEIGHT = 4;
  */
 export class NetGame {
   readonly sync: ClientSync;
+  /** Túi đồ + rương của mình (lớp dữ liệu loot, UI đọc từ đây — xem docs/loot-online-plan.md "API ClientLoot"). */
+  readonly loot: ClientLoot;
   readonly election: HostElection;
   readonly map: MapgenSource;
   readonly seed: string;
@@ -60,6 +64,7 @@ export class NetGame {
     this.startTick = opts.startTick;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
+    this.loot = new ClientLoot({ seed: this.seed, owner: transport.selfId, send: (d) => this.sendLoot(d) });
     this.simBenchMs = measureSimMs();
     const rttOf = opts.rttOf ?? (() => null);
     this.election = new HostElection(transport, undefined, {
@@ -101,7 +106,15 @@ export class NetGame {
     const host = this.election.hostId;
     if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data: packet });
     else if (host) this.transport.send(packet, { to: host, channel: 'unreliable' });
+    this.loot.tick();
     return swung;
+  }
+
+  /** Gói loot (intent/ACK) tới host hiện tại: chính mình → worker; người khác → mạng (reliable). */
+  private sendLoot(data: Uint8Array): void {
+    const host = this.election.hostId;
+    if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data });
+    else if (host) this.transport.send(data, { to: host, channel: 'reliable' });
   }
 
   dispose(): void {
@@ -111,6 +124,12 @@ export class NetGame {
   }
 
   private onMessage(data: Uint8Array, from: PeerId): void {
+    if (isLootPacket(data)) {
+      // mình là host: intent/ACK của người khác → worker; còn lại chỉ nghe host hiện tại
+      if (this.role === 'host') this.toWorker({ t: 'in', from, data: data.slice() });
+      else if (from === this.election.hostId) this.loot.receive(data);
+      return;
+    }
     switch (data[0]) {
       case GameMsg.Input:
         this.toWorker({ t: 'in', from, data: data.slice() });
@@ -131,6 +150,7 @@ export class NetGame {
     if (this.sync.latest) this.migrations++;
     this.roomFull = null;
     this.sync.resetHost();
+    this.loot.resetHost();
   }
 
   private startHost(): void {
@@ -148,8 +168,10 @@ export class NetGame {
       const m = e.data;
       if (m.t === 'out') {
         for (const item of m.items) {
-          if (item.to === self) this.sync.receive(item.data);
-          else this.transport.send(item.data, { to: item.to, channel: item.channel });
+          if (item.to === self) {
+            if (isLootPacket(item.data)) this.loot.receive(item.data);
+            else this.sync.receive(item.data);
+          } else this.transport.send(item.data, { to: item.to, channel: item.channel });
         }
       } else {
         this.hostStats = m.stats;
