@@ -1,3 +1,4 @@
+import type { BlockedFn } from '@shared/sim/collision';
 import { Doors } from '@shared/sim/doors';
 import type { MapSource } from '@shared/sim/grid';
 import { aimToRad, type PlayerInput } from '@shared/sim/input';
@@ -75,6 +76,8 @@ export interface ZombieView {
  */
 export class ClientSync {
   readonly predictor: Predictor;
+  /** Ô chặn theo máy mình: tường + cửa đang đóng (theo snapshot) — dự đoán di chuyển và tầm nhìn dùng chung. */
+  readonly blocked: BlockedFn;
   doors = new Doors();
   /** Sự kiện đã nhận (đổi slot → PeerId), scene lấy ra vẽ hiệu ứng. */
   events: SimEvent[] = [];
@@ -111,9 +114,15 @@ export class ClientSync {
     readonly map: MapSource,
     private now: () => number = () => performance.now(),
   ) {
-    this.predictor = new Predictor(
-      (tx, ty) => map.isWall(tx, ty) || (map.isDoor(tx, ty) && !this.doors.isOpen(tx, ty)),
-    );
+    // tileKind (nếu có): 1 lần tra thay vì 2 — tầm nhìn bắn vài nghìn tia ô mỗi frame
+    const kind = map.tileKind?.bind(map);
+    this.blocked = kind
+      ? (tx, ty) => {
+          const k = kind(tx, ty);
+          return k === 1 || (k === 2 && !this.doors.isOpen(tx, ty));
+        }
+      : (tx, ty) => map.isWall(tx, ty) || (map.isDoor(tx, ty) && !this.doors.isOpen(tx, ty));
+    this.predictor = new Predictor(this.blocked);
   }
 
   /** Một tick 20Hz của client: dự đoán + trả gói Input để gửi host. */

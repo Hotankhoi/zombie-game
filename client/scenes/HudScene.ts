@@ -7,6 +7,7 @@ import type { WireHorde } from '@net/gameCodec';
 import { HORDE } from '@shared/sim/tuning/horde';
 import { DAY, VISION } from '@shared/sim/tuning/night';
 import { PARTY } from '@shared/sim/tuning/party';
+import { visionPolygon, visionShapes } from '@shared/sim/vision';
 import type { WorldScene } from './WorldScene';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
@@ -118,7 +119,16 @@ export class HudScene extends Phaser.Scene {
     }
   }
 
+  /** Thời gian vẽ HUD mỗi frame (ms, làm mượt) — bảng F3 (lớp tối/tầm nhìn nằm ở đây). */
+  hudMs = 0;
+
   override update(time: number) {
+    const t0 = performance.now();
+    this.drawHud(time);
+    this.hudMs = this.hudMs * 0.9 + (performance.now() - t0) * 0.1;
+  }
+
+  private drawHud(time: number) {
     const { width, height } = this.scale;
     const me = this.world.me();
     const g = this.gfx;
@@ -209,33 +219,20 @@ export class HudScene extends Phaser.Scene {
     }
     const cam = this.world.cameras.main;
     const wv = cam.worldView;
-    const px = 16 * cam.zoom; // pixel màn hình mỗi ô
-    const toScreen = (x: number, y: number) => ({
-      x: (x * 16 - wv.x) * cam.zoom,
-      y: (y * 16 - wv.y) * cam.zoom,
+    const toScreen = (p: { x: number; y: number }) => ({
+      x: (p.x * 16 - wv.x) * cam.zoom,
+      y: (p.y * 16 - wv.y) * cam.zoom,
     });
-    const lerp = (a: number, b: number) => a + (b - a) * darkness;
-
-    const dim = lerp(VISION.dimDay, VISION.dimNight);
+    const dim = VISION.dimDay + (VISION.dimNight - VISION.dimDay) * darkness;
     if (!this.visionRt) this.vision.setVisible(true).setFillStyle(0x05070c, dim);
     const g = this.visionShape;
     g.clear();
     g.fillStyle(0xffffff, 1);
-    const cone = (x: number, y: number, facing: number, range: number, halfDeg: number) => {
-      const s = toScreen(x, y);
-      const half = (halfDeg * Math.PI) / 180;
-      g.slice(s.x, s.y, range * px, facing - half, facing + half, false);
-      g.fillPath();
-    };
-    const lit = me.flashlight && darkness > 0.05;
-    cone(view.x, view.y, view.facing, lerp(VISION.dayRange, VISION.nightRange), VISION.coneHalfDeg);
-    if (lit) cone(view.x, view.y, view.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
-    const s = toScreen(view.x, view.y);
-    g.fillCircle(s.x, s.y, lerp(VISION.aroundDay, VISION.aroundNight) * px);
-    for (const o of others) {
-      if (o.alive && o.flashlight && darkness > 0.05) {
-        cone(o.x, o.y, o.facing, VISION.flashlightRange, VISION.flashlightHalfDeg);
-      }
+    // mỗi vùng = đa giác bắn tia theo lưới ô: tường/cửa đóng chặn tầm nhìn (shared/sim/vision.ts)
+    const blocked = this.world.net.sync.blocked;
+    for (const v of visionShapes({ ...view, flashlight: me.flashlight }, darkness, others)) {
+      const poly = visionPolygon(v, v.facing, v.halfAngle, v.range, blocked).map(toScreen);
+      g.fillPoints(poly, true);
     }
     if (this.visionRt) this.visionRt.fill(0x05070c, dim).erase(g);
   }
