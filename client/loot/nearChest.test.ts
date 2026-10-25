@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChestLocation } from '@shared/mapgen/chests';
-import { ChestViewer, nearestChest } from './nearChest';
+import { canKeepChestOpen, ChestViewer, nearestChest } from './nearChest';
 
 const chest = (id: string, x: number, y: number): ChestLocation => ({ id, region: 'residential', x, y });
 
@@ -24,11 +24,27 @@ describe('nearestChest', () => {
   });
 });
 
+describe('canKeepChestOpen (panel rương tự đóng)', () => {
+  const c = chest('a', 10.5, 10.5);
+  it('còn đứng, trong tầm, nhìn thấy → giữ mở', () => {
+    expect(canKeepChestOpen(c, { x: 10.5, y: 12.5 }, () => true)).toBe(true);
+  });
+  it('đi xa quá tầm với, bị tường/cửa che, hoặc gục (me = null) → đóng', () => {
+    expect(canKeepChestOpen(c, { x: 10.5, y: 12.6 }, () => true)).toBe(false);
+    expect(canKeepChestOpen(c, { x: 11, y: 10.5 }, () => false)).toBe(false);
+    expect(canKeepChestOpen(c, null, () => true)).toBe(false);
+  });
+});
+
 describe('ChestViewer', () => {
   it('hỏi rương chưa biết 1 lần, thử lại sau retryMs; rương đã biết thì không hỏi', () => {
     const asked: string[] = [];
     const known = new Set<string>();
-    const v = new ChestViewer((id) => asked.push(id), (id) => known.has(id), 1000);
+    const v = new ChestViewer(
+      (id) => asked.push(id),
+      (id) => known.has(id),
+      1000,
+    );
     const a = chest('a', 0, 0);
     v.update(a, 0);
     v.update(a, 16);
@@ -44,7 +60,10 @@ describe('ChestViewer', () => {
 
   it('reset (đổi host) → hỏi lại ngay', () => {
     const asked: string[] = [];
-    const v = new ChestViewer((id) => asked.push(id), () => false);
+    const v = new ChestViewer(
+      (id) => asked.push(id),
+      () => false,
+    );
     v.update(chest('a', 0, 0), 0);
     v.reset();
     v.update(chest('a', 0, 0), 10);

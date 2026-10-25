@@ -15,10 +15,15 @@ export interface LootSnapshot {
   chest: ChestState;
   inventory: InventoryState;
 }
+/** Online authority may also fail with network/host codes (net/clientLoot); text comes from `describeError`. */
+export type LootPanelResult =
+  LootResult | { ok: false; chest: ChestState; inventory: InventoryState; error: string };
 export interface LootPanelOptions {
   initial: LootSnapshot;
   /** Send intent to the authority. Both snapshots must come from one transaction. */
-  onCommand(command: LootCommand): LootResult | Promise<LootResult>;
+  onCommand(command: LootCommand): LootPanelResult | Promise<LootPanelResult>;
+  /** Text for error codes outside LOOT_MESSAGES (online: host/network codes). */
+  describeError?(code: string): string;
 }
 export const LOOT_MESSAGES: Record<LootError, string> = {
   ...INVENTORY_MESSAGES,
@@ -116,7 +121,11 @@ export function mountLootPanel(parent: HTMLElement, options: LootPanelOptions) {
   takeAll.dataset.lootAction = 'takeAll';
   contents.append(grid, empty, detail, takeAll);
   const capacity = element('p', 'loot-capacity');
-  const status = element('p', 'loot-status', 'Mở rương để bắt đầu thu gom.');
+  const status = element(
+    'p',
+    'loot-status',
+    options.initial.chest.opened ? 'Chọn vật phẩm để lấy vào túi.' : 'Mở rương để bắt đầu thu gom.',
+  );
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   root.append(header, description, gate, contents, capacity, status);
@@ -126,6 +135,9 @@ export function mountLootPanel(parent: HTMLElement, options: LootPanelOptions) {
     status.textContent = message;
     status.classList.toggle('loot-error', error);
   }
+  const knownError = (code: string) => Object.hasOwn(LOOT_MESSAGES, code) || !!options.describeError;
+  const errorText = (code: string) =>
+    options.describeError?.(code) ?? LOOT_MESSAGES[code as LootError] ?? 'Thao tác chưa được xác nhận.';
   function render() {
     if (disposed) return;
     const focused =
@@ -226,9 +238,7 @@ export function mountLootPanel(parent: HTMLElement, options: LootPanelOptions) {
         !valid(result) ||
         result.chest.id !== state.chest.id ||
         (result.ok !== true &&
-          (result.ok !== false ||
-            typeof result.error !== 'string' ||
-            !Object.hasOwn(LOOT_MESSAGES, result.error)))
+          (result.ok !== false || typeof result.error !== 'string' || !knownError(result.error)))
       ) {
         announce('Phản hồi không hợp lệ. Hãy tải lại dữ liệu trước khi tiếp tục.', true);
         return;
@@ -245,7 +255,7 @@ export function mountLootPanel(parent: HTMLElement, options: LootPanelOptions) {
               : command.type === 'takeAll'
                 ? 'Đã chuyển toàn bộ đồ trong rương vào túi.'
                 : 'Đã lấy vật phẩm vào túi.'
-            : (LOOT_MESSAGES[result.error] ?? 'Thao tác chưa được xác nhận.'),
+            : errorText(result.error),
         !superseded && !result.ok,
       );
     } catch {

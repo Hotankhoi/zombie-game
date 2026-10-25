@@ -24,6 +24,19 @@ export function nearestChest(
 }
 
 /**
+ * Panel rương còn được mở không: mình còn đứng (`me` khác null), trong tầm với và còn nhìn thấy rương (cùng luật với
+ * `nearestChest`). false → đóng panel (host cũng sẽ từ chối).
+ */
+export function canKeepChestOpen(
+  chest: ChestLocation,
+  me: Vec2 | null,
+  canSee: (c: ChestLocation) => boolean,
+  reach: number = LOOT_INTERACTION.reach,
+): boolean {
+  return me !== null && Math.hypot(chest.x - me.x, chest.y - me.y) <= reach && canSee(chest);
+}
+
+/**
  * Gọi `view(id)` cho rương mình chưa biết khi tới gần: mỗi rương tối đa 1 lần / `retryMs` (host có thể từ chối
  * vì vị trí của mình ở host trễ hơn dự đoán → thử lại sau). Rương đã biết (replica / kết quả trước) thì khỏi hỏi.
  */
