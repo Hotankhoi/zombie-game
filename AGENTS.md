@@ -148,8 +148,9 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
   - Đã kiểm tra: 2 tab cùng `?room=` thấy nhau, có ping/pong; trễ 150ms ở cả 2 tab → ping ≈ 300ms.
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
+  - **Số test (`npm test`) trên `main` sau #25: 204** (28 file). Mốc: 186 sau #19 → 194 sau #20 (+8) → 199 sau #23 (+5) → 201 sau #24 (+2) → 204 sau #25 (+3). Báo cáo trước ghi 194 (đúng ở `main` sau #20); máy reviewer đếm 186 vì chạy ở `main` trước khi merge #20. `npm test` không gồm `tools/*.loadtest.ts` (chạy riêng bằng `npm run loadtest`).
 - Ai đang làm gì:
-  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13), relay dự phòng (#14, `docs/relay.md`), điểm xuất phát theo map B (#17), tường che tầm nhìn (#18), hồi sinh an toàn (#19), khổng lồ phá tường (#20). Mở chờ B góp ý: đề xuất file save (#21). Chi tiết ở `docs/progress-A.md`.
+  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13), relay dự phòng (#14, `docs/relay.md`), điểm xuất phát theo map B (#17), tường che tầm nhìn (#18), hồi sinh an toàn (#19), khổng lồ phá tường (#20), chặn khác phiên bản (#23), chừa băng thông cho loot (#24, đợt tràn tối đa 19.7 KB/s), mã bí mật relay (#25). Mở chờ B góp ý: đề xuất file save (#21). Chi tiết ở `docs/progress-A.md`.
   - B: đã vào `main`: 1b (#3), hợp đồng loot online + giao thức v3 (#15). Đang mở: #5 (túi đồ), #7 (rương), #16 (loot online) — B tự rebase lên `main` rồi merge.
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
