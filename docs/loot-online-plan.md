@@ -1,4 +1,34 @@
-# Ghép loot vào trận online — B
+# Ghép loot vào trận online
+
+## Kế hoạch phần 2A — A nối tầng mạng + host (2026-10-25)
+
+B giao phần nối loot cho A. Phần 2A chỉ làm logic + test (cloud session, không trình duyệt); **phần 2B** (session sau,
+máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab. Không làm: súng/giáp/đói khát, thùng thưởng, đồ rơi.
+Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
+
+1. **Codec 110–113** (`net/lootCodec.ts`, reliable). Nhị phân gọn: vật phẩm/độ hiếm/balo/khu = số thứ tự trong danh mục
+   (`shared/data`) → giải mã lấy tên từ danh mục, không đọc chuỗi từ gói; số lượng 1..`maxStack`, số ô đúng sức chứa balo /
+   6 ô rương, ≤ 4 túi, ≤ 4096 rương, không trùng ID, revision là số nguyên an toàn, gói thừa/thiếu byte → bỏ. ID rương ghi
+   gọn (chunk + ô nhà). Replica có 2 dạng: **đầy đủ** (đúng `LootReplicaWire`) và **phần đổi** (chỉ túi/rương vừa đổi so với
+   revision trước) — bên nhận ghép thành bản đầy đủ rồi mới kiểm tra và ACK.
+2. **Host** (`host/hostLoot.ts`, gọi từ `HostServer`): giữ `LootAuthority`; người gửi = `from` của Transport; chỉ người đã vào
+   trận; `isUp`, tầm với, đường nhìn (`hasLineOfSight` + `world.blocked`, cửa đóng chặn), revision (reducer của B);
+   `requestId` lặp → gửi lại đúng kết quả cũ, không làm lại; giới hạn tần suất; `term` mới mỗi lần lên host. Người vào
+   trận nhận replica đầy đủ; mỗi tick có thay đổi → mọi người nhận phần đổi; ACK theo từng người.
+3. **ClientLoot** (`net/clientLoot.ts`, không UI): gửi intent (tự điền revision), nhận reply/replica, giữ túi của mình +
+   rương đã biết + bản replica đầy đủ (để lên host). API ghi ở mục "API ClientLoot" bên dưới. `NetGame` chuyển gói.
+4. **Đồng bộ + đổi host**: host chỉ trả `ok` sau khi **mọi người trong trận đã ACK** revision chứa giao dịch; host mới
+   **thu bản replica của mọi người** (tối đa 3s) rồi chọn bản mới nhất (`term` có số thứ tự `epoch`) trước khi nhận ghi;
+   yêu cầu đang chờ khi host rời → báo `host_changed`, trạng thái lấy theo replica của host mới (không mất/nhân đôi).
+   Replica đầy đủ nằm ở **mẩu 0 gói 125** (bản lưu v6). **playerKey**: bí mật ngẫu nhiên lưu ở trình duyệt, gửi riêng cho
+   host bằng intent `claim`; túi đồ khóa theo `ownerId = sha256(playerKey)` (công khai, không lộ khóa) → tải lại trang
+   vẫn đúng túi. Đổi hợp đồng `shared/types` (thêm `claim`) + `PROTOCOL_VERSION`. Quyết định ghi ở `docs/save-format.md`.
+5. **Test** LoopbackHub 2–4 client, trễ 150ms + mất 5%; bot loadtest thỉnh thoảng mở rương; đo băng thông (đợt tràn tối
+   đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s).
+
+---
+
+## Kế hoạch gốc của B
 
 ## Tiến độ nhánh triển khai
 
