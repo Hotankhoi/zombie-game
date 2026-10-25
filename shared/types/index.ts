@@ -4,7 +4,7 @@
  */
 
 /** Phiên bản giao thức mạng. Tăng khi đổi định dạng gói tin để 2 bản khác nhau không nói chuyện nhầm. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;
