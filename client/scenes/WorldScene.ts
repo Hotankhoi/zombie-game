@@ -5,7 +5,7 @@ import { ZOMBIE_NORMAL } from '@shared/data/zombies';
 import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/world';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
-import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
+import { isAlive, isDowned, isUp, type PlayerState } from '@shared/sim/player';
 import { hasLineOfSight } from '@shared/sim/collision';
 import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
@@ -16,6 +16,7 @@ import type { Session } from '@net/session';
 import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
 import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
+import { ChestLayer, preloadChestSprites } from '../loot/chestLayer';
 
 /** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
 export { TILE_SIZE };
@@ -67,6 +68,8 @@ export class WorldScene extends Phaser.Scene {
 
   private worldMap!: WorldMap;
   private mapRenderer!: MapRenderer;
+  /** Rương (phần 2B loot): thùng trong nhà, gợi ý F khi tới gần. */
+  chests!: ChestLayer;
   /** Vùng chunk đang vẽ "x0,y0,x1,y1" — chỉ sync renderer khi đổi. */
   private chunkRange = '';
   private acc = 0;
@@ -112,6 +115,7 @@ export class WorldScene extends Phaser.Scene {
 
   preload() {
     preloadMapTiles(this);
+    preloadChestSprites(this);
   }
 
   setMe(name: string, color: number) {
@@ -137,6 +141,7 @@ export class WorldScene extends Phaser.Scene {
     this.gfxPools = this.add.graphics().setDepth(2.5);
     this.gfxDyn = this.add.graphics().setDepth(4);
     this.makeZombieTextures();
+    this.chests = new ChestLayer(this, this.net.loot, ZOOM);
 
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
@@ -215,6 +220,7 @@ export class WorldScene extends Phaser.Scene {
       for (let cx = x0; cx <= x1; cx++) chunks.push(this.worldMap.getChunk(cx, cy));
     }
     this.mapRenderer.sync(chunks);
+    this.chests.sync(chunks);
   }
 
   private readInput(): PlayerInput {
@@ -289,6 +295,8 @@ export class WorldScene extends Phaser.Scene {
 
     const { zombies, others } = this.net.sync.sample();
     const seen = this.zombieSeer(others, alpha);
+    const me0 = this.me();
+    this.chests.update(me0 && isUp(me0) ? me0 : null, seen, false);
     let shown = 0;
     for (const z of zombies) {
       if (!seen(z)) continue; // sau tường/cửa đóng: không vẽ (lớp tối không che được hết lúc ban ngày)
