@@ -78,23 +78,36 @@ Phiên bản 4 → 5 chỉ đổi **bố cục gói mạng**, `WorldState` khôn
 
 Một danh sách, sắp xếp theo `(y, x, kind)` để file tất định (hai lần lưu cùng trạng thái → cùng file). Cùng ý tưởng với gói `MapDelta` (21) trên mạng: chỉ gửi/lưu ô đã đổi.
 
-### 3.4 Quan hệ với gói sao lưu 125 (chuyển host) — chỗ cho loot của B
+### 3.4 Quan hệ với gói sao lưu 125 (chuyển host) — loot ở mẩu 0 (**đã làm**, gói 125 v6, A)
 
-Gói 125 hiện chỉ mang `WorldState` của A (chưa có túi đồ/rương). Khi ghép loot online, B cần chuyển host cũng giữ được loot; **đề xuất đặt phần loot (túi đồ + rương, `LootReplicaWire`) vào phần chung ở mẩu 0** của gói 125:
+Đã làm khi nối loot phần 2A: cuối mẩu 0 có khối loot = gói 112 đầy đủ của host (`u32` độ dài + byte, `HostLoot.backupBlock`),
+`WORLD_BACKUP_VERSION` 6. Chuyển host dựa chủ yếu vào replica theo giao dịch (host mới thu bản của mọi người trước khi
+nhận ghi); mẩu 0 làm mới bản mỗi người đang giữ ≤ 10s một lần. Đề xuất gốc:
 
 - Mẩu 0 đã là chỗ của mọi trạng thái "chỉ có một bản" (cửa, vũng, tường vỡ, đợt tràn, xác); mẩu 1–9 chỉ chứa zombie `id % 10 === k` + danh sách người chơi.
 - Phần loot chèn vào cuối phần chung của mẩu 0 dưới dạng khối có độ dài (`u32` + byte; B tự định bố cục, A chỉ cắt/ghép byte) và tăng `WORLD_BACKUP_VERSION` lên 6.
 - Mẩu 0 sẽ to hơn các mẩu khác (rương + túi đồ có thể vài chục KB). Nếu mẩu 0 vượt ~5 KB thì tách thành mẩu riêng gửi thưa hơn (30s) — cần đo lại ngân sách. Ngưỡng chính thức là **25 KB/s mỗi người** (AGENTS.md mục 2); 20 KB/s chỉ là mức A tự đặt để chừa chỗ cho B. Ở đợt tràn tối đa, đỉnh 5s của 1 người hiện là 19.70 KB/s → B có ~5 KB/s tới ngưỡng 25 cho loot (nên giữ loot ≤ 3 KB/s để còn dư). B đo kích thước thật rồi báo A.
 - File save (mục 2) không bị ràng buộc bởi mẩu: `loot` ở file là `LootReplicaWire` nguyên vẹn.
 
-## 4. Danh tính bền của người chơi (`playerKey`) — cần thống nhất trước
+## 4. Danh tính bền của người chơi (`playerKey`) — **ĐÃ CHỐT** (A, 2026-10-25, khi nối loot phần 2A)
 
-PeerId do Trystero cấp **đổi mỗi lần mở trang**, nên không dùng được làm khóa để trả lại túi đồ/vị trí cho đúng người sau khi tải. Đề xuất:
+PeerId do Trystero cấp **đổi mỗi lần mở trang**, nên không dùng được làm khóa túi đồ. Quyết định (đã làm trong code,
+`net/playerKey.ts`, `host/hostLoot.ts`, `PROTOCOL_VERSION` 5):
 
-- Mỗi trình duyệt tạo một `playerKey` ngẫu nhiên (UUID) lưu ở `localStorage`, gửi trong gói Hello (thêm trường → **tăng `PROTOCOL_VERSION` lên 4** trong một PR hợp đồng riêng, nhỏ, ở `shared/types`).
-- Host giữ bảng `PeerId ↔ playerKey`; khi ghi file thì đổi mọi PeerId sang `playerKey`, khi tải thì đổi ngược cho người đang có mặt.
-- Người có trong file nhưng chưa vào phòng: giữ nguyên dữ liệu (nhân vật không xuất hiện), tới khi họ vào bằng đúng `playerKey`.
-- Người mới (không có trong file): vào như người mới.
+- **`playerKey` là BÍ MẬT**: 16 byte ngẫu nhiên (base64url, 22 ký tự). Lưu `localStorage` (khóa `zombie-coop.playerKey`,
+  chung cả trình duyệt) + `sessionStorage` (riêng từng tab, còn sau khi tải lại tab).
+- **Không gửi trong Hello** (Hello đi tới mọi người → ai cũng mạo danh được). Máy khách chỉ gửi khóa cho **host hiện tại**
+  bằng intent loot `claim { key, resume }` (gói 110, reliable, mỗi lần có host mới).
+- **`ownerId = "p" + 24 ký tự hex đầu của sha256("zombie-coop/owner/" + playerKey)`** — công khai, là khóa túi đồ trong
+  `LootAuthority`, replica 112, mẩu 0 của gói 125 và **file save** (mục `players`, `loot.inventories[].id`, `world` dùng
+  ownerId thay PeerId). File save **không bao giờ chứa playerKey**. Biết ownerId không suy ra được khóa.
+- Host giữ bảng `PeerId → ownerId` (chỉ trong bộ nhớ, mỗi host tự dựng lại từ `claim`). Chưa claim → không thao tác loot.
+- Khóa đang gắn với kết nối khác: cho lấy nếu `resume` (khóa lấy từ sessionStorage = tab này tải lại trang) hoặc kết nối
+  kia im ≥ 3s; không thì `key_in_use` → tab đó tạo khóa mới chỉ cho tab (2 tab cùng trình duyệt = 2 người).
+- Người có túi nhưng đang vắng: túi giữ nguyên (không thả đồ ra rương), tới khi họ vào lại bằng đúng khóa.
+- Người mới: vào như người mới (túi có dao). Giới hạn hiện tại: tối đa `LOOT_INTERACTION.maxInventories` = 4 túi mỗi thế
+  giới, **tính cả người đã rời** → người thứ 5 khác khóa nhận `inventory_limit` (B quyết có nâng giới hạn không).
+- Đổi trình duyệt/máy = khóa khác = túi khác (sau này có thể thêm "xuất khóa" nếu cần).
 
 ## 5. Quy tắc phiên bản
 
@@ -114,7 +127,7 @@ PeerId do Trystero cấp **đổi mỗi lần mở trang**, nên không dùng đ
 
 1. `LootReplicaWire` có đủ để lưu chưa, hay cần thêm gì (đồ rơi trên đất, trang bị đang mặc, độ bền vũ khí)?
 2. Công trình căn cứ (GĐ 5, phần B) lưu chung trong `map.changes` (`kind: "built"`) hay một phần `base` riêng có `version` riêng?
-3. Đồng ý dùng `playerKey` + tăng `PROTOCOL_VERSION` lên 4 cho Hello? Ai làm PR hợp đồng đó (đề xuất: A, PR nhỏ ở `shared/types`)? (Từ PR #23, bản khác `PROTOCOL_VERSION` không vào chung trận; Hello đã có khối mã build nối cuối, thêm `playerKey` cũng nối cuối được.)
+3. ~~Đồng ý dùng `playerKey` + tăng `PROTOCOL_VERSION` lên 4 cho Hello?~~ **Đã chốt ở mục 4** (không đi trong Hello, gửi riêng cho host bằng `claim`; `PROTOCOL_VERSION` 5). Ai làm PR hợp đồng đó (đề xuất: A, PR nhỏ ở `shared/types`)? (Từ PR #23, bản khác `PROTOCOL_VERSION` không vào chung trận; Hello đã có khối mã build nối cuối, thêm `playerKey` cũng nối cuối được.)
 4. Khi tải save: người chơi ở trong file mà chưa vào thì giữ đồ trong túi của họ, hay thả vào một rương "đồ của người vắng mặt"?
 5. Đồng ý JSON (+gzip tùy chọn) thay vì nhị phân?
-6. Loot vào mẩu 0 của gói 125 như mục 3.4 — B định bố cục khối loot và đo kích thước thật được không?
+6. ~~Loot vào mẩu 0 của gói 125 như mục 3.4~~ **Đã làm (A)**: khối = gói 112 đầy đủ của `net/lootCodec.ts`; kích thước đo ở `docs/progress-A.md`.
