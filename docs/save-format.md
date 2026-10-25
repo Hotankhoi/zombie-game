@@ -8,7 +8,7 @@
 - **Tải lại trang vẫn còn thế giới** (GĐ 5 "Xong khi": tải lại trang vẫn còn căn cứ): host tự lưu vào IndexedDB của máy host.
 - **Xuất/nhập file** để mang thế giới sang máy khác (host mới), hoặc gửi cho nhau.
 - Một file = **một thế giới** (một phòng/seed), gồm đủ 3 phần:
-  1. trạng thái mô phỏng của A (`WorldState` — cùng nội dung với bản sao lưu 10s gói 125),
+  1. trạng thái mô phỏng của A (`WorldState` — cùng các trường với bản sao lưu gói 125, nhưng ghi **đủ độ chính xác**, mục 3.1),
   2. trạng thái loot của B (`LootReplicaWire` — túi đồ + rương, `shared/types/loot.ts`),
   3. **các ô map đã đổi** so với map sinh từ seed (tường vỡ, cửa vỡ/mở; sau này: công trình B xây).
 - Map gốc **không** nằm trong file: sinh lại từ seed + `MAP_VERSION` (AGENTS.md mục 2.6).
@@ -33,7 +33,7 @@ JSON UTF-8 (dễ đọc, dễ sửa tay khi gỡ lỗi), đuôi `.zsave.json`. C
     "<playerKey>": { "name": "Người sống sót 12", "color": 4372281, "lastPeerId": "…" },
   },
 
-  "world": { "version": 4, "state": {/* WorldState của A, mục 3.1 */} },
+  "world": { "version": 5, "state": {/* WorldState của A, mục 3.1 */} },
   "loot": { "version": 1, "state": {/* LootReplicaWire của B, mục 3.2 */} },
   "map": { "version": 1, "changes": [/* ô đã đổi, mục 3.3 */] },
 }
@@ -45,7 +45,9 @@ Mỗi phần có **số phiên bản riêng** để A và B đổi phần của 
 
 ### 3.1 `world` — của A (`shared/sim/world.ts` `WorldState`)
 
-`world.version` = `WORLD_BACKUP_VERSION` (`net/worldBackup.ts`, hiện **4**). Nội dung = `SimWorld.state()` ở dạng JSON (không dùng bố cục nhị phân của gói 125, vì gói 125 lượng tử hóa đồng hồ zombie để tiết kiệm băng thông).
+`world.version` = `WORLD_BACKUP_VERSION` (`net/worldBackup.ts`, hiện **5**). Nội dung = `SimWorld.state()` ở dạng JSON, **không** dùng bố cục nhị phân của gói 125: gói 125 (phiên bản 5, PR #26) chia thành 10 mẩu gửi 1 mẩu/giây và ghi zombie gọn (~18 byte/con: id chênh lệch dạng varint, vị trí/đích i16 theo 1/32 ô, máu theo 0.1, đồng hồ 1/100 giây) để tiết kiệm băng thông — chỉ dùng cho chuyển host, chấp nhận sai số. File save thì ghi số thực đầy đủ.
+
+Phiên bản 4 → 5 chỉ đổi **bố cục gói mạng**, `WorldState` không thêm/bớt trường → hàm nâng cấp `world` v4 → v5 của file save là không làm gì (chỉ đổi số).
 
 | Trường                                                          | Ghi chú                                                                           |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -76,6 +78,15 @@ Mỗi phần có **số phiên bản riêng** để A và B đổi phần của 
 
 Một danh sách, sắp xếp theo `(y, x, kind)` để file tất định (hai lần lưu cùng trạng thái → cùng file). Cùng ý tưởng với gói `MapDelta` (21) trên mạng: chỉ gửi/lưu ô đã đổi.
 
+### 3.4 Quan hệ với gói sao lưu 125 (chuyển host) — chỗ cho loot của B
+
+Gói 125 hiện chỉ mang `WorldState` của A (chưa có túi đồ/rương). Khi ghép loot online, B cần chuyển host cũng giữ được loot; **đề xuất đặt phần loot (túi đồ + rương, `LootReplicaWire`) vào phần chung ở mẩu 0** của gói 125:
+
+- Mẩu 0 đã là chỗ của mọi trạng thái "chỉ có một bản" (cửa, vũng, tường vỡ, đợt tràn, xác); mẩu 1–9 chỉ chứa zombie `id % 10 === k` + danh sách người chơi.
+- Phần loot chèn vào cuối phần chung của mẩu 0 dưới dạng khối có độ dài (`u32` + byte; B tự định bố cục, A chỉ cắt/ghép byte) và tăng `WORLD_BACKUP_VERSION` lên 6.
+- Mẩu 0 sẽ to hơn các mẩu khác (rương + túi đồ có thể vài chục KB). Nếu mẩu 0 vượt ~5 KB thì tách thành mẩu riêng gửi thưa hơn (30s) — cần đo lại ngân sách: đợt tràn tối đa đang ở 19.70 KB/s đỉnh 1 người, B còn ~0.3 KB/s trong ngưỡng 20 KB/s. B đo kích thước thật rồi báo A.
+- File save (mục 2) không bị ràng buộc bởi mẩu: `loot` ở file là `LootReplicaWire` nguyên vẹn.
+
 ## 4. Danh tính bền của người chơi (`playerKey`) — cần thống nhất trước
 
 PeerId do Trystero cấp **đổi mỗi lần mở trang**, nên không dùng được làm khóa để trả lại túi đồ/vị trí cho đúng người sau khi tải. Đề xuất:
@@ -103,6 +114,7 @@ PeerId do Trystero cấp **đổi mỗi lần mở trang**, nên không dùng đ
 
 1. `LootReplicaWire` có đủ để lưu chưa, hay cần thêm gì (đồ rơi trên đất, trang bị đang mặc, độ bền vũ khí)?
 2. Công trình căn cứ (GĐ 5, phần B) lưu chung trong `map.changes` (`kind: "built"`) hay một phần `base` riêng có `version` riêng?
-3. Đồng ý dùng `playerKey` + tăng `PROTOCOL_VERSION` lên 4 cho Hello? Ai làm PR hợp đồng đó (đề xuất: A, PR nhỏ ở `shared/types`)?
+3. Đồng ý dùng `playerKey` + tăng `PROTOCOL_VERSION` lên 4 cho Hello? Ai làm PR hợp đồng đó (đề xuất: A, PR nhỏ ở `shared/types`)? (Từ PR #23, bản khác `PROTOCOL_VERSION` không vào chung trận; Hello đã có khối mã build nối cuối, thêm `playerKey` cũng nối cuối được.)
 4. Khi tải save: người chơi ở trong file mà chưa vào thì giữ đồ trong túi của họ, hay thả vào một rương "đồ của người vắng mặt"?
 5. Đồng ý JSON (+gzip tùy chọn) thay vì nhị phân?
+6. Loot vào mẩu 0 của gói 125 như mục 3.4 — B định bố cục khối loot và đo kích thước thật được không?
