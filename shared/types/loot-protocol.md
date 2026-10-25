@@ -10,3 +10,14 @@ PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dù
 - ACK chỉ được gửi sau khi đã nhận và xác thực nguyên snapshot. Bước ghép mạng phải sao chép giao dịch tới các peer tham gia trước khi báo thành công; khi peer mất kết nối, xác định lại nhóm xác nhận theo thành viên đã được host chấp nhận.
 - Hợp đồng ACK chưa tự bảo đảm chuyển host an toàn. Triển khai phải khôi phục trạng thái được xác nhận, giải quyết snapshot khác revision giữa các peer và từ chối ghi khi chưa biết nguồn chân lý. Snapshot định kỳ 10 giây không thay thế bản ghi giao dịch mới.
 - Kiểu state khớp cấu trúc module túi/rương nhưng đặt độc lập để PR hợp đồng có thể review trên main trước khi các PR tính năng merge.
+
+## v5 (A, nối loot phần 2A)
+
+- `PROTOCOL_VERSION` 4: host gửi gói 110–113 thật (codec `net/lootCodec.ts`). 5: thêm hành động `claim` + bản lưu 125 v6.
+- `claim { key }`: máy khách gửi playerKey bí mật cho host hiện tại; túi đồ khóa theo `ownerId = "p" + sha256(key)[0..24]`
+  (`net/playerKey.ts`). Chưa claim thì không thao tác được (`unknown_player`). Khóa đang được người khác trong phòng dùng →
+  `key_in_use` (máy khách đổi khóa riêng cho tab đó).
+- Replica 112 có thêm dạng **phần đổi** (chỉ túi/rương vừa đổi so với `baseRevision`); bên nhận ghép thành bản đầy đủ,
+  kiểm tra nguyên bản rồi mới ACK. Máy khách cũng gửi 112 đầy đủ cho host MỚI (bản mình đang giữ) để host mới chọn bản mới
+  nhất trước khi nhận ghi. `term = <epoch>.<ngẫu nhiên>`, epoch tăng mỗi lần đổi host.
+- Kết quả 111 chỉ gửi khi mọi người trong trận đã ACK revision lúc tạo kết quả.

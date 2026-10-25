@@ -6,8 +6,9 @@
 /**
  * Phiên bản giao thức mạng. Tăng khi đổi định dạng gói tin để 2 bản khác nhau không nói chuyện nhầm.
  * 3: hợp đồng loot (B). 4: host gửi gói loot 110–113 thật (codec `net/lootCodec.ts`, A).
+ * 5: loot `claim` (playerKey), bản lưu 125 v6 có loot ở mẩu 0, host mới thu replica trước khi nhận ghi (A).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

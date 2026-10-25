@@ -6,7 +6,7 @@ import type { PeerId } from '@shared/types';
 import { describe, expect, it } from 'vitest';
 import { ClientLoot, type LootChange } from './clientLoot';
 import { GameMsg, encodeGame } from './gameCodec';
-import { encodeLoot, isLootPacket } from './lootCodec';
+import { decodeLoot, encodeLoot, isLootPacket } from './lootCodec';
 import { LootMessage } from '@shared/types/loot';
 
 const seed = worldSeedForRoom('CLIENTLOOT');
@@ -23,7 +23,13 @@ function setup(ids: PeerId[]) {
   const loot = new Map(
     ids.map((id) => [
       id,
-      new ClientLoot({ seed, owner: id, send: (d) => host.receive(id, d), now: () => time, timeoutMs: 1000 }),
+      new ClientLoot({
+        seed,
+        key: `k${id}`.padEnd(22, '0'),
+        send: (d) => host.receive(id, d),
+        now: () => time,
+        timeoutMs: 1000,
+      }),
     ]),
   );
   const step = (n = 1) => {
@@ -60,6 +66,8 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
     a.changed.on((e) => events.push(e));
     expect(await a.open(chest.id)).toMatchObject({ ok: false, error: 'not_ready' });
     step();
+    expect(a.ready).toBe(false); // có replica, đang chờ host xác nhận claim
+    step(2);
     expect(a.ready).toBe(true);
     expect(a.inventory!.slots[0]).toMatchObject({ itemId: 'knife' });
     expect(events.map((e) => e.kind)).toContain('ready');
@@ -68,7 +76,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
 
   it('mở → lấy 1 → lấy hết: tự điền revision; người kia thấy rương qua replica; tổng đồ bảo toàn', async () => {
     const { loot, step } = setup(['a', 'b']);
-    step();
+    step(3);
     const a = loot.get('a')!;
     const b = loot.get('b')!;
     const pOpen = a.open(chest.id);
@@ -94,7 +102,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
 
   it('mỗi lúc 1 thao tác sửa đồ (busy); ID rương lạ bị chặn tại máy; xem/sắp xếp/chuyển ô', async () => {
     const { loot, step } = setup(['a']);
-    step();
+    step(3);
     const a = loot.get('a')!;
     expect(await a.view('v1:00,0:0,0:chest:0')).toMatchObject({ ok: false, error: 'unknown_chest' });
     const first = a.open(chest.id);
@@ -114,7 +122,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
 
   it('lệnh của panel UI (command) dùng nguyên revision trong lệnh: revision cũ → stale_revision, không mất đồ', async () => {
     const { loot, step } = setup(['a']);
-    step();
+    step(3);
     const a = loot.get('a')!;
     const p = a.command({
       type: 'open',
@@ -131,7 +139,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
 
   it('chưa xác nhận thì túi chưa đổi: người kia chưa ACK → túi mình giữ nguyên dù replica đã có đồ mới', async () => {
     const { loot, step, mute } = setup(['a', 'b']);
-    step();
+    step(3);
     const a = loot.get('a')!;
     const o = a.open(chest.id);
     step(2);
@@ -144,7 +152,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
     await Promise.resolve();
     expect(done).toBe(false);
     expect(items(a.inventory!.slots)).toBe(before); // replica có rồi, nhưng chưa xác nhận
-    expect(items(a.replica!.inventories.find((e) => e.id === 'a')!.state.slots)).toBeGreaterThan(before);
+    expect(items(a.replica!.inventories.find((e) => e.id === a.owner)!.state.slots)).toBeGreaterThan(before);
     mute.delete('b');
     step(2);
     expect((await all).ok).toBe(true);
@@ -153,7 +161,7 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
 
   it('đổi host khi đang chờ → host_changed; quá giờ → timeout; gói hỏng/term lạ bị bỏ', async () => {
     const { loot, step, mute } = setup(['a', 'b']);
-    step();
+    step(3);
     const a = loot.get('a')!;
     mute.add('b');
     const p = a.open(chest.id);
@@ -165,11 +173,51 @@ describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
     a.receive(new Uint8Array([112, 1, 2, 3]));
     expect(a.stats.rejectedPackets).toBe(1);
     // có thay đổi mới: phần đổi tới a bị bỏ (chưa có term) → a không ACK → host gửi lại bản đầy đủ sau 2s
+    // → a nhận term, claim lại (resume) → host xác nhận khi mọi người ACK
+    mute.delete('b');
     void loot.get('b')!.open(chest.id);
-    step(42);
+    step(45);
     expect(a.ready).toBe(true);
+    mute.add('b');
+    void loot.get('b')!.takeAll(chest.id);
+    step(2);
     const q = a.view(chest.id);
     step(25); // b vẫn im → kết quả chờ mãi → hết giờ (1s)
     expect(await q).toMatchObject({ ok: false, error: 'timeout' });
+  });
+
+  it('đổi host: gửi bản đang giữ cho host mới mỗi giây tới khi có term mới; khối loot của bản lưu chỉ nhận khi đúng term', () => {
+    const sent: Uint8Array[] = [];
+    let time = 0;
+    const c = new ClientLoot({ seed, key: 'k'.repeat(22), send: (d) => sent.push(d), now: () => time });
+    c.tick();
+    // chưa có bản nào: gửi bản rỗng
+    expect(decodeLoot(sent[0]!)).toMatchObject({
+      type: LootMessage.Replica,
+      term: '0.none',
+      state: { revision: 0 },
+    });
+    const state = { version: 1 as const, seed, revision: 3, inventories: [], chests: [] };
+    c.receive(encodeLoot({ type: LootMessage.Replica, term: '1.aa', state }));
+    expect(c.term).toBe('1.aa');
+    // nhận bản lưu của host khác (term khác) → bỏ
+    c.receiveBackup(
+      encodeLoot({ type: LootMessage.Replica, term: '9.zz', state: { ...state, revision: 9 } }),
+    );
+    expect(c.replica!.revision).toBe(3);
+    c.receiveBackup(
+      encodeLoot({ type: LootMessage.Replica, term: '1.aa', state: { ...state, revision: 5 } }),
+    );
+    expect(c.replica!.revision).toBe(5);
+    c.resetHost();
+    sent.length = 0;
+    c.tick();
+    time += 500;
+    c.tick();
+    time += 600;
+    c.tick();
+    const offers = sent.map(decodeLoot).filter((p) => p?.type === LootMessage.Replica);
+    expect(offers).toHaveLength(2);
+    expect(offers[0]).toMatchObject({ term: '1.aa', state: { revision: 5 } });
   });
 });

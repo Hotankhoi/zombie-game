@@ -64,7 +64,13 @@ export interface HostServerOptions {
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
   /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
-  loot?: { restore?: LootReplicaWire; epoch?: number; random?: () => string };
+  loot?: {
+    restore?: LootReplicaWire;
+    epoch?: number;
+    /** Lên thay host cũ: thu bản replica của những người này trước khi nhận ghi (host/hostLoot.ts). */
+    recover?: { expected: readonly PeerId[]; timeoutTicks?: number };
+    random?: () => string;
+  };
 }
 
 interface Client {
@@ -74,6 +80,8 @@ interface Client {
   queue: PlayerInput[];
   /** seq của input cuối cùng đã chạy — gửi lại cho client để reconcile. */
   ack: number;
+  /** Tick nhận input gần nhất (loot: kết nối im lâu = tab cũ đã đóng). */
+  heardAt: number;
 }
 
 /**
@@ -111,6 +119,10 @@ export class HostServer {
           return p ? { x: p.x, y: p.y, up: isUp(p) } : null;
         },
         sees: (from, chest) => hasLineOfSight(from, chest, this.world.blocked),
+        idleTicks: (id) => {
+          const c = this.clients.get(id);
+          return c ? this.world.tick - c.heardAt : null;
+        },
       },
     });
   }
@@ -125,6 +137,7 @@ export class HostServer {
     if (!msg || msg.type !== GameMsg.Input) return;
     const c = this.client(from);
     if (!c) return;
+    c.heardAt = this.world.tick;
     // gói kèm 3 input gần nhất → lấy những cái chưa chạy và chưa có, chèn đúng thứ tự seq
     // (gói tới sai thứ tự vẫn ghép lại được; input cũ hơn cái đã chạy thì bỏ)
     for (const i of msg.inputs) {
@@ -139,8 +152,9 @@ export class HostServer {
 
   removePeer(id: PeerId): void {
     this.rejectedAt.delete(id);
-    if (!this.clients.delete(id)) return;
+    // cả người chưa vào trận: host mới đang thu bản loot thì khỏi chờ người đã rời
     this.loot.removePeer(id);
+    if (!this.clients.delete(id)) return;
     this.world.removePlayer(id);
     this.rosterDirty = true;
   }
@@ -165,10 +179,11 @@ export class HostServer {
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
-    if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
-    if (this.world.tick % (BACKUP_EVERY / BACKUP_PARTS) === 0) this.sendBackup();
+    // loot trước sao lưu: mẩu 0 mang đúng bản vừa phát cho mọi người
     this.loot.flush(this.world.tick);
     for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
+    if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
+    if (this.world.tick % (BACKUP_EVERY / BACKUP_PARTS) === 0) this.sendBackup();
 
     const out = this.out;
     this.out = [];
@@ -191,7 +206,7 @@ export class HostServer {
       const used = new Set([...this.clients.values()].map((x) => x.slot));
       let slot = 0;
       while (used.has(slot)) slot++;
-      c = { id, slot, queue: [], ack: 0 };
+      c = { id, slot, queue: [], ack: 0, heardAt: this.world.tick };
       this.clients.set(id, c);
       this.world.addPlayer(id);
       this.loot.admit(id);
@@ -251,7 +266,14 @@ export class HostServer {
     const list = [...this.clients.values()].sort((a, b) => a.slot - b.slot);
     if (list.length === 0) return;
     // mã hóa 1 lần, cùng một gói cho mọi người
-    const data = encodeBackupPart(this.world.state(), this.backupTurn++ % BACKUP_PARTS, BACKUP_PARTS);
+    const part = this.backupTurn++ % BACKUP_PARTS;
+    // mẩu 0 kèm bản loot đầy đủ (túi + rương) — mỗi người có lại nguyên bản ≤ 10s một lần
+    const data = encodeBackupPart(
+      this.world.state(),
+      part,
+      BACKUP_PARTS,
+      part === 0 ? this.loot.backupBlock() : null,
+    );
     for (const c of list) this.out.push({ to: c.id, data, channel: 'reliable' });
   }
 

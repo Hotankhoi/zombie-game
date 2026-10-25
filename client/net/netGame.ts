@@ -3,6 +3,7 @@ import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
 import { isLootPacket } from '@net/lootCodec';
+import { loadPlayerKey, replacePlayerKey } from '@net/playerKey';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
 import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
@@ -22,6 +23,34 @@ export interface NetGameOptions {
   startTick?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
+  /** playerKey (net/playerKey.ts). Mặc định đọc/ghi localStorage + sessionStorage của trình duyệt. */
+  playerKey?: { key: string; resume: boolean; onKeyInUse?: () => string };
+  /** Chỉ cho test (chạy trong Node, không Worker/timer thật): */
+  test?: {
+    now: () => number;
+    /** Chạy host trong cùng tiến trình thay cho Web Worker. */
+    startHost: (onMessage: (m: FromWorker) => void) => HostRunner;
+    simBenchMs?: number;
+  };
+}
+
+/** Nơi chạy HostServer của máy host: Web Worker (trình duyệt) hoặc chạy thẳng (test). */
+export interface HostRunner {
+  postMessage(m: ToWorker): void;
+  terminate(): void;
+}
+
+/** playerKey của tab này từ Web Storage (không có storage → khóa tạm). */
+function browserPlayerKey(): { key: string; resume: boolean; onKeyInUse: () => string } {
+  const get = (name: 'localStorage' | 'sessionStorage') => {
+    try {
+      return globalThis[name] ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const { key, resume } = loadPlayerKey(get('localStorage'), get('sessionStorage'));
+  return { key, resume, onKeyInUse: () => replacePlayerKey(get('sessionStorage')) };
 }
 
 /** Điểm làm host = ping trung bình + hệ số × thời gian chạy thử 20 tick mô phỏng (ms). */
@@ -49,8 +78,9 @@ export class NetGame {
   readonly backup = new BackupParts();
   /** Host báo phòng đã đủ người (số tối đa) — mình chỉ xem, không vào trận được. */
   roomFull: number | null = null;
-  private worker: Worker | null = null;
-  private timer: ReturnType<typeof setInterval>;
+  private worker: HostRunner | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly testHooks: NetGameOptions['test'];
   private zombieCount: number | undefined;
   private startTick: number | undefined;
 
@@ -60,14 +90,20 @@ export class NetGame {
     opts: NetGameOptions = {},
   ) {
     this.seed = worldSeedForRoom(room);
+    this.testHooks = opts.test;
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
-    this.loot = new ClientLoot({ seed: this.seed, owner: transport.selfId, send: (d) => this.sendLoot(d) });
-    this.simBenchMs = measureSimMs();
+    this.loot = new ClientLoot({
+      seed: this.seed,
+      ...(opts.playerKey ?? browserPlayerKey()),
+      send: (d) => this.sendLoot(d),
+      now: opts.test?.now,
+    });
+    this.simBenchMs = opts.test?.simBenchMs ?? measureSimMs();
     const rttOf = opts.rttOf ?? (() => null);
-    this.election = new HostElection(transport, undefined, {
+    this.election = new HostElection(transport, opts.test?.now, {
       getScore: () => {
         const rtts = transport
           .peers()
@@ -81,13 +117,17 @@ export class NetGame {
     transport.onMessage((data, from) => this.onMessage(data, from));
     transport.onMessage((data, from) => {
       if (from !== this.election.hostId) return;
-      if (data[0] === WORLD_BACKUP_MSG) this.backup.receive(data);
+      if (data[0] === WORLD_BACKUP_MSG && this.backup.receive(data)) {
+        // mẩu 0 mang bản loot đầy đủ của host → làm mới bản đang giữ (để lên host)
+        const loot = this.backup.takeLoot();
+        if (loot) this.loot.receiveBackup(loot);
+      }
       const full = decodeRoomFull(data);
       if (full !== null) this.roomFull = full;
     });
     transport.onPeerLeave((id) => this.toWorker({ t: 'leave', peer: id }));
-    // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm
-    this.timer = setInterval(() => this.election.tick(), 250);
+    // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm (test tự gọi)
+    if (!opts.test) this.timer = setInterval(() => this.election.tick(), 250);
     this.election.tick();
   }
 
@@ -118,7 +158,7 @@ export class NetGame {
   }
 
   dispose(): void {
-    clearInterval(this.timer);
+    if (this.timer) clearInterval(this.timer);
     this.stopHost();
     this.election.dispose();
   }
@@ -163,9 +203,7 @@ export class NetGame {
     const restore =
       mergeBackup(this.backup.assemble(), this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
     this.backup.clear();
-    const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = (e: MessageEvent<FromWorker>) => {
-      const m = e.data;
+    const onMessage = (m: FromWorker) => {
       if (m.t === 'out') {
         for (const item of m.items) {
           if (item.to === self) {
@@ -178,14 +216,21 @@ export class NetGame {
         this.election.tick();
       }
     };
-    w.onerror = (e) => console.error('[host] worker lỗi:', e.message);
-    this.worker = w;
+    if (this.testHooks) this.worker = this.testHooks.startHost(onMessage);
+    else {
+      const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
+      w.onmessage = (e: MessageEvent<FromWorker>) => onMessage(e.data);
+      w.onerror = (e) => console.error('[host] worker lỗi:', e.message);
+      this.worker = w;
+    }
     this.toWorker({
       t: 'init',
       seed: this.seed,
       zombieCount: this.zombieCount,
       startTick: this.startTick,
       restore,
+      // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
+      loot: { recover: { expected: [...keep] } },
     });
   }
 

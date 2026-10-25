@@ -23,6 +23,9 @@ Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
    Replica đầy đủ nằm ở **mẩu 0 gói 125** (bản lưu v6). **playerKey**: bí mật ngẫu nhiên lưu ở trình duyệt, gửi riêng cho
    host bằng intent `claim`; túi đồ khóa theo `ownerId = sha256(playerKey)` (công khai, không lộ khóa) → tải lại trang
    vẫn đúng túi. Đổi hợp đồng `shared/types` (thêm `claim`) + `PROTOCOL_VERSION`. Quyết định ghi ở `docs/save-format.md`.
+   - Đã làm (PR bước 4): đúng như trên. Host mới chờ bản của mọi người trong phòng (kể cả chính nó) tối đa 3s; mỗi máy
+     chưa có term của host hiện tại thì gửi bản mình giữ (hoặc bản rỗng) mỗi giây. `host/testMatch.ts` = trận thử nhiều
+     `NetGame` thật trên LoopbackHub (host chạy trong tiến trình thay Worker).
 5. **Test** LoopbackHub 2–4 client, trễ 150ms + mất 5%; bot loadtest thỉnh thoảng mở rương; đo băng thông (đợt tràn tối
    đa: đỉnh 5s 1 người ≤ 22 KB/s, loot ≤ 3 KB/s).
 
@@ -36,6 +39,7 @@ Mỗi bước 1 PR từ `main`, CI xanh thì merge (merge commit).
 | `inventory: InventoryState \| null`                          | túi của mình **đã xác nhận** (bản sao, sửa thoải mái)                                        |
 | `chest(id): ChestState \| null`                              | rương đã biết; `null` = chưa ai đụng/chưa xem → gọi `view(id)` khi tới gần                   |
 | `busy: boolean`                                              | đang chờ kết quả 1 thao tác sửa đồ (khóa nút)                                                |
+| `claimError`                                                 | không nhận được túi: `inventory_limit` (thế giới đã đủ 4 túi), `invalid_key`…                |
 | `changed.on(e => …)`                                         | `ready` / `reset` (đổi host) / `inventory` / `chest` (kèm `chestId`) — UI đọc lại trạng thái |
 | `view(id)`, `open(id)`, `take(id, slot, qty)`, `takeAll(id)` | intent rương; revision tự điền từ trạng thái đã biết                                         |
 | `move(from, to, qty)`, `sort()`, `refresh()`                 | túi của mình                                                                                 |
@@ -47,6 +51,9 @@ Mọi intent trả `Promise<LootOutcome>` (không bao giờ reject): `{ ok: true
 `rate_limited`, `inventory_limit`…) + của máy khách: `not_ready`, `busy`, `host_changed` (đổi host lúc chờ: KHÔNG biết thao
 tác có xảy ra không — UI đọc lại `inventory`/`chest` sau sự kiện `ready`), `timeout` (15s). Panel của B cần thêm câu
 tiếng Việt cho các mã này (`LOOT_MESSAGES` hiện chỉ có mã của reducer).
+
+Danh tính: NetGame tự đọc playerKey từ localStorage/sessionStorage (`net/playerKey.ts`) và tự `claim` mỗi khi có host
+mới — UI không cần làm gì. Tải lại trang → đúng túi cũ. Mở 2 tab cùng trình duyệt → tab sau tự đổi khóa riêng (túi riêng).
 
 Gợi ý nối (2B): tới gần rương (≤ `LOOT_INTERACTION.reach`) → `view(id)` một lần để hiện gợi ý; F → `open(id)` rồi mở
 panel với `{ chest, inventory }`, `onCommand: (c) => loot.command(c)` (đổi `LootOutcome` → `LootResult` của panel); rời

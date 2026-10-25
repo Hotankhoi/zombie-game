@@ -8,14 +8,16 @@ import { Reader, Writer } from './gameCodec';
 /**
  * Sao lưu toàn bộ thế giới (AGENTS.md mục 2.1: host gửi snapshot thế giới cho mọi peer ~10s một lần
  * để chuyển host không mất trạng thái). Loại gói riêng (125), cố ý không nằm trong danh sách gói chung
- * của gameCodec (chỗ B thêm gói loot). Chưa gồm rương/túi đồ — B thêm khi ghép loot online.
+ * của gameCodec. Phiên bản 6: cuối mẩu 0 có khối loot (túi + rương = gói 112 đầy đủ của host, `HostLoot.backupBlock`).
  */
 export const WORLD_BACKUP_MSG = 125;
 /**
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 5;
+export const WORLD_BACKUP_VERSION = 6;
+/** Khối loot (gói 112 đầy đủ, net/lootCodec.ts) ở cuối mẩu 0 lớn nhất bấy nhiêu byte (≈ 4096 rương). */
+export const MAX_BACKUP_LOOT = 256 * 1024;
 /**
  * Bản sao lưu được chia thành bấy nhiêu mẩu, host gửi 1 mẩu/giây cho mọi người (thay vì cả thế giới ~23 KB dồn 1 lần
  * mỗi 10s → đỉnh băng thông). Mẩu k = zombie có id % N === k + danh sách người chơi; phần chung (cửa, vũng, tường, đợt
@@ -94,7 +96,12 @@ export function encodeBackup(s: WorldState): Uint8Array {
 }
 
 /** Mẩu `part` trong `parts` mẩu (xem BACKUP_PARTS). */
-export function encodeBackupPart(s: WorldState, part: number, parts: number): Uint8Array {
+export function encodeBackupPart(
+  s: WorldState,
+  part: number,
+  parts: number,
+  loot: Uint8Array | null = null,
+): Uint8Array {
   const main = part === 0;
   const w = new Writer();
   w.u8(WORLD_BACKUP_MSG);
@@ -251,6 +258,10 @@ export function encodeBackupPart(s: WorldState, part: number, parts: number): Ui
     w.f64(c.y);
     w.f32(c.turnIn);
   }
+  // khối loot: chỉ mẩu 0 (u32 độ dài, 0 = không có)
+  const block = main && loot && loot.length <= MAX_BACKUP_LOOT ? loot : null;
+  w.u32(block?.length ?? 0);
+  if (block) w.bytes(block);
   return w.done();
 }
 
@@ -260,7 +271,9 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
 }
 
 /** Giải mã kèm số mẩu. Gói hỏng/khác phiên bản → null (dữ liệu từ mạng, không ném lỗi). */
-export function decodeBackupPart(buf: Uint8Array): { part: number; parts: number; state: WorldState } | null {
+export function decodeBackupPart(
+  buf: Uint8Array,
+): { part: number; parts: number; state: WorldState; loot: Uint8Array | null } | null {
   if (buf[0] !== WORLD_BACKUP_MSG || buf[1] !== WORLD_BACKUP_VERSION) return null;
   try {
     const r = new Reader(buf);
@@ -396,11 +409,15 @@ export function decodeBackupPart(buf: Uint8Array): { part: number; parts: number
       const player = dec.decode(r.bytes(r.u8()));
       corpses.push({ player, x: r.f64(), y: r.f64(), turnIn: r.f32() });
     }
+    const lootLen = r.u32();
+    if (lootLen > MAX_BACKUP_LOOT || (lootLen > 0 && part !== 0)) return null;
+    const loot = lootLen > 0 ? r.bytes(lootLen).slice() : null;
     // gói phải hết đúng chỗ (gói cụt hay dư rác đều là hỏng)
     if (r.more()) return null;
     return {
       part,
       parts,
+      loot,
       state: {
         tick,
         rngState,
@@ -432,11 +449,20 @@ export function decodeBackupPart(buf: Uint8Array): { part: number; parts: number
  */
 export class BackupParts {
   private parts: (WorldState | null)[] = [];
+  private loot: Uint8Array | null = null;
+
+  /** Khối loot của mẩu 0 vừa nhận (gói 112 đầy đủ) — lấy 1 lần rồi xóa. */
+  takeLoot(): Uint8Array | null {
+    const l = this.loot;
+    this.loot = null;
+    return l;
+  }
 
   /** Nhận 1 gói 125. Trả về false nếu gói hỏng/khác phiên bản. */
   receive(buf: Uint8Array): boolean {
     const d = decodeBackupPart(buf);
     if (!d) return false;
+    if (d.loot) this.loot = d.loot;
     if (this.parts.length !== d.parts) this.parts = new Array<WorldState | null>(d.parts).fill(null);
     this.parts[d.part] = d.state;
     return true;
@@ -452,6 +478,7 @@ export class BackupParts {
 
   clear(): void {
     this.parts = [];
+    this.loot = null;
   }
 
   assemble(): WorldState | null {

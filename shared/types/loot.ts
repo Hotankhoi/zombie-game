@@ -35,6 +35,16 @@ interface ChestIntent {
 }
 export type LootAction =
   | { type: 'inventory' }
+  /**
+   * Nhận túi theo playerKey bí mật (v5, A). Host xác minh rồi gắn PeerId người gửi → ownerId = hash(key);
+   * replica chỉ chứa ownerId, không bao giờ chứa key. Xem docs/save-format.md mục 4.
+   */
+  | {
+      type: 'claim';
+      key: string;
+      /** Khóa này tab này đã dùng trước đó (tải lại trang) → host cho lấy lại túi kể cả khi kết nối cũ chưa rời. */
+      resume: boolean;
+    }
   | { type: 'view'; chestId: string }
   | (ChestIntent & { type: 'open' })
   | (ChestIntent & { type: 'take'; slot: number; quantity: number })
