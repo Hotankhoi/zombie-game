@@ -147,7 +147,11 @@ Nhánh `a/loot-ui` (mỗi bước 1 PR từ `main`, CI xanh thì merge commit). 
   dừng, khung hình đứng ở 19; tôi đẩy vòng lặp bằng `setInterval(game.loop.step)` trong trang, ảnh chụp không được):
   F mở panel rương (6 ô thật), I thêm túi, giữ W khi panel mở → đứng yên, Esc → đóng hết + đi lại được, lấy 1 món → túi
   1 → 2 món, lúc chờ `aria-busy=true`; thao tác khi đang chờ → "Đang chờ host xác nhận thao tác trước."; F khi đang mở
-  → đóng, đèn pin tắt; F xa rương → đèn pin bật. 327 test.
+  → đóng, đèn pin tắt; F xa rương → đèn pin bật. 327 test. PR #36 đã merge.
+- Bước 3 — HUD (nhánh `a/loot-hud`): dòng "Túi 4/12 ô" cạnh thanh stamina (cam khi kín ô; tính lại chỉ khi ClientLoot
+  báo đổi), gợi ý phím thêm "F đèn pin/mở rương · I túi · Esc đóng". Nhặt từ rương thành công → thông báo ngắn
+  "+2 Đồ hộp (Tốt)" màu độ hiếm (`gainedItems` so tổng theo món + độ hiếm trước/sau, sắp xếp/gộp không báo). Browser
+  pane: lấy hết rương → HUD 1/12 → 4/12, 3 thông báo đúng màu; ảnh chụp được khi cửa sổ Claude hiện. 330 test.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

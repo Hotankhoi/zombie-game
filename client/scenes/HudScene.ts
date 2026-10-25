@@ -28,6 +28,8 @@ export class HudScene extends Phaser.Scene {
   private subText!: Phaser.GameObjects.Text;
   private hintText!: Phaser.GameObjects.Text;
   private barText!: Phaser.GameObjects.Text;
+  /** Số ô túi đã dùng (phần 2B loot). */
+  private bagText!: Phaser.GameObjects.Text;
   /** Chữ dùng lại cho mũi tên và khung đội (tối đa MAX_PLAYERS - 1 đồng đội). */
   private arrowTexts: Phaser.GameObjects.Text[] = [];
   private teamTexts: Phaser.GameObjects.Text[] = [];
@@ -77,10 +79,11 @@ export class HudScene extends Phaser.Scene {
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
     this.fpsText = this.add.text(0, 0, '', { ...style, fontFamily: 'Consolas, monospace' }).setOrigin(1, 0);
     this.barText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
+    this.bagText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
     this.hintText = this.add.text(
       0,
       0,
-      'WASD đi · Shift chạy · Chuột trái chém · E mở/đóng cửa · F đèn pin · R cứu · G kéo người gục · F3 mạng',
+      'WASD đi · Shift chạy · Chuột trái chém · E cửa · F đèn pin/mở rương · I túi · Esc đóng · R cứu · G kéo · F3 mạng',
       { ...style, fontSize: '12px', color: '#8d9891' },
     );
     this.respawnText = this.add
@@ -174,6 +177,12 @@ export class HudScene extends Phaser.Scene {
     this.bar(g, x, yHp, w, 10, me.hp / PLAYER.maxHp, 0xe53935);
     this.bar(g, x, yStam, w, 6, me.stamina / PLAYER.maxStamina, me.exhausted ? 0x6d6d6d : 0xfdd835);
     this.barText.setText(`Máu ${Math.ceil(me.hp)}`).setPosition(x + w + 8, yHp - 3);
+    const bag = this.world.lootUi.bag;
+    this.bagText
+      .setVisible(bag !== null)
+      .setText(bag ? `Túi ${bag.used}/${bag.size} ô` : '')
+      .setColor(bag && bag.used >= bag.size ? '#ffb74d' : '#8d9891')
+      .setPosition(x + w + 8, yStam - 4);
     this.hintText.setPosition(x, height - 66);
 
     this.subText.setVisible(false);
