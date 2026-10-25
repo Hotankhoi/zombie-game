@@ -35,6 +35,17 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
   host/snapshot/sao lưu/loot đều không đi tới người khác bản. `client/net/versionNotice.ts`: "Bạn đang dùng bản cũ,
   bấm để tải lại" (che màn hình) hoặc "Có bản mới, nên tải lại" (dải nhỏ, cùng giao thức khác build). Thử bản dev:
   thêm `&v=2` vào link. 199 test. Browser pane: tab `&v=2` hiện bảng bản cũ, 2 tab mỗi bên tự làm host, ↑↓ 0 KB/s.
+  PR #23 đã merge.
+- Việc 2 — chừa băng thông cho loot (nhánh `a/bandwidth-horde`), đo `npm run loadtest` (đợt tràn tối đa, KB/s TB · đỉnh 5s):
+  gốc 22.18 · 24.72 → bước 1 (zombie > 20 ô gửi gọn 5 byte, khối mở rộng cuối snapshot) 21.63 · 24.25 → bước 2
+  (sao lưu gửi phần thay đổi) BỎ: đo được chỉ 0.9% zombie không đổi sau 10s (đợt tràn), sao lưu chỉ chiếm 8.7% băng
+  thông → không đáng → bước 3 (`ZOMBIE_BUDGET` 200 → 170, chỗ xoay vòng ưu tiên zombie trên màn hình, ngoài màn hình
+  tối đa 8 con/snapshot; client giữ zombie vắng mặt 40 tick thay vì 24) **19.71 · 22.19**. Cơ cấu đợt tràn: snapshot
+  82%, sự kiện 10%, sao lưu 9%. Đỉnh 5s còn > 20 vì bản sao lưu ~23 KB dồn 1 lần/10s mỗi người → việc sau: rải bản sao
+  lưu thành nhiều mẩu.
+- Rủi ro 5 (kịch bản thường 17 → 12 KB/s): tụt đúng ở #19 (hồi sinh an toàn). Cho bot bất tử thì trước/sau #19 y hệt
+  (16.94 KB/s) → không phải lỗi gói/đo; do luật chơi: người hồi sinh ở chỗ không zombie trong 10 ô + bất tử 4s → chết
+  24 → 4 lần, mỗi snapshot TB 120 zombie thay vì 181.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

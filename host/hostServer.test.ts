@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ClientSync } from '@net/clientSync';
-import { GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
+import { FAR_ZOMBIE_TILES, GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
 import { decodeRoomFull } from '@net/roomFull';
 import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
 import { arenaMap } from '@shared/sim/grid';
@@ -8,7 +8,16 @@ import { testZombie } from '@shared/sim/testMaps';
 import { Btn, type PlayerInput } from '@shared/sim/input';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
-import { BACKUP_EVERY, HostServer, INTEREST_RADIUS, snapshotArea, type Outgoing } from './hostServer';
+import {
+  BACKUP_EVERY,
+  HostServer,
+  INTEREST_RADIUS,
+  ZOMBIE_BUDGET,
+  ZOMBIE_NEAR_ALWAYS,
+  ZOMBIE_OFFSCREEN_ROOM,
+  snapshotArea,
+  type Outgoing,
+} from './hostServer';
 
 interface Wire {
   at: number;
@@ -329,7 +338,7 @@ describe('HostServer – GĐ 4', () => {
 });
 
 describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
-  it('300 zombie quanh người: mỗi snapshot ≤ 200, gần nhất luôn có; client vẫn thấy đủ 300', () => {
+  it('300 zombie quanh người: mỗi snapshot ≤ ngân sách, gần nhất luôn có; client vẫn thấy đủ 300', () => {
     let time = 0;
     const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
     const c = new ClientSync('a', arenaMap(), () => time);
@@ -357,8 +366,41 @@ describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
       }
       time += SIM_TICK_MS;
     }
-    expect(Math.max(...sizes)).toBe(200);
+    expect(Math.max(...sizes)).toBe(ZOMBIE_BUDGET);
     expect(c.sample().zombies).toHaveLength(300);
+  });
+
+  it('chỗ xoay vòng ưu tiên zombie trên màn hình; zombie ngoài màn hình tối đa ZOMBIE_OFFSCREEN_ROOM con/snapshot', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    host.receive(
+      'a',
+      encodeGame({ type: GameMsg.Input, inputs: [{ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }] }),
+    );
+    host.tick();
+    const me = host.world.players.get('a')!;
+    const still = { wanderMoving: false, wanderIn: 99 };
+    let id = 1;
+    // 130 con sát người, 100 con trên màn hình (cách 10 ô), 100 con ngoài màn hình (cách 25 ô)
+    for (let i = 0; i < ZOMBIE_NEAR_ALWAYS; i++)
+      host.world.zombies.push(
+        testZombie(id++, me.x + 1 + (i % 10) * 0.3, me.y + 1 + Math.floor(i / 10) * 0.3, still),
+      );
+    for (let i = 0; i < 100; i++)
+      host.world.zombies.push(testZombie(id++, me.x + 10, me.y - 5 + i * 0.1, still));
+    for (let i = 0; i < 100; i++)
+      host.world.zombies.push(testZombie(id++, me.x + FAR_ZOMBIE_TILES + 5, me.y - 5 + i * 0.1, still));
+    let snaps = 0;
+    for (let t = 0; t < 10; t++) {
+      for (const o of host.tick()) {
+        const g = decodeGame(o.data);
+        if (g?.type !== GameMsg.Snapshot) continue;
+        snaps++;
+        const far = g.zombies.filter((z) => Math.abs(z.x - g.originX) > FAR_ZOMBIE_TILES).length;
+        expect(g.zombies).toHaveLength(ZOMBIE_BUDGET);
+        expect(far).toBe(ZOMBIE_OFFSCREEN_ROOM);
+      }
+    }
+    expect(snaps).toBeGreaterThan(0);
   });
 });
 
