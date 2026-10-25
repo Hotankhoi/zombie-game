@@ -28,6 +28,14 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Phần 2d: `docs/save-format.md` ở PR #21 — CHỜ B GÓP Ý, A không tự merge. Sau khi chốt: PR hợp đồng `playerKey` (PROTOCOL_VERSION 4) rồi mới làm IndexedDB/xuất–nhập.
 - Thử ghép `b/loot-online` (#16) lên `main` (2026-10-25): chỉ xung đột chữ ở AGENTS.md và `shared/sim/mapgenSource.ts` (lấy bản `main`), typecheck đạt, 257 test đạt.
 
+## Phiên 2026-10-25 (chiều): 3 việc rủi ro
+
+- Việc 1 — chặn khác phiên bản (nhánh `a/version-gate`): Hello thêm khối build (`net/build.ts`, SHA + giờ build do
+  `vite.config.ts` đặt từ `GITHUB_SHA`); `Session.game` = Transport chỉ gồm người cùng PROTOCOL_VERSION → NetGame/bầu
+  host/snapshot/sao lưu/loot đều không đi tới người khác bản. `client/net/versionNotice.ts`: "Bạn đang dùng bản cũ,
+  bấm để tải lại" (che màn hình) hoặc "Có bản mới, nên tải lại" (dải nhỏ, cùng giao thức khác build). Thử bản dev:
+  thêm `&v=2` vào link. 199 test. Browser pane: tab `&v=2` hiện bảng bản cũ, 2 tab mỗi bên tự làm host, ↑↓ 0 KB/s.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Chờ B: file save (#21), hành động 2 người, 2b' (delta snapshot, zombie tất định, ownership, hit do client) — làm sau khi #16 vào `main`.

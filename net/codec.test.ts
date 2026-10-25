@@ -4,12 +4,25 @@ import { PROTOCOL_VERSION } from '@shared/types';
 
 describe('codec', () => {
   it('Hello mã hóa rồi giải mã giữ nguyên (cả tiếng Việt)', () => {
-    const m = hello('Khôi 🧟', 0xf06292);
+    const m = hello('Khôi 🧟', 0xf06292, PROTOCOL_VERSION, { id: 'abc1234def56', time: 1_790_000_000 });
     expect(decode(encode(m))).toEqual({
       type: MsgType.Hello,
       version: PROTOCOL_VERSION,
       name: 'Khôi 🧟',
       color: 0xf06292,
+      build: { id: 'abc1234def56', time: 1_790_000_000 },
+    });
+  });
+
+  it('Hello của bản cũ (không có khối build) vẫn đọc được, build rỗng', () => {
+    const name = new TextEncoder().encode('An');
+    const old = new Uint8Array([MsgType.Hello, 3, 0x11, 0x22, 0x33, name.length, ...name]);
+    expect(decode(old)).toEqual({
+      type: MsgType.Hello,
+      version: 3,
+      name: 'An',
+      color: 0x112233,
+      build: { id: '', time: 0 },
     });
   });
 
