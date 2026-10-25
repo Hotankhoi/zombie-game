@@ -60,6 +60,17 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
   (~18 B/con: varint id, i16 1/32 ô, máu u16) 19.18 · 21.61 · 22.04 → gộp sự kiện cắn (1/người/tick; trước ~8, chiếm 2.2
   KB/s) 17.93 · 19.66 · 20.09 → `ZOMBIE_BUDGET` 165 **17.55 · 19.33 · 19.70**. Bỏ hẳn sao lưu: đỉnh nhóm 19.83 (snapshot
   gần chạm trần). Browser pane: tab khách có "bản lưu 10/10 mẩu", đóng tab host → lên host với 198/200 zombie.
+  PR #26 đã merge. `docs/save-format.md` (PR #21, chưa merge) đã cập nhật theo gói sao lưu v5 + chỗ cho loot ở mẩu 0.
+- PR #23, #24, #25, #26 đã merge (2026-10-25). Bảng băng thông cuối, đợt tràn tối đa (500 + 4 Boss), KB/s mỗi người:
+
+  | Bước                                                 | TB        | Đỉnh 5s cả nhóm | Đỉnh 5s 1 người |
+  | ---------------------------------------------------- | --------- | --------------- | --------------- |
+  | `main` trước #24                                     | 22.18     | 24.72           | —               |
+  | sau #24 (zombie xa gọn, ngân sách 170)               | 19.71     | 22.19           | 24.99           |
+  | sau #26 (10 mẩu, zombie gọn, gộp cắn, ngân sách 165) | **17.55** | 19.33           | **19.70**       |
+
+  Kịch bản khác sau #26 (TB · đỉnh nhóm · đỉnh 1 người): bình thường 10.31 · 14.88 · 15.01; trễ 150ms + mất 5% 9.28 · 14.58 ·
+  15.08; đợt tràn 1: 5.65 · 15.21 · 15.55. Còn ~0.3 KB/s đỉnh dưới ngưỡng 20 KB/s cho loot của B ở đợt tràn tối đa.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
