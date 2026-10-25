@@ -14,6 +14,7 @@ import { TrysteroTransport } from '@net/trystero';
 import type { Transport } from '@net/transport';
 import { selfId as trysteroSelfId } from '@trystero-p2p/nostr';
 import { NetGame } from './net/netGame';
+import { mountVersionNotice } from './net/versionNotice';
 import { HudScene } from './scenes/HudScene';
 import { WorldScene } from './scenes/WorldScene';
 import { mountDebugPanel } from './ui/debugPanel';
@@ -62,7 +63,14 @@ const base: Transport = auto ?? trystero!;
 const conditioned = new ConditionedTransport(base);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
-const session = new Session(net, { name, color });
+// ?v=N (chỉ bản dev): giả làm bản game giao thức N để thử chặn khác phiên bản
+const fakeVersion =
+  import.meta.env.DEV && url.searchParams.has('v') ? Number(url.searchParams.get('v')) : NaN;
+const session = new Session(net, {
+  name,
+  color,
+  ...(Number.isInteger(fakeVersion) ? { version: fakeVersion } : {}),
+});
 // ---- Thử ngày/đêm/đợt tràn (chỉ máy host dùng): ?ngay=15&gio=0.79 → trận bắt đầu ngày 15 lúc 0.79 của ngày
 // (đợt tràn 1 bắt đầu sau ~7 giây); ?gio=0.9 → đêm ngày 1 ----
 const ngayParam = Math.floor(Number(url.searchParams.get('ngay')));
@@ -74,7 +82,8 @@ const startTick =
     ? tickOfDay(hasNgay ? ngayParam : 1) +
       Math.round(((hasGio ? gioParam : DAY.startAt) * DAY.lengthSec * 1000) / SIM_TICK_MS)
     : undefined;
-const game = new NetGame(net, room, {
+// trận chỉ gồm người cùng phiên bản giao thức (session.game lọc); phòng chờ vẫn thấy mọi người
+const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
@@ -110,9 +119,11 @@ const lobby = mountLobbyPanel(hud, {
   },
 });
 const debug = mountDebugPanel(hud, conditioned);
+const versionNotice = mountVersionNotice(document.body);
 
 function render() {
   lobby.update(session, netError);
+  versionNotice.update(session.updateNotice);
   net.update();
   debug.setStats(netStatsText());
 }
