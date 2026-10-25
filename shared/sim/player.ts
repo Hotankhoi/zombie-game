@@ -33,6 +33,8 @@ export interface PlayerState {
   dragging: boolean;
   /** Đèn pin đang bật (GĐ 4): soi xa ban đêm nhưng zombie thấy mình từ xa. */
   flashlight: boolean;
+  /** > 0 = vừa hồi sinh, còn bất tử bấy nhiêu giây (không mất máu vì cắn/vũng/Boss). */
+  shield: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -53,6 +55,7 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     reviveProgress: 0,
     dragging: false,
     flashlight: false,
+    shield: 0,
   };
 }
 

@@ -442,6 +442,7 @@ export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
     reviveProgress: w.reviveProgress,
     dragging: w.dragging,
     flashlight: w.flashlight,
+    shield: 0, // máy khách không cần (chỉ host tính sát thương)
   };
 }
 

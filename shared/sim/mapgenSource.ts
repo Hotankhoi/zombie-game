@@ -39,6 +39,11 @@ export class MapgenSource implements MapSource {
     return this.kind(tx, ty);
   }
 
+  /** Ô đường của B (`isRoadTile`) và không bị chặn. */
+  isRoad(tx: number, ty: number): boolean {
+    return isRoadTile(tx, ty) && this.kind(tx, ty) === OPEN;
+  }
+
   private kind(tx: number, ty: number): number {
     const cx = Math.floor(tx / CHUNK_SIZE);
     const cy = Math.floor(ty / CHUNK_SIZE);

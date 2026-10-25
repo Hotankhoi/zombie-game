@@ -27,4 +27,10 @@ export const PARTY = {
   turnedHpFactor: 1.5,
   /** Người bị kéo nằm sau lưng người kéo bấy nhiêu ô. */
   dragOffset: 0.75,
+  /** Hồi sinh: ô đường gần đội nhất mà không có zombie trong bán kính này (ô). */
+  respawnSafeRadius: 10,
+  /** Tìm chỗ hồi sinh trong vòng bấy nhiêu ô quanh mỗi đồng đội (hoặc điểm xuất phát nếu không còn ai). */
+  respawnSearchRadius: 48,
+  /** Vừa hồi sinh: bất tử bấy nhiêu giây. */
+  respawnShieldSec: 4,
 } as const;

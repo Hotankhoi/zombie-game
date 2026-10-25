@@ -21,6 +21,8 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - PR #17 (spawn theo `spawnPoint()`/`isRoadTile()` của B) đã merge.
 - Thử link thật (2 tab, Browser pane bị ẩn nên chạy chậm 1–15 FPS): 2 tab cùng `?room=` thấy nhau (ping ~80 ms), khách thấy host, ngày/đêm + nón nhìn đúng, zombie đuổi và cắn. Lỗi thấy: hồi sinh ngay giữa bầy zombie ở điểm xuất phát → chết liên tục (Phần 2b sửa). Chém zombie trên link thật chưa xác nhận được (pane ẩn, phím không giữ được).
 - Phần 2a (`a/vision-walls`): tường/cửa đóng chặn nón nhìn, vòng quanh mình, đèn pin (raycast lưới, `shared/sim/vision.ts`); zombie sau tường không vẽ. Đo CPU (`tools/vision.loadtest.ts`): 0.2–0.3 ms/frame. F3 thêm "HUD ms".
+- Phần 2a: PR #18 đã merge.
+- Phần 2b (`a/safe-respawn`): hồi sinh ở ô đường gần đồng đội còn sống nhất (không còn ai → gần điểm xuất phát), không zombie trong 10 ô; bất tử 4s (`PlayerState.shield`, không mất máu vì cắn/vũng/Boss); vòng sáng quanh người vừa hồi sinh. Bản lưu thế giới lên phiên bản 3 (thêm `shield`).
 
 ## Các giai đoạn
 
