@@ -102,6 +102,13 @@ Kế hoạch: đầu `docs/loot-online-plan.md`. Mỗi bước 1 PR từ `main` 
 - Bước 3 — ClientLoot (`net/clientLoot.ts`, PR #31): intent tự điền revision, túi đã xác nhận, rương đã biết, replica
   đầy đủ đã kiểm tra (để lên host), `busy`/`not_ready`/`host_changed`/`timeout`; `NetGame.loot` chuyển gói (host: tới
   worker). API cho 2B: `docs/loot-online-plan.md` mục "API ClientLoot". 293 test.
+- Bước 4 — đồng bộ + đổi host + playerKey (PR #32): kết quả chỉ báo sau khi mọi người ACK (đã có từ bước 2); host mới
+  **thu bản replica của mọi người** (≤ 3s, cả bản rỗng của người mới) rồi chọn bản mới nhất theo (epoch, revision) trước
+  khi nhận ghi; yêu cầu đang chờ khi host rời → `host_changed`; mẩu 0 gói 125 (v6) mang gói 112 đầy đủ; playerKey bí mật
+  → `claim`, túi theo `ownerId = sha256` (`net/playerKey.ts`, `net/sha256.ts`); hợp đồng `claim` + `PROTOCOL_VERSION` 5.
+  NetGame nhận `test` (đồng hồ giả + host trong tiến trình) → `host/testMatch.ts` chạy nhiều NetGame thật trên
+  LoopbackHub. `host/lootOnline.test.ts`: người vào sau, tải lại trang, 2 tab cùng khóa, host rời giữa lúc nhặt (3 thời
+  điểm), host mới là người vừa vào. Quyết định playerKey ghi vào `docs/save-format.md` mục 4 (PR #21). 310 test.
 - Phần 2B còn lại (session sau, máy thật): vẽ rương, UI túi/rương trong trận, phím F/I/Esc, thử 2 tab.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)

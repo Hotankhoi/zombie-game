@@ -10,10 +10,15 @@ import {
   parseChestId,
   type LootErrorCode,
 } from './lootCodec';
+import { ownerIdOf } from './playerKey';
 import { Emitter } from './transport';
 
 /** Chờ kết quả tối đa bấy nhiêu ms (host chờ mọi người ACK nên thường ~1 RTT + 1–2 tick). */
 export const LOOT_TIMEOUT_MS = 15_000;
+/** Chưa có replica của host hiện tại → gửi bản mình đang giữ cho host (host mới thu để chọn bản mới nhất) mỗi bấy nhiêu ms. */
+export const LOOT_OFFER_EVERY_MS = 1000;
+/** Term của bản rỗng (máy chưa có bản nào) khi gửi cho host mới. */
+const EMPTY_TERM = '0.none';
 
 /**
  * Lỗi phía máy khách (ngoài mã lỗi của host `LootErrorCode`):
@@ -33,8 +38,12 @@ export type LootChange =
 
 export interface ClientLootOptions {
   seed: string;
-  /** ID túi của mình trong replica. */
-  owner: string;
+  /** playerKey BÍ MẬT (net/playerKey.ts) — chỉ gửi cho host hiện tại; túi của mình = `ownerIdOf(key)`. */
+  key: string;
+  /** Khóa lấy từ sessionStorage của tab này (đã dùng trước đó: tải lại trang) → host cho lấy lại túi ngay. */
+  resume?: boolean;
+  /** Host báo khóa đang được tab khác dùng → trả khóa mới (NetGame: `replacePlayerKey`). Không có thì dừng ở lỗi. */
+  onKeyInUse?: () => string;
   /** Gửi gói cho host hiện tại (reliable). NetGame: worker nếu mình là host, không thì transport tới host. */
   send: (data: Uint8Array) => void;
   now?: () => number;
@@ -44,6 +53,8 @@ export interface ClientLootOptions {
 interface Pending {
   action: LootAction;
   mutating: boolean;
+  /** claim tự gửi khi có term mới — không trả cho ai. */
+  internal?: boolean;
   sentAt: number;
   chestId: string | null;
   resolve: (o: LootOutcome) => void;
@@ -62,8 +73,17 @@ const MUTATING = new Set<LootAction['type']>(['open', 'take', 'takeAll', 'move',
  */
 export class ClientLoot {
   readonly changed = new Emitter<[LootChange]>();
+  /** Lỗi khi nhận túi (vd `inventory_limit`: phòng đã đủ 4 túi; `key_in_use`). null = chưa có lỗi. */
+  claimError: LootClientError | null = null;
   private _term: string | null = null;
   private _replica: LootReplicaWire | null = null;
+  /** Term của host đã gửi `_replica` (khác `_term` khi đã đổi host mà host mới chưa gửi bản nào). */
+  private replicaTerm: string | null = null;
+  private claimed = false;
+  private key: string;
+  private _owner: string;
+  private resume: boolean;
+  private lastOfferAt = -Infinity;
   private _inventory: InventoryState | null = null;
   private chests = new Map<string, ChestState>();
   private pending = new Map<string, Pending>();
@@ -76,14 +96,18 @@ export class ClientLoot {
   constructor(private opts: ClientLootOptions) {
     this.now = opts.now ?? (() => performance.now());
     this.timeoutMs = opts.timeoutMs ?? LOOT_TIMEOUT_MS;
+    this.key = opts.key;
+    this._owner = ownerIdOf(opts.key);
+    this.resume = opts.resume ?? false;
   }
 
+  /** ID túi của mình (công khai) trong replica. */
   get owner(): string {
-    return this.opts.owner;
+    return this._owner;
   }
-  /** Đã có replica của host hiện tại và biết túi của mình → thao tác được. */
+  /** Đã có replica của host hiện tại, host đã nhận khóa của mình (claim) và biết túi → thao tác được. */
   get ready(): boolean {
-    return this._term !== null && this._inventory !== null;
+    return this._term !== null && this.claimed && this._inventory !== null;
   }
   get term(): string | null {
     return this._term;
@@ -145,7 +169,13 @@ export class ClientLoot {
   /** Gửi một hành động. Kết quả luôn resolve (không reject). */
   request(action: LootAction): Promise<LootOutcome> {
     const mutating = MUTATING.has(action.type);
-    if (!this.ready || !this._term) return Promise.resolve(this.fail('not_ready', null));
+    if (action.type === 'claim' || !this.ready || !this._term)
+      return Promise.resolve(this.fail('not_ready', null));
+    return this.send(action, mutating, false);
+  }
+
+  private send(action: LootAction, mutating: boolean, internal: boolean): Promise<LootOutcome> {
+    if (!this._term) return Promise.resolve(this.fail('not_ready', null));
     const chestId = 'chestId' in action ? action.chestId : null;
     if (chestId !== null && !parseChestId(chestId)) return Promise.resolve(this.fail('unknown_chest', null));
     if (mutating && this.busy) return Promise.resolve(this.fail('busy', chestId));
@@ -157,7 +187,7 @@ export class ClientLoot {
       return Promise.resolve(this.fail('invalid_command', chestId));
     }
     return new Promise((resolve) => {
-      this.pending.set(requestId, { action, mutating, sentAt: this.now(), chestId, resolve });
+      this.pending.set(requestId, { action, mutating, internal, sentAt: this.now(), chestId, resolve });
       this.stats.sent++;
       this.opts.send(data);
     });
@@ -190,19 +220,49 @@ export class ClientLoot {
     } else if (p.type === LootMessage.Reply && p.term === this._term) this.reply(p);
   }
 
-  /** Host đổi: thao tác đang chờ → `host_changed`; chờ replica của host mới (term mới). */
+  /**
+   * Khối loot trong mẩu 0 của bản sao lưu 125 (gói 112 đầy đủ của host): chỉ nhận khi đúng term hiện tại — làm mới
+   * bản đang giữ (vá nếu lỡ mất phần đổi). Bản của host khác/đã đổi host thì bỏ.
+   */
+  receiveBackup(data: Uint8Array): void {
+    const p = decodeLoot(data);
+    if (!p || p.type !== LootMessage.Replica || !('state' in p) || p.term !== this._term) return;
+    if (this._replica && p.state.revision <= this._replica.revision) return;
+    this.receive(data);
+  }
+
+  /** Host đổi: thao tác đang chờ → `host_changed`; chờ replica của host mới (term mới) và gửi bản mình đang giữ. */
   resetHost(): void {
     this._term = null;
+    this.claimed = false;
+    this.lastOfferAt = -Infinity;
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
-      p.resolve(this.fail('host_changed', p.chestId));
+      if (!p.internal) p.resolve(this.fail('host_changed', p.chestId));
     }
     this.changed.emit({ kind: 'reset' });
   }
 
-  /** Hết giờ chờ. */
+  /** Hết giờ chờ; chưa có replica của host hiện tại → gửi bản mình đang giữ cho host (host mới đang thu). */
   tick(): void {
     const t = this.now();
+    if (this._term === null && t - this.lastOfferAt >= LOOT_OFFER_EVERY_MS) {
+      this.lastOfferAt = t;
+      const state: LootReplicaWire = this._replica ?? {
+        version: 1,
+        seed: this.opts.seed,
+        revision: 0,
+        inventories: [],
+        chests: [],
+      };
+      this.opts.send(
+        encodeLoot({
+          type: LootMessage.Replica,
+          term: this._replica ? this.replicaTerm! : EMPTY_TERM,
+          state,
+        }),
+      );
+    }
     for (const [id, p] of this.pending) {
       if (t - p.sentAt < this.timeoutMs) continue;
       this.pending.delete(id);
@@ -217,20 +277,52 @@ export class ClientLoot {
     const wasReady = this.ready;
     this._term = term;
     this._replica = next;
-    if (fresh) this.chests.clear();
+    this.replicaTerm = term;
+    if (fresh) {
+      this.chests.clear();
+      this.claimed = false;
+      this.claim();
+    }
     for (const c of next.chests) this.learnChest(c as ChestState, fresh);
     // túi của mình theo replica chỉ khi mình không có thao tác sửa đồ đang chờ (khỏi hiện kết quả chưa xác nhận)
-    const mine = next.inventories.find((e) => e.id === this.opts.owner)?.state as InventoryState | undefined;
+    const mine = next.inventories.find((e) => e.id === this._owner)?.state as InventoryState | undefined;
     if (mine && (fresh || !this.busy)) this.learnInventory(mine, fresh);
     if (!wasReady && this.ready) this.changed.emit({ kind: 'ready' });
   }
 
+  /** Gửi khóa cho host (tự động mỗi term mới). Kết quả xử lý ngay trong `reply` (đồng bộ, không qua Promise). */
+  private claim(): void {
+    void this.send({ type: 'claim', key: this.key, resume: this.resume }, false, true);
+  }
+
+  private onClaim(r: LootReply): void {
+    if (r.ok) {
+      const wasReady = this.ready;
+      this.claimed = true;
+      this.claimError = null;
+      this.resume = true;
+      if (!wasReady && this.ready) this.changed.emit({ kind: 'ready' });
+    } else if (r.error === 'key_in_use' && this.opts.onKeyInUse) {
+      // 2 tab chung khóa: tab này đổi khóa riêng (túi mới) rồi nhận lại
+      this.key = this.opts.onKeyInUse();
+      this._owner = ownerIdOf(this.key);
+      this.resume = false;
+      this._inventory = null;
+      this.claim();
+    } else this.claimError = (r.error ?? 'internal_error') as LootErrorCode;
+  }
+
   private reply(r: LootReply): void {
-    if (r.inventory) this.learnInventory(r.inventory as InventoryState, false);
-    if (r.chest) this.learnChest(r.chest as ChestState, false);
     const p = this.pending.get(r.requestId);
+    // kết quả claim: túi trong đó là của khóa vừa gửi
+    if (r.inventory && (!p?.internal || r.ok)) this.learnInventory(r.inventory as InventoryState, false);
+    if (r.chest) this.learnChest(r.chest as ChestState, false);
     if (!p) return;
     this.pending.delete(r.requestId);
+    if (p.internal) {
+      this.onClaim(r);
+      return;
+    }
     const chest = p.chestId ? this.chest(p.chestId) : null;
     if (r.ok && this._inventory) p.resolve({ ok: true, inventory: this.inventory!, chest });
     else

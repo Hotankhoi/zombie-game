@@ -85,6 +85,7 @@ describe('codec loot 110–113', () => {
       { type: 'takeAll', chestId: chests[3]!.id, expectedChestRevision: 0, expectedInventoryRevision: 0 },
       { type: 'move', expectedRevision: 9, from: 0, to: 23, quantity: 3 },
       { type: 'sort', expectedRevision: Number.MAX_SAFE_INTEGER - 1 },
+      { type: 'claim', key: 'AbCdEfGhIjKlMnOpQrSt_-', resume: true },
     ];
     for (const action of actions) {
       const p = { type: LootMessage.Request, term: '1.abc', requestId: 'r-1', action } as const;
@@ -222,7 +223,7 @@ describe('codec loot 110–113', () => {
     expect(decodeLoot(big)).toBeNull();
     // hành động lạ
     const act = good.slice();
-    act[good.length - 2] = 7;
+    act[good.length - 2] = 8;
     expect(decodeLoot(act)).toBeNull();
     // ô rương ≥ 6, ô túi ≥ 24, số lượng 0 / > 60
     const take = req({

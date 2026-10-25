@@ -87,7 +87,7 @@ const MAX_SEED = 256;
 const MAX_INVENTORY_ID = 255;
 const MAX_QUANTITY = Math.max(...Object.values(ITEMS).map((i) => i.maxStack));
 const MAX_BACKPACK = Math.max(...Object.values(BACKPACKS).map((b) => b.capacity));
-const ACTIONS = ['inventory', 'view', 'open', 'take', 'takeAll', 'move', 'sort'] as const;
+const ACTIONS = ['inventory', 'view', 'open', 'take', 'takeAll', 'move', 'sort', 'claim'] as const;
 const FULL = 0;
 const PATCH = 1;
 
@@ -372,6 +372,10 @@ function writeAction(w: Writer, a: LootAction): void {
     case 'sort':
       writeVarint(w, a.expectedRevision);
       return;
+    case 'claim':
+      writeToken(w, a.key);
+      w.u8(a.resume ? 1 : 0);
+      return;
   }
 }
 function readQuantity(r: Reader): number {
@@ -418,6 +422,12 @@ function readAction(r: Reader): LootAction {
     }
     case 'sort':
       return { type, expectedRevision: readRevision(r) };
+    case 'claim': {
+      const key = readToken(r);
+      const flag = r.u8();
+      if (flag > 1) throw new RangeError('cờ claim');
+      return { type, key, resume: flag === 1 };
+    }
   }
 }
 

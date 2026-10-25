@@ -12,7 +12,7 @@ export type ToWorker =
       startTick?: number;
       restore?: WorldState;
       /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
-      loot?: { restore?: LootReplicaWire; epoch?: number };
+      loot?: { restore?: LootReplicaWire; epoch?: number; recover?: { expected: PeerId[] } };
     }
   | { t: 'in'; from: PeerId; data: Uint8Array }
   | { t: 'leave'; peer: PeerId };
