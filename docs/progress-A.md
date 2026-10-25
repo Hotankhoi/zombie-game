@@ -20,11 +20,19 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Đã merge thêm: #13, #14 (xung đột chỉ AGENTS.md mục 8 + docs/progress-A.md).
 - PR #17 (spawn theo `spawnPoint()`/`isRoadTile()` của B) đã merge.
 - Thử link thật (2 tab, Browser pane bị ẩn nên chạy chậm 1–15 FPS): 2 tab cùng `?room=` thấy nhau (ping ~80 ms), khách thấy host, ngày/đêm + nón nhìn đúng, zombie đuổi và cắn. Lỗi thấy: hồi sinh ngay giữa bầy zombie ở điểm xuất phát → chết liên tục (Phần 2b sửa). Chém zombie trên link thật chưa xác nhận được (pane ẩn, phím không giữ được).
-- Phần 2a (`a/vision-walls`): tường/cửa đóng chặn nón nhìn, vòng quanh mình, đèn pin (raycast lưới, `shared/sim/vision.ts`); zombie sau tường không vẽ. Đo CPU (`tools/vision.loadtest.ts`): 0.2–0.3 ms/frame. F3 thêm "HUD ms".
+- Phần 2a (#18, đã merge): tường/cửa đóng chặn nón nhìn, vòng quanh mình, đèn pin (raycast lưới, `shared/sim/vision.ts`); zombie sau tường không vẽ. Đo CPU (`tools/vision.loadtest.ts`): 0.2–0.3 ms/frame. F3 thêm "HUD ms".
 - Phần 2a: PR #18 đã merge.
-- Phần 2b (`a/safe-respawn`): hồi sinh ở ô đường gần đồng đội còn sống nhất (không còn ai → gần điểm xuất phát), không zombie trong 10 ô; bất tử 4s (`PlayerState.shield`, không mất máu vì cắn/vũng/Boss); vòng sáng quanh người vừa hồi sinh. Bản lưu thế giới lên phiên bản 3 (thêm `shield`).
+- Phần 2b (#19, đã merge): hồi sinh ở ô đường gần đồng đội còn sống nhất (không còn ai → gần điểm xuất phát), không zombie trong 10 ô; bất tử 4s (`PlayerState.shield`, không mất máu vì cắn/vũng/Boss); vòng sáng quanh người vừa hồi sinh. Bản lưu thế giới lên phiên bản 3 (thêm `shield`).
 - Phần 2b: PR #19 đã merge.
-- Phần 2c (`a/giant-walls`): khổng lồ/Boss đuổi người trong 9 ô thì đi thẳng, húc tường trước mặt (tường 100 máu, 30/s, Boss ×2) → ô trống mãi mãi. `SimWorld.mapChanges` → host gửi `GameMsg.MapDelta` (21, reliable: ô vừa vỡ cho mọi người; cả danh sách cho người mới vào/khi đổi host). Bản lưu thế giới phiên bản 4 (`brokenWalls`, `wallDamage`). Loadtest: đợt tràn tối đa 22.2 KB/s TB, đỉnh 24.7.
+- Phần 2c (#20, đã merge): khổng lồ/Boss đuổi người trong 9 ô thì đi thẳng, húc tường trước mặt (tường 100 máu, 30/s, Boss ×2) → ô trống mãi mãi. `SimWorld.mapChanges` → host gửi `GameMsg.MapDelta` (21, reliable: ô vừa vỡ cho mọi người; cả danh sách cho người mới vào/khi đổi host). Bản lưu thế giới phiên bản 4 (`brokenWalls`, `wallDamage`). Loadtest: đợt tràn tối đa 22.2 KB/s TB, đỉnh 24.7.
+- Phần 2d: `docs/save-format.md` ở PR #21 — CHỜ B GÓP Ý, A không tự merge. Sau khi chốt: PR hợp đồng `playerKey` (PROTOCOL_VERSION 4) rồi mới làm IndexedDB/xuất–nhập.
+- Thử ghép `b/loot-online` (#16) lên `main` (2026-10-25): chỉ xung đột chữ ở AGENTS.md và `shared/sim/mapgenSource.ts` (lấy bản `main`), typecheck đạt, 257 test đạt.
+
+## Việc còn lại của A (sau phiên 2026-10-25)
+
+- Chờ B: file save (#21), hành động 2 người, 2b' (delta snapshot, zombie tất định, ownership, hit do client) — làm sau khi #16 vào `main`.
+- Người dùng tự thử: chơi 2–4 máy thật, TURN trên 4G (Browser pane của Claude bị ẩn nên chạy 1–15 FPS, không thử chém/di chuyển được).
+- Giao diện: vào trận mất ~10–25 s khi tab bị ẩn (hẹn giờ bị trình duyệt làm chậm) — kiểm tra lại trên tab hiện bình thường.
 
 ## Các giai đoạn
 
