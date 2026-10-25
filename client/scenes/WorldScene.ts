@@ -6,10 +6,14 @@ import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/worl
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
 import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
+import { hasLineOfSight } from '@shared/sim/collision';
+import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
+import { seesPoint, visionShapes } from '@shared/sim/vision';
 import { KIND, ZOMBIE_KINDS, type ZombieKind } from '@shared/sim/tuning/zombieKinds';
 import type { SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
+import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
 import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 
@@ -280,10 +284,12 @@ export class WorldScene extends Phaser.Scene {
     this.drawPools();
 
     const { zombies, others } = this.net.sync.sample();
-    for (let i = 0; i < zombies.length; i++) {
-      const z = zombies[i] as (typeof zombies)[number];
+    const seen = this.zombieSeer(others, alpha);
+    let shown = 0;
+    for (const z of zombies) {
+      if (!seen(z)) continue; // sau tường/cửa đóng: không vẽ (lớp tối không che được hết lúc ban ngày)
       const flash = now - (this.hitFlash.get(z.id) ?? -1e9) < 120;
-      let img = this.zombieSprites[i];
+      let img = this.zombieSprites[shown++];
       if (!img) {
         img = this.add
           .image(0, 0, zombieTex('normal', 'wander'))
@@ -300,7 +306,7 @@ export class WorldScene extends Phaser.Scene {
       if (z.turnedFrom && !flash) img.setTint(this.colorOf(z.turnedFrom));
       else img.clearTint();
     }
-    for (let i = zombies.length; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
+    for (let i = shown; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
     for (const p of others) {
       if (!p.alive) continue;
       if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
@@ -316,6 +322,33 @@ export class WorldScene extends Phaser.Scene {
     for (const f of this.fx) this.drawFx(g, f, (now - f.born) / f.life);
 
     this.camTarget.setPosition(pos.x * T, pos.y * T);
+  }
+
+  /**
+   * Zombie nào được vẽ: mình nhìn thẳng tới được (không bị tường/cửa đóng che), hoặc nằm trong vùng đèn pin
+   * của đồng đội mà đồng đội nhìn thấy. Đã chết (đang chờ hồi sinh) thì thấy hết như trước.
+   */
+  private zombieSeer(others: readonly RemotePlayerView[], alpha: number): (z: Vec2) => boolean {
+    const me = this.me();
+    if (!me || !isAlive(me)) return () => true;
+    const eye = this.myDrawPos(alpha);
+    const blocked = this.net.sync.blocked;
+    const darkness = dayClock(this.net.sync.serverTick()).darkness;
+    const torches = visionShapes(
+      { x: eye.x, y: eye.y, facing: 0, flashlight: false },
+      darkness,
+      others,
+    ).slice(2);
+    // ngoài màn hình thì vẽ hay không cũng không thấy → khỏi bắn tia (đỡ phần lớn trong 200 con)
+    const view = this.cameras.main.worldView;
+    const T = TILE_SIZE;
+    return (z) =>
+      z.x * T < view.x - T ||
+      z.y * T < view.y - T ||
+      z.x * T > view.right + T ||
+      z.y * T > view.bottom + T ||
+      hasLineOfSight(eye, z, blocked) ||
+      torches.some((t) => seesPoint(t, t.facing, t.halfAngle, t.range, z, blocked));
   }
 
   /** Chỗ vẽ nhân vật mình: nội suy giữa 2 tick dự đoán + độ lệch làm mượt sau khi host sửa. */

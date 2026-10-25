@@ -121,6 +121,7 @@ function render() {
 function netStatsText(): string[] {
   const sync = game.sync;
   const world = phaser.scene.getScene('world') as WorldScene | null;
+  const hudScene = phaser.scene.getScene('hud') as HudScene | null;
   const hostId = game.hostId;
   const ping = hostId && hostId !== net.selfId ? session.peers.get(hostId)?.rttMs : null;
   const lines = [
@@ -137,7 +138,7 @@ function netStatsText(): string[] {
     `Nhận: ${sync.zombieCount} zombie · snapshot ${sync.received} (muộn ${sync.stale})`,
     `Nội suy ${Math.round(sync.interpDelayMs)} ms · giật ${sync.jitterMs.toFixed(0)} ms`,
     `Dự đoán: lệch ${sync.predictor.lastError.toFixed(3)} ô · chờ ack ${sync.predictor.pendingCount}`,
-    `Frame: ${world ? world.frameMs.toFixed(2) : '—'} ms`,
+    `Frame: ${world ? world.frameMs.toFixed(2) : '—'} ms · HUD ${hudScene ? hudScene.hudMs.toFixed(2) : '—'} ms`,
   ];
   const hs = game.hostStats;
   if (hs) {
