@@ -12,7 +12,15 @@ export const enum GameMsg {
   Events = 18,
   Roster = 19,
   HostClaim = 20,
+  /**
+   * Ô map đã đổi (khổng lồ húc vỡ tường → ô trống). Gửi reliable: cả danh sách khi vào trận/đổi host, rồi
+   * từng ô mới vỡ. Map gốc sinh từ seed nên KHÔNG gửi lại map (AGENTS.md mục 2.6).
+   */
+  MapDelta = 21,
 }
+
+/** Loại thay đổi ô trong MapDelta. */
+export const TileChange = { WallBroken: 1 } as const;
 
 /** Tọa độ zombie gửi dạng int16 theo 1/64 ô, so với gốc của gói → phạm vi ±512 ô quanh người nhận. */
 export const POS_SCALE = 64;
@@ -119,7 +127,8 @@ export type GameMessage =
   | { type: GameMsg.Events; tick: number; events: WireEvent[] }
   | { type: GameMsg.Roster; slots: { slot: number; id: string }[] }
   /** hostedMs: đã làm host bao lâu — hai host cùng lúc thì ai làm lâu hơn giữ quyền. */
-  | { type: GameMsg.HostClaim; hostedMs: number };
+  | { type: GameMsg.HostClaim; hostedMs: number }
+  | { type: GameMsg.MapDelta; tiles: { x: number; y: number; change: number }[] };
 
 const EV = { swing: 1, hit: 2, bite: 3, door: 4, death: 5, respawn: 6 } as const;
 const TAU = Math.PI * 2;
@@ -326,6 +335,14 @@ export function encodeGame(msg: GameMessage): Uint8Array {
     case GameMsg.HostClaim:
       w.u32(Math.max(0, Math.min(0xffffffff, Math.floor(msg.hostedMs))));
       break;
+    case GameMsg.MapDelta:
+      w.u32(msg.tiles.length);
+      for (const t of msg.tiles) {
+        w.i32(t.x);
+        w.i32(t.y);
+        w.u8(t.change);
+      }
+      break;
   }
   return w.done();
 }
@@ -501,6 +518,11 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
       }
       case GameMsg.HostClaim:
         return { type, hostedMs: r.u32() };
+      case GameMsg.MapDelta: {
+        const tiles: { x: number; y: number; change: number }[] = [];
+        for (let i = 0, n = r.u32(); i < n; i++) tiles.push({ x: r.i32(), y: r.i32(), change: r.u8() });
+        return { type, tiles };
+      }
       default:
         return null;
     }
