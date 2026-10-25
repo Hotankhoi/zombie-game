@@ -145,7 +145,7 @@ function netStatsText(): string[] {
     `Điểm host: mình ${game.election.scoreOf(net.selfId) ?? '—'}` +
       (hostId && hostId !== net.selfId ? ` · host ${game.election.scoreOf(hostId) ?? '—'}` : '') +
       ` · chạy thử ${game.simBenchMs.toFixed(1)} ms` +
-      (game.backup ? ` · có bản lưu tick ${game.backup.tick}` : ''),
+      (game.backup.have > 0 ? ` · bản lưu ${game.backup.have}/${game.backup.total} mẩu` : ''),
     `Nhận: ${sync.zombieCount} zombie · snapshot ${sync.received} (muộn ${sync.stale})`,
     `Nội suy ${Math.round(sync.interpDelayMs)} ms · giật ${sync.jitterMs.toFixed(0)} ms`,
     `Dự đoán: lệch ${sync.predictor.lastError.toFixed(3)} ô · chờ ack ${sync.predictor.pendingCount}`,

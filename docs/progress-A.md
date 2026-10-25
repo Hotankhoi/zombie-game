@@ -53,6 +53,13 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
   tải lại). 204 test. `wrangler dev`: 2 bài relay thật đạt (người lạ cùng id bị 409); bài đo tải hụt 7.96 < 8 snapshot/s
   vì `setInterval(50)` trên Windows chạy 62.5 ms (16 tick/s) — lỗi đồng hồ của công cụ đo, không phải relay.
 - Số test: AGENTS.md mục 8 (186 = `main` trước #20; 194 = sau #20).
+  PR #25 đã merge.
+- Việc 4 — đỉnh 5s đợt tràn ≤ 20 (nhánh `a/backup-parts`). `tools/loadTest.ts` thêm cột "đỉnh 5s 1 người" (cột cũ là
+  trung bình cả nhóm, che mất người xui nhận cả bản lưu 23 KB). Đợt tràn tối đa, KB/s TB · đỉnh nhóm · đỉnh 1 người:
+  main 19.71 · 22.19 · 24.99 → rải 10 mẩu (gói 125 v5, `BackupParts`) 19.96 · 22.53 · 22.96 → zombie trong bản lưu gọn
+  (~18 B/con: varint id, i16 1/32 ô, máu u16) 19.18 · 21.61 · 22.04 → gộp sự kiện cắn (1/người/tick; trước ~8, chiếm 2.2
+  KB/s) 17.93 · 19.66 · 20.09 → `ZOMBIE_BUDGET` 165 **17.55 · 19.33 · 19.70**. Bỏ hẳn sao lưu: đỉnh nhóm 19.83 (snapshot
+  gần chạm trần). Browser pane: tab khách có "bản lưu 10/10 mẩu", đóng tab host → lên host với 198/200 zombie.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
