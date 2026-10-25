@@ -113,6 +113,33 @@ export class LootAuthority {
     return { ok: true, chest: clone(result.chest), inventory: clone(result.inventory) };
   }
 
+  /** Store revision (+1 per committed change) — the replication sequence number. */
+  currentRevision(): number {
+    return this.revision;
+  }
+
+  /** Stored chest, or a freshly generated one (NOT stored) if untouched; null for an unknown ID. */
+  chest(id: string): ChestState | null {
+    const stored = this.chests.get(id);
+    if (stored) return clone(stored);
+    const location = findChest(this.seed, id);
+    return location ? generateChest(this.seed, location.id, location.region) : null;
+  }
+
+  /** Read-only `view`: same player/reach/sight checks as `loot`, never stores or advances revision. */
+  view(actor: LootActor, chestId: string, visible: (chest: ChestLocation) => boolean): AuthorityResult {
+    const inventory = this.inventories.get(actor.id);
+    if (!inventory) return { ok: false, error: 'unknown_player' };
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    const location = findChest(this.seed, chestId);
+    if (!location) return { ok: false, error: 'unknown_chest' };
+    const distance = Math.hypot(actor.x - location.x, actor.y - location.y);
+    if (!Number.isFinite(distance) || distance > LOOT_INTERACTION.reach)
+      return { ok: false, error: 'out_of_reach' };
+    if (!visible(location)) return { ok: false, error: 'blocked' };
+    return { ok: true, chest: this.chest(location.id)!, inventory: clone(inventory) };
+  }
+
   private canAdvance() {
     return this.revision < Number.MAX_SAFE_INTEGER - 1;
   }

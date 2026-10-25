@@ -106,4 +106,20 @@ describe('world loot authority', () => {
     expect(host.join('four')).toBe(true);
     expect(host.join('five')).toBe(false);
   });
+  it('view/chest: same checks as loot, never stores or advances revision (A, loot online)', () => {
+    const host = fixture();
+    const rev = host.currentRevision();
+    expect(host.view({ ...actor, x: actor.x + 10 }, location.id, () => true)).toEqual({
+      ok: false,
+      error: 'out_of_reach',
+    });
+    expect(host.view(actor, location.id, () => false)).toEqual({ ok: false, error: 'blocked' });
+    expect(host.view({ ...actor, canInteract: false }, location.id, () => true).ok).toBe(false);
+    const seen = host.view(actor, location.id, () => true);
+    expect(seen.ok && seen.chest?.opened).toBe(false);
+    expect(host.chest('nope')).toBeNull();
+    expect(host.chest(location.id)!.revision).toBe(0);
+    expect(host.snapshot().chests).toHaveLength(0);
+    expect(host.currentRevision()).toBe(rev);
+  });
 });

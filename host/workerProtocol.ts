@@ -1,10 +1,19 @@
 import type { WorldState } from '@shared/sim/world';
 import type { Channel, PeerId } from '@shared/types';
+import type { LootReplicaWire } from '@shared/types/loot';
 
 /** Tin nhắn luồng chính → Web Worker host. */
 export type ToWorker =
   /** seed = seed thế giới (worldSeedForRoom(mã phòng)), dùng cho cả map lẫn mô phỏng. */
-  | { t: 'init'; seed: string; zombieCount?: number; startTick?: number; restore?: WorldState }
+  | {
+      t: 'init';
+      seed: string;
+      zombieCount?: number;
+      startTick?: number;
+      restore?: WorldState;
+      /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
+      loot?: { restore?: LootReplicaWire; epoch?: number };
+    }
   | { t: 'in'; from: PeerId; data: Uint8Array }
   | { t: 'leave'; peer: PeerId };
 

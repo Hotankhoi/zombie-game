@@ -34,6 +34,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         zombieCount: m.zombieCount,
         startTick: m.startTick,
         restore: m.restore,
+        loot: m.loot,
       });
       nextAt = statAt = performance.now();
       loop();
