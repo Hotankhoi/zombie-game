@@ -3,7 +3,7 @@ import type { ChestLocation } from '@shared/mapgen/chests';
 import { mountInventoryPanel } from '../ui/inventory/inventoryPanel';
 import { mountLootPanel } from '../ui/loot/lootPanel';
 import { lootErrorText } from './lootMessages';
-import { toInventoryResult, toLootResult } from './outcome';
+import { bagUsage, gainedItems, pickupText, toInventoryResult, toLootResult } from './outcome';
 import './lootUi.css';
 
 type LootPanel = ReturnType<typeof mountLootPanel>;
@@ -59,10 +59,14 @@ export class LootUi {
       true,
     );
     loot.changed.on((e) => {
+      if (e.kind !== 'chest') this.updateBag();
       if (e.kind === 'chest' && e.chestId !== this._chest?.id) return;
       this.refresh();
     });
   }
+
+  /** Ô túi đã dùng / tổng cho HUD (null = chưa có túi). Chỉ tính lại khi ClientLoot báo đổi, không mỗi frame. */
+  bag: { used: number; size: number } | null = null;
 
   /** Có panel nào đang mở (hoặc đang chờ host mở rương) → khóa điều khiển nhân vật. */
   get open(): boolean {
@@ -114,7 +118,13 @@ export class LootUi {
           chest: this.loot.chest(loc.id) ?? chest,
           inventory: this.loot.inventory ?? inventory,
         };
-        return toLootResult(await this.loot.command(cmd), shown);
+        const result = toLootResult(await this.loot.command(cmd), shown);
+        if (result.ok)
+          for (const g of gainedItems(shown.inventory, result.inventory)) {
+            const { text, color } = pickupText(g);
+            this.toast(text, false, color);
+          }
+        return result;
       },
       describeError: lootErrorText,
     });
@@ -170,6 +180,11 @@ export class LootUi {
     this.toasts.append(el);
     while (this.toasts.childElementCount > 4) this.toasts.firstElementChild?.remove();
     setTimeout(() => el.remove(), TOAST_MS);
+  }
+
+  private updateBag(): void {
+    const inventory = this.loot.inventory;
+    this.bag = inventory ? bagUsage(inventory) : null;
   }
 
   /** Đọc lại trạng thái đã xác nhận → panel (panel tự bỏ bản cũ hơn bản đang hiện). */

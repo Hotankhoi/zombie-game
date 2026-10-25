@@ -3,7 +3,8 @@ import { createInventory } from '@shared/inventory/inventory';
 import type { ChestState } from '@shared/loot/chest';
 import { LOOT_ERRORS } from '@net/lootCodec';
 import { LOOT_ERROR_TEXT, lootErrorText } from './lootMessages';
-import { toInventoryResult, toLootResult } from './outcome';
+import { bagUsage, gainedItems, pickupText, toInventoryResult, toLootResult } from './outcome';
+import type { InventoryState, ItemStack } from '@shared/inventory/inventory';
 
 const chest = (id: string, revision: number): ChestState => ({
   version: 1,
@@ -49,5 +50,34 @@ describe('lootErrorText', () => {
       expect(LOOT_ERROR_TEXT[code as keyof typeof LOOT_ERROR_TEXT], code).toMatch(/\S/);
     expect(lootErrorText('out_of_reach')).toContain('xa');
     expect(lootErrorText('mã lạ')).toBe('Thao tác chưa được xác nhận.');
+  });
+});
+
+describe('gainedItems / pickupText / bagUsage (HUD)', () => {
+  const inv = (slots: (ItemStack | null)[]): InventoryState => ({ ...createInventory(), slots });
+  const s = (itemId: ItemStack['itemId'], rarity: ItemStack['rarity'], quantity: number): ItemStack => ({
+    itemId,
+    rarity,
+    quantity,
+  });
+
+  it('chỉ báo phần tăng theo (món, độ hiếm); gộp vào chồng cũ vẫn tính', () => {
+    const before = inv([s('knife', 'common', 1), s('water', 'common', 1), null]);
+    const after = inv([s('knife', 'common', 1), s('water', 'common', 3), s('canned_food', 'uncommon', 1)]);
+    expect(gainedItems(before, after)).toEqual([s('water', 'common', 2), s('canned_food', 'uncommon', 1)]);
+  });
+
+  it('sắp xếp/chuyển ô hoặc mất đồ → không báo', () => {
+    const before = inv([s('water', 'common', 1), s('water', 'common', 2), null]);
+    expect(gainedItems(before, inv([s('water', 'common', 3), null, null]))).toEqual([]);
+    expect(gainedItems(before, inv([null, null, null]))).toEqual([]);
+  });
+
+  it('câu thông báo có tên, độ hiếm, màu độ hiếm; đếm ô túi', () => {
+    expect(pickupText(s('canned_food', 'uncommon', 2))).toEqual({
+      text: '+2 Đồ hộp (Tốt)',
+      color: '#7cd69c',
+    });
+    expect(bagUsage(inv([s('knife', 'common', 1), null, null]))).toEqual({ used: 1, size: 3 });
   });
 });
