@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  RELAY_KEY,
   RELAY_MAX_PEERS,
+  RELAY_PROTOCOL,
+  admitPeer,
+  newRelayKey,
   decodeClientBatch,
   decodeServer,
   encodeClientBatch,
@@ -74,11 +78,26 @@ describe('relayProtocol', () => {
   });
 
   it('địa chỉ phòng: https → wss, bỏ / cuối', () => {
-    expect(relayRoomUrl('https://r.example.workers.dev/', 'ABCD12', 'p1')).toBe(
-      'wss://r.example.workers.dev/room/ABCD12?peer=p1&v=1',
+    const k = 'k'.repeat(16);
+    expect(relayRoomUrl('https://r.example.workers.dev/', 'ABCD12', 'p1', k)).toBe(
+      `wss://r.example.workers.dev/room/ABCD12?peer=p1&k=${k}&v=${RELAY_PROTOCOL}`,
     );
-    expect(relayRoomUrl('http://127.0.0.1:8787', 'ABCD', 'x')).toBe(
-      'ws://127.0.0.1:8787/room/ABCD?peer=x&v=1',
+    expect(relayRoomUrl('http://127.0.0.1:8787', 'ABCD', 'x', k)).toBe(
+      `ws://127.0.0.1:8787/room/ABCD?peer=x&k=${k}&v=${RELAY_PROTOCOL}`,
     );
+  });
+
+  it('mã bí mật: ngẫu nhiên, đúng định dạng; nhận/thay/từ chối kết nối cùng peer id', () => {
+    const a = newRelayKey();
+    expect(a).toMatch(RELAY_KEY);
+    expect(newRelayKey()).not.toBe(a);
+    const members = [
+      { id: 'p1', key: 'A'.repeat(16) },
+      { id: 'p2', key: 'B'.repeat(16) },
+    ];
+    expect(admitPeer(members, 'p3', 'C'.repeat(16))).toBe('new');
+    expect(admitPeer(members, 'p1', 'A'.repeat(16))).toBe('replace');
+    expect(admitPeer(members, 'p1', 'B'.repeat(16))).toBe('reject');
+    expect(admitPeer(members, 'p1', '')).toBe('reject');
   });
 });

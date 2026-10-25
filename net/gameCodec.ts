@@ -12,10 +12,25 @@ export const enum GameMsg {
   Events = 18,
   Roster = 19,
   HostClaim = 20,
+  /**
+   * Ô map đã đổi (khổng lồ húc vỡ tường → ô trống). Gửi reliable: cả danh sách khi vào trận/đổi host, rồi
+   * từng ô mới vỡ. Map gốc sinh từ seed nên KHÔNG gửi lại map (AGENTS.md mục 2.6).
+   */
+  MapDelta = 21,
 }
+
+/** Loại thay đổi ô trong MapDelta. */
+export const TileChange = { WallBroken: 1 } as const;
 
 /** Tọa độ zombie gửi dạng int16 theo 1/64 ô, so với gốc của gói → phạm vi ±512 ô quanh người nhận. */
 export const POS_SCALE = 64;
+/**
+ * Zombie xa người nhận hơn FAR_ZOMBIE_TILES ô (ngoài màn hình: zoom 3 thấy ~±20 ô ngang) gửi gọn hơn ở khối mở rộng
+ * cuối gói: 5 byte/con thay vì 8 — vị trí i8 theo 1/FAR_POS_SCALE ô (±31.75 ô), hướng 16 nấc. Chỉ để chừa băng thông
+ * cho loot (đợt tràn tối đa); zombie trên màn hình vẫn chính xác 1/64 ô. Zombie-từ-đồng-đội luôn gửi đủ (cần màu).
+ */
+export const FAR_ZOMBIE_TILES = 20;
+export const FAR_POS_SCALE = 4;
 
 export interface WirePlayer {
   slot: number;
@@ -105,6 +120,8 @@ export type WireEvent =
       killed: boolean;
       assassination: boolean;
       silent: boolean;
+      /** Máu zombie còn lại sau đòn. */
+      hp: number;
     }
   | { kind: 'bite'; zombie: number; slot: number; x: number; y: number }
   | { kind: 'door'; x: number; y: number; open: boolean }
@@ -117,7 +134,8 @@ export type GameMessage =
   | { type: GameMsg.Events; tick: number; events: WireEvent[] }
   | { type: GameMsg.Roster; slots: { slot: number; id: string }[] }
   /** hostedMs: đã làm host bao lâu — hai host cùng lúc thì ai làm lâu hơn giữ quyền. */
-  | { type: GameMsg.HostClaim; hostedMs: number };
+  | { type: GameMsg.HostClaim; hostedMs: number }
+  | { type: GameMsg.MapDelta; tiles: { x: number; y: number; change: number }[] };
 
 const EV = { swing: 1, hit: 2, bite: 3, door: 4, death: 5, respawn: 6 } as const;
 const TAU = Math.PI * 2;
@@ -127,6 +145,7 @@ const dec = new TextDecoder();
 const angleToByte = (a: number) => Math.round((((a % TAU) + TAU) % TAU) * (256 / TAU)) & 255;
 const byteToAngle = (b: number) => (b / 256) * TAU;
 const clampI16 = (v: number) => Math.max(-32768, Math.min(32767, Math.round(v)));
+const clampI8 = (v: number) => Math.max(-128, Math.min(127, Math.round(v)));
 
 /** Ghi tuần tự vào bộ đệm tự nới rộng. */
 export class Writer {
@@ -236,7 +255,7 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8(i.buttons);
       }
       break;
-    case GameMsg.Snapshot:
+    case GameMsg.Snapshot: {
       w.u32(msg.tick);
       w.u32(msg.ack);
       w.i32(msg.originX);
@@ -255,8 +274,14 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8((p.exhausted ? 1 : 0) | (p.sprinting ? 2 : 0));
         w.u8(p.prevButtons);
       }
-      w.u16(msg.zombies.length);
+      const far: WireZombie[] = [];
+      const near: WireZombie[] = [];
       for (const z of msg.zombies) {
+        const d = Math.max(Math.abs(z.x - msg.originX), Math.abs(z.y - msg.originY));
+        (d > FAR_ZOMBIE_TILES && z.turnedSlot === null ? far : near).push(z);
+      }
+      w.u16(near.length);
+      for (const z of near) {
         w.u16(z.id & 0xffff);
         w.i16(clampI16((z.x - msg.originX) * POS_SCALE));
         w.i16(clampI16((z.y - msg.originY) * POS_SCALE));
@@ -306,7 +331,20 @@ export function encodeGame(msg: GameMessage): Uint8Array {
           w.u8(Math.min(255, row.downs));
         }
       }
+      // khối mở rộng: zombie xa (gọn)
+      w.u16(far.length);
+      for (const z of far) {
+        w.u16(z.id & 0xffff);
+        w.i8(clampI8((z.x - msg.originX) * FAR_POS_SCALE));
+        w.i8(clampI8((z.y - msg.originY) * FAR_POS_SCALE));
+        w.u8(
+          (Math.round((((z.facing % TAU) + TAU) % TAU) * (16 / TAU)) & 15) |
+            (z.chasing ? 16 : 0) |
+            ((Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) & 7) << 5),
+        );
+      }
       break;
+    }
     case GameMsg.Events:
       w.u32(msg.tick);
       w.u16(msg.events.length);
@@ -323,6 +361,14 @@ export function encodeGame(msg: GameMessage): Uint8Array {
       break;
     case GameMsg.HostClaim:
       w.u32(Math.max(0, Math.min(0xffffffff, Math.floor(msg.hostedMs))));
+      break;
+    case GameMsg.MapDelta:
+      w.u32(msg.tiles.length);
+      for (const t of msg.tiles) {
+        w.i32(t.x);
+        w.i32(t.y);
+        w.u8(t.change);
+      }
       break;
   }
   return w.done();
@@ -343,6 +389,7 @@ function writeEvent(w: Writer, e: WireEvent) {
       w.f32(e.x);
       w.f32(e.y);
       w.u8((e.killed ? 1 : 0) | (e.assassination ? 2 : 0) | (e.silent ? 4 : 0));
+      w.f32(e.hp);
       break;
     case 'bite':
       w.u16(e.zombie & 0xffff);
@@ -476,6 +523,23 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             rows,
           };
         }
+        if (r.more()) {
+          for (let i = 0, n = r.u16(); i < n; i++) {
+            const id = r.u16();
+            const x = originX + r.i8() / FAR_POS_SCALE;
+            const y = originY + r.i8() / FAR_POS_SCALE;
+            const b = r.u8();
+            zombies.push({
+              id,
+              x,
+              y,
+              facing: ((b & 15) / 16) * TAU,
+              chasing: (b & 16) !== 0,
+              kind: ZOMBIE_KINDS[(b >> 5) & 7] ?? 'normal',
+              turnedSlot: null,
+            });
+          }
+        }
         return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde };
       }
       case GameMsg.Events: {
@@ -498,6 +562,11 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
       }
       case GameMsg.HostClaim:
         return { type, hostedMs: r.u32() };
+      case GameMsg.MapDelta: {
+        const tiles: { x: number; y: number; change: number }[] = [];
+        for (let i = 0, n = r.u32(); i < n; i++) tiles.push({ x: r.i32(), y: r.i32(), change: r.u8() });
+        return { type, tiles };
+      }
       default:
         return null;
     }
@@ -525,6 +594,7 @@ function readEvent(r: Reader): WireEvent | null {
         killed: (f & 1) !== 0,
         assassination: (f & 2) !== 0,
         silent: (f & 4) !== 0,
+        hp: r.f32(),
       };
     }
     case EV.bite:

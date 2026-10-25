@@ -1,5 +1,12 @@
 import type { PeerId, RoomCode } from '@shared/types';
-import { RELAY_PING, decodeServer, encodeClientBatch, relayRoomUrl, type OutEntry } from './relayProtocol';
+import {
+  RELAY_PING,
+  decodeServer,
+  encodeClientBatch,
+  newRelayKey,
+  relayRoomUrl,
+  type OutEntry,
+} from './relayProtocol';
 import { Emitter, type SendOptions, type Transport } from './transport';
 
 /**
@@ -41,6 +48,8 @@ export interface RelayOptions {
   createSocket?: (url: string) => WebSocketLike;
   timers?: RelayTimers;
   onError?: (message: string) => void;
+  /** Chỉ để test: mã bí mật cố định thay vì tạo ngẫu nhiên. */
+  key?: string;
 }
 
 const OPEN = 1;
@@ -82,7 +91,8 @@ export class RelayTransport implements Transport {
     readonly selfId: PeerId,
     opts: RelayOptions = {},
   ) {
-    this.url = relayRoomUrl(baseUrl, room, selfId);
+    // mã bí mật tạo 1 lần cho trang này, dùng lại mỗi lần nối lại → chỉ chính mình thay được kết nối của mình
+    this.url = relayRoomUrl(baseUrl, room, selfId, opts.key ?? newRelayKey());
     this.flushMs = opts.flushMs ?? 50;
     this.keepAliveMs = opts.keepAliveMs ?? 30_000;
     this.createSocket = opts.createSocket ?? ((u) => new WebSocket(u) as unknown as WebSocketLike);

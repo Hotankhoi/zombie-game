@@ -3,13 +3,12 @@ import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
-import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
-import { INTEREST_RADIUS } from '@host/hostServer';
+import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
+import { snapshotArea } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
 import { MapgenSource } from '@shared/sim/mapgenSource';
-import type { WorldState } from '@shared/sim/world';
 import type { PeerId } from '@shared/types';
 import { measureSimMs } from './benchmark';
 
@@ -42,8 +41,8 @@ export class NetGame {
   migrations = 0;
   /** Thời gian chạy thử 20 tick mô phỏng trên máy này (ms) — đo 1 lần lúc vào. */
   readonly simBenchMs: number;
-  /** Bản sao lưu thế giới mới nhất từ host (≤10s tuổi) — dùng khi mình phải lên làm host. */
-  backup: WorldState | null = null;
+  /** Các mẩu sao lưu thế giới từ host (mỗi mẩu ≤10s tuổi) — ghép lại dùng khi mình phải lên làm host. */
+  readonly backup = new BackupParts();
   /** Host báo phòng đã đủ người (số tối đa) — mình chỉ xem, không vào trận được. */
   roomFull: number | null = null;
   private worker: Worker | null = null;
@@ -77,7 +76,7 @@ export class NetGame {
     transport.onMessage((data, from) => this.onMessage(data, from));
     transport.onMessage((data, from) => {
       if (from !== this.election.hostId) return;
-      if (data[0] === WORLD_BACKUP_MSG) this.backup = decodeBackup(data) ?? this.backup;
+      if (data[0] === WORLD_BACKUP_MSG) this.backup.receive(data);
       const full = decodeRoomFull(data);
       if (full !== null) this.roomFull = full;
     });
@@ -140,10 +139,10 @@ export class NetGame {
     // lên thay host cũ: bản sao lưu toàn thế giới (≤10s) ghép với snapshot mới nhất quanh mình
     const keep = new Set([self, ...this.transport.peers()]);
     const latest = this.sync.latest;
-    const area = latest ? { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS } : null;
+    const area = latest ? snapshotArea(latest) : null;
     const restore =
-      mergeBackup(this.backup, this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
-    this.backup = null;
+      mergeBackup(this.backup.assemble(), this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
+    this.backup.clear();
     const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e: MessageEvent<FromWorker>) => {
       const m = e.data;

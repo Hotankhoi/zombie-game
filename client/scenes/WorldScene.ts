@@ -6,10 +6,14 @@ import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/worl
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
 import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
+import { hasLineOfSight } from '@shared/sim/collision';
+import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
+import { seesPoint, visionShapes } from '@shared/sim/vision';
 import { KIND, ZOMBIE_KINDS, type ZombieKind } from '@shared/sim/tuning/zombieKinds';
-import type { SimEvent } from '@shared/sim/world';
+import { keyTile, type SimEvent } from '@shared/sim/world';
 import type { Session } from '@net/session';
+import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
 import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 
@@ -68,6 +72,8 @@ export class WorldScene extends Phaser.Scene {
   private acc = 0;
   private seq = 0;
   private hitFlash = new Map<number, number>();
+  /** Người vừa hồi sinh → bất tử tới lúc này (ms, đồng hồ scene) — vẽ vòng bảo vệ quanh họ. */
+  private shieldUntil = new Map<PeerId, number>();
   private fx: Fx[] = [];
   /** Thời gian xử lý 1 frame (ms, làm mượt) — bảng F3. */
   frameMs = 0;
@@ -263,6 +269,8 @@ export class WorldScene extends Phaser.Scene {
         if (e.player === self) this.cameras.main.flash(300, 120, 0, 0);
         break;
       case 'respawn':
+        this.shieldUntil.set(e.player, now + PARTY.respawnShieldSec * 1000);
+        break;
       case 'door':
         break;
     }
@@ -280,10 +288,12 @@ export class WorldScene extends Phaser.Scene {
     this.drawPools();
 
     const { zombies, others } = this.net.sync.sample();
-    for (let i = 0; i < zombies.length; i++) {
-      const z = zombies[i] as (typeof zombies)[number];
+    const seen = this.zombieSeer(others, alpha);
+    let shown = 0;
+    for (const z of zombies) {
+      if (!seen(z)) continue; // sau tường/cửa đóng: không vẽ (lớp tối không che được hết lúc ban ngày)
       const flash = now - (this.hitFlash.get(z.id) ?? -1e9) < 120;
-      let img = this.zombieSprites[i];
+      let img = this.zombieSprites[shown++];
       if (!img) {
         img = this.add
           .image(0, 0, zombieTex('normal', 'wander'))
@@ -300,22 +310,51 @@ export class WorldScene extends Phaser.Scene {
       if (z.turnedFrom && !flash) img.setTint(this.colorOf(z.turnedFrom));
       else img.clearTint();
     }
-    for (let i = zombies.length; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
+    for (let i = shown; i < this.zombieSprites.length; i++) this.zombieSprites[i]?.setVisible(false);
     for (const p of others) {
       if (!p.alive) continue;
       if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
       else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
+      this.drawShield(g, p.x * T, p.y * T, p.id, now);
     }
     const me = this.me();
     const pos = this.myDrawPos(alpha);
     if (me && isDowned(me)) this.drawDowned(g, pos.x * T, pos.y * T, this.myColor, me.reviveProgress);
     else if (me && isAlive(me))
       this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
+    if (me && isAlive(me)) this.drawShield(g, pos.x * T, pos.y * T, this.session.selfId, now);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
     for (const f of this.fx) this.drawFx(g, f, (now - f.born) / f.life);
 
     this.camTarget.setPosition(pos.x * T, pos.y * T);
+  }
+
+  /**
+   * Zombie nào được vẽ: mình nhìn thẳng tới được (không bị tường/cửa đóng che), hoặc nằm trong vùng đèn pin
+   * của đồng đội mà đồng đội nhìn thấy. Đã chết (đang chờ hồi sinh) thì thấy hết như trước.
+   */
+  private zombieSeer(others: readonly RemotePlayerView[], alpha: number): (z: Vec2) => boolean {
+    const me = this.me();
+    if (!me || !isAlive(me)) return () => true;
+    const eye = this.myDrawPos(alpha);
+    const blocked = this.net.sync.blocked;
+    const darkness = dayClock(this.net.sync.serverTick()).darkness;
+    const torches = visionShapes(
+      { x: eye.x, y: eye.y, facing: 0, flashlight: false },
+      darkness,
+      others,
+    ).slice(2);
+    // ngoài màn hình thì vẽ hay không cũng không thấy → khỏi bắn tia (đỡ phần lớn trong 200 con)
+    const view = this.cameras.main.worldView;
+    const T = TILE_SIZE;
+    return (z) =>
+      z.x * T < view.x - T ||
+      z.y * T < view.y - T ||
+      z.x * T > view.right + T ||
+      z.y * T > view.bottom + T ||
+      hasLineOfSight(eye, z, blocked) ||
+      torches.some((t) => seesPoint(t, t.facing, t.halfAngle, t.range, z, blocked));
   }
 
   /** Chỗ vẽ nhân vật mình: nội suy giữa 2 tick dự đoán + độ lệch làm mượt sau khi host sửa. */
@@ -362,6 +401,20 @@ export class WorldScene extends Phaser.Scene {
       g.fillStyle(0x6d4c41);
       if (horizontalWall) g.fillRect(x, y, 3, T);
       else g.fillRect(x, y, T, 3);
+    }
+    // tường bị khổng lồ húc vỡ (TẠM vẽ bằng code: nền + gạch vụn) — chỉ vẽ ô trong khung camera
+    const view = this.cameras.main.worldView;
+    for (const k of this.net.sync.brokenWalls) {
+      const { x: tx, y: ty } = keyTile(k);
+      const x = tx * T;
+      const y = ty * T;
+      if (x + T < view.x || y + T < view.y || x > view.right || y > view.bottom) continue;
+      g.fillStyle(0x8a8580).fillRect(x, y, T, T);
+      g.fillStyle(0x5d5955);
+      for (let i = 0; i < 5; i++) {
+        const h = ((tx * 73856093) ^ (ty * 19349663) ^ (i * 83492791)) >>> 0;
+        g.fillRect(x + (h % (T - 3)), y + ((h >>> 8) % (T - 3)), 3, 2);
+      }
     }
   }
 
@@ -424,6 +477,14 @@ export class WorldScene extends Phaser.Scene {
       g.arc(x, y, r + 5, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
       g.strokePath();
     }
+  }
+
+  /** Vòng sáng nhấp nháy quanh người vừa hồi sinh, còn bất tử (PARTY.respawnShieldSec). */
+  private drawShield(g: Phaser.GameObjects.Graphics, x: number, y: number, id: PeerId, now: number) {
+    const left = (this.shieldUntil.get(id) ?? 0) - now;
+    if (left <= 0) return;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 90);
+    g.lineStyle(1.5, 0x80d8ff, 0.4 + 0.5 * pulse).strokeCircle(x, y, TILE_SIZE * 0.6);
   }
 
   private drawPlayer(g: Phaser.GameObjects.Graphics, x: number, y: number, facing: number, color: number) {

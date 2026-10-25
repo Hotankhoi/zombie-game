@@ -3,7 +3,7 @@ import { SIM_TICK_MS } from '@shared/types';
 import type { BlockedFn } from './collision';
 import { meleeAttack } from './combat';
 import { Btn, hasBtn, type PlayerInput } from './input';
-import { isAlive, stepPlayer, type PlayerState } from './player';
+import { isUp, stepPlayer, type PlayerState } from './player';
 
 const DT = SIM_TICK_MS / 1000;
 /** Giữ tối đa bấy nhiêu input chưa được host xác nhận (3 giây). */
@@ -86,7 +86,7 @@ export class Predictor {
     stepPlayer(p, input, DT, this.blocked);
     let swung = false;
     // chém: chỉ đoán hồi chiêu + stamina; trúng zombie nào là do host quyết (GĐ 2b chuyển sang client)
-    if (isAlive(p) && hasBtn(input, Btn.Attack)) swung = meleeAttack(p, KNIFE, [], this.blocked) !== null;
+    if (isUp(p) && hasBtn(input, Btn.Attack)) swung = meleeAttack(p, KNIFE, [], this.blocked) !== null;
     p.prevButtons = input.buttons;
     return swung;
   }

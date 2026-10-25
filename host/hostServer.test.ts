@@ -1,14 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { ClientSync } from '@net/clientSync';
-import { GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
+import { FAR_ZOMBIE_TILES, GameMsg, decodeGame, encodeGame, type SnapshotMsg } from '@net/gameCodec';
 import { decodeRoomFull } from '@net/roomFull';
-import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
+import {
+  BACKUP_PARTS,
+  BackupParts,
+  WORLD_BACKUP_MSG,
+  decodeBackupPart,
+  encodeBackup,
+  mergeBackup,
+} from '@net/worldBackup';
 import { arenaMap } from '@shared/sim/grid';
 import { testZombie } from '@shared/sim/testMaps';
 import { Btn, type PlayerInput } from '@shared/sim/input';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
-import { BACKUP_EVERY, HostServer, INTEREST_RADIUS, type Outgoing } from './hostServer';
+import {
+  BACKUP_EVERY,
+  HostServer,
+  INTEREST_RADIUS,
+  ZOMBIE_BUDGET,
+  ZOMBIE_NEAR_ALWAYS,
+  ZOMBIE_OFFSCREEN_ROOM,
+  snapshotArea,
+  type Outgoing,
+} from './hostServer';
 
 interface Wire {
   at: number;
@@ -151,6 +167,28 @@ describe('HostServer + ClientSync', () => {
     expect(c.events.some((e) => e.type === 'swing')).toBe(false);
   });
 
+  it('chuyển host giữ máu zombie đã bị đánh (qua sự kiện hit) và xác đồng đội chưa thành zombie', () => {
+    const m = match(['a', 'b'], { a: 1, b: 1 }, 0, 0);
+    const z = m.host.world;
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const me = z.players.get('a')!;
+    const zb = testZombie(77, me.x + 0.8, me.y, { facing: Math.PI, hp: 1000, biteCd: 99 });
+    z.zombies.push(zb);
+    for (let t = 0; t < 4; t++) m.step((id) => (id === 'a' ? { ...idle(), buttons: Btn.Attack } : idle()));
+    expect(zb.hp).toBeLessThan(1000);
+    // b chết hẳn: xác nằm lại chờ thành zombie
+    const b = z.players.get('b')!;
+    b.hp = 0;
+    b.downedFor = 0.01;
+    for (let t = 0; t < 6; t++) m.step(idle);
+    expect(z.corpses.map((c) => c.player)).toEqual(['b']);
+    const state = m.clients.get('a')!.toWorldState('m', new Set(['a', 'b']))!;
+    expect(state.zombies.find((x) => x.id === 77)!.hp).toBe(Math.fround(zb.hp));
+    expect(state.corpses!.map((c) => c.player)).toEqual(['b']);
+    expect(state.corpses![0]!.turnIn).toBeGreaterThan(7);
+  });
+
   it('người rời phòng → bị xóa khỏi thế giới, roster gửi lại', () => {
     const m = match(['a', 'b'], { a: 0, b: 0 });
     for (let t = 0; t < 5; t++) m.step(() => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 }));
@@ -180,7 +218,7 @@ describe('HostServer + ClientSync', () => {
     expect(next.world.zombies).toHaveLength(25);
   });
 
-  it('host gửi bản sao lưu toàn thế giới mỗi 10s (reliable), xoay vòng từng người', () => {
+  it('mỗi người nhận đủ thế giới mỗi 10s, chia BACKUP_PARTS mẩu đều mỗi giây (reliable), mẩu nhỏ', () => {
     const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 30 });
     for (const id of ['a', 'b']) {
       host.receive(
@@ -192,35 +230,50 @@ describe('HostServer + ClientSync', () => {
     for (let t = 0; t < BACKUP_EVERY * 4; t++) {
       for (const o of host.tick()) if (o.data[0] === WORLD_BACKUP_MSG) backups.push(o);
     }
-    expect(backups).toHaveLength(4);
-    expect(backups.map((b) => b.to).sort()).toEqual(['a', 'a', 'b', 'b']);
-    expect(backups[0]!.to).not.toBe(backups[1]!.to);
-    expect(backups[0]!.channel).toBe('reliable');
-    expect(decodeBackup(backups[1]!.data)!.zombies).toHaveLength(30);
+    // 4 lần 10s × BACKUP_PARTS mẩu × 2 người
+    expect(backups).toHaveLength(4 * BACKUP_PARTS * 2);
+    expect(backups.every((b) => b.channel === 'reliable')).toBe(true);
+    for (const id of ['a', 'b']) {
+      const mine = backups.filter((b) => b.to === id).slice(0, BACKUP_PARTS);
+      const parts = mine.map((b) => decodeBackupPart(b.data)!);
+      // 10 mẩu đầu = đủ 0..N-1, mỗi zombie đúng 1 lần
+      expect(parts.map((p) => p.part).sort((x, y) => x - y)).toEqual([...Array(BACKUP_PARTS).keys()]);
+      const ids = parts.flatMap((p) => p.state.zombies.map((z) => z.id));
+      expect(new Set(ids).size).toBe(ids.length);
+      const store = new BackupParts();
+      for (const b of mine) store.receive(b.data);
+      expect(store.assemble()!.zombies).toHaveLength(30);
+    }
+    // mẩu (trừ mẩu 0 có phần chung) nhỏ hơn hẳn cả gói
+    const full = encodeBackup(host.world.state()).length;
+    const biggest = Math.max(
+      ...backups
+        .map((b) => decodeBackupPart(b.data)!)
+        .filter((p) => p.part > 0)
+        .map((p) => encodeBackup(p.state).length),
+    );
+    expect(biggest).toBeLessThan(full / 2);
   });
 
   it('chuyển host có bản sao lưu: giữ cả zombie ở xa người lên host (không chỉ quanh mình)', () => {
     const m = match(['old', 'b'], { old: 0, b: 1 }, 0, 40);
     const inputs = { old: wander('a'), b: wander('b') };
-    let backup = null;
+    const store = new BackupParts();
     const orig = m.host.tick.bind(m.host);
     m.host.tick = () => {
       const out = orig();
-      for (const o of out) if (o.to === 'b' && o.data[0] === WORLD_BACKUP_MSG) backup = decodeBackup(o.data);
+      for (const o of out) if (o.to === 'b' && o.data[0] === WORLD_BACKUP_MSG) store.receive(o.data);
       return out;
     };
-    // bản lưu gửi xoay vòng: sau 2 lượt chắc chắn b đã nhận
-    for (let t = 0; t < BACKUP_EVERY * 2 + 40; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
-    expect(backup).not.toBeNull();
+    // sau hơn 10s b đã có đủ mẩu
+    for (let t = 0; t < BACKUP_EVERY + 40; t++) m.step((id, tick) => inputs[id as 'old' | 'b'](id, tick));
+    expect(store.have).toBe(BACKUP_PARTS);
+    const backup = store.assemble();
+    expect(backup!.zombies).toHaveLength(m.host.world.zombies.length);
     const c = m.clients.get('b')!;
     const latest = c.latest!;
     const keep = new Set(['b']);
-    const merged = mergeBackup(
-      backup,
-      c.toWorldState('m', keep),
-      { x: latest.originX, y: latest.originY, radius: INTEREST_RADIUS },
-      keep,
-    )!;
+    const merged = mergeBackup(backup, c.toWorldState('m', keep), snapshotArea(latest), keep)!;
     expect(merged.zombies.length).toBeGreaterThanOrEqual(c.toWorldState('m', keep)!.zombies.length);
     const next = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 40, restore: merged });
     // bản dựng lại theo snapshot cuối (trễ 1 tick); dự đoán đi trước vài tick
@@ -312,7 +365,7 @@ describe('HostServer – GĐ 4', () => {
 });
 
 describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
-  it('300 zombie quanh người: mỗi snapshot ≤ 200, gần nhất luôn có; client vẫn thấy đủ 300', () => {
+  it('300 zombie quanh người: mỗi snapshot ≤ ngân sách, gần nhất luôn có; client vẫn thấy đủ 300', () => {
     let time = 0;
     const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
     const c = new ClientSync('a', arenaMap(), () => time);
@@ -340,7 +393,129 @@ describe('HostServer – ngân sách zombie mỗi snapshot (GĐ 5)', () => {
       }
       time += SIM_TICK_MS;
     }
-    expect(Math.max(...sizes)).toBe(200);
+    expect(Math.max(...sizes)).toBe(ZOMBIE_BUDGET);
     expect(c.sample().zombies).toHaveLength(300);
+  });
+
+  it('chỗ xoay vòng ưu tiên zombie trên màn hình; zombie ngoài màn hình tối đa ZOMBIE_OFFSCREEN_ROOM con/snapshot', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    host.receive(
+      'a',
+      encodeGame({ type: GameMsg.Input, inputs: [{ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }] }),
+    );
+    host.tick();
+    const me = host.world.players.get('a')!;
+    const still = { wanderMoving: false, wanderIn: 99 };
+    let id = 1;
+    // 130 con sát người, 100 con trên màn hình (cách 10 ô), 100 con ngoài màn hình (cách 25 ô)
+    for (let i = 0; i < ZOMBIE_NEAR_ALWAYS; i++)
+      host.world.zombies.push(
+        testZombie(id++, me.x + 1 + (i % 10) * 0.3, me.y + 1 + Math.floor(i / 10) * 0.3, still),
+      );
+    for (let i = 0; i < 100; i++)
+      host.world.zombies.push(testZombie(id++, me.x + 10, me.y - 5 + i * 0.1, still));
+    for (let i = 0; i < 100; i++)
+      host.world.zombies.push(testZombie(id++, me.x + FAR_ZOMBIE_TILES + 5, me.y - 5 + i * 0.1, still));
+    let snaps = 0;
+    for (let t = 0; t < 10; t++) {
+      for (const o of host.tick()) {
+        const g = decodeGame(o.data);
+        if (g?.type !== GameMsg.Snapshot) continue;
+        snaps++;
+        const far = g.zombies.filter((z) => Math.abs(z.x - g.originX) > FAR_ZOMBIE_TILES).length;
+        expect(g.zombies).toHaveLength(ZOMBIE_BUDGET);
+        expect(far).toBe(ZOMBIE_OFFSCREEN_ROOM);
+      }
+    }
+    expect(snaps).toBeGreaterThan(0);
+  });
+});
+
+describe('tường vỡ qua mạng (danh sách ô đã đổi)', () => {
+  it('host gửi ô vừa vỡ cho mọi người; người vào sau nhận cả danh sách; máy khách coi ô đó là trống', () => {
+    const m = match(['a', 'b'], { a: 1, b: 1 }, 0, 0);
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const w = m.host.world;
+    // arenaMap: tường bao quanh; chọn ô tường ở mép phải cùng hàng với a
+    const a = w.players.get('a')!;
+    let wx = Math.floor(a.x);
+    while (!w.isWall(wx, Math.floor(a.y))) wx++;
+    const wy = Math.floor(a.y);
+    const s = w.state();
+    s.brokenWalls = [{ x: wx, y: wy }];
+    // giả lập tick vừa vỡ tường: dựng host mới từ trạng thái có tường vỡ, cùng người chơi
+    const host2 = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0, restore: s });
+    const late = new ClientSync('c', arenaMap());
+    host2.receive('c', late.tick({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }).packet);
+    const out = host2.tick();
+    const deltas = out.filter((o) => o.to === 'c' && decodeGame(o.data)?.type === GameMsg.MapDelta);
+    expect(deltas).toHaveLength(1);
+    expect(late.blocked(wx, wy)).toBe(true);
+    for (const o of out) if (o.to === 'c') late.receive(o.data);
+    expect(late.blocked(wx, wy)).toBe(false);
+  });
+
+  it('khổng lồ húc vỡ tường trong trận → mọi máy khách nhận MapDelta (reliable)', () => {
+    const m = match(['a', 'b'], { a: 1, b: 2 }, 0, 0);
+    const idle = () => ({ moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+    for (let t = 0; t < 4; t++) m.step(idle);
+    const w = m.host.world;
+    // arenaMap: phòng (19,3)–(30,10), tường dưới ở hàng y = 10; a đứng ngoài, khổng lồ trong phòng
+    const a = w.players.get('a')!;
+    a.x = 27.5;
+    a.y = 13.5;
+    w.zombies.push(
+      testZombie(5, 27.5, 7.5, {
+        kind: 'giant',
+        mode: 'chase',
+        target: 'a',
+        facing: Math.PI / 2,
+        biteCd: 99,
+      }),
+    );
+    const [wx, wy] = [27, 10];
+    expect(w.isWall(wx, wy)).toBe(true);
+    for (let t = 0; t < 8 * 20 && w.isWall(wx, wy); t++) m.step(idle);
+    expect(w.isWall(wx, wy)).toBe(false);
+    for (let t = 0; t < 5; t++) m.step(idle);
+    for (const id of ['a', 'b']) expect(m.clients.get(id)!.blocked(wx, wy)).toBe(false);
+  });
+});
+
+describe('sự kiện cắn gộp theo người', () => {
+  it('cả bầy cắn cùng tick: mỗi người nhận 1 sự kiện cắn/tick, máu vẫn trừ đủ mọi vết cắn', () => {
+    const host = new HostServer({ seed: 'm', map: arenaMap(), zombieCount: 0 });
+    host.receive(
+      'a',
+      encodeGame({ type: GameMsg.Input, inputs: [{ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: 0 }] }),
+    );
+    host.tick();
+    const me = host.world.players.get('a')!;
+    me.hp = 100;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      host.world.zombies.push(
+        testZombie(i + 1, me.x + Math.cos(a) * 0.6, me.y + Math.sin(a) * 0.6, {
+          mode: 'chase',
+          target: 'a',
+          biteCd: 0,
+        }),
+      );
+    }
+    let maxPerTick = 0;
+    let simMaxPerTick = 0;
+    for (let t = 0; t < 40 && me.hp > 0; t++) {
+      const out = host.tick();
+      simMaxPerTick = Math.max(simMaxPerTick, host.world.events.filter((e) => e.type === 'bite').length);
+      for (const o of out) {
+        const g = decodeGame(o.data);
+        if (g?.type === GameMsg.Events) {
+          maxPerTick = Math.max(maxPerTick, g.events.filter((e) => e.kind === 'bite').length);
+        }
+      }
+    }
+    expect(simMaxPerTick).toBeGreaterThan(1); // mô phỏng vẫn có nhiều vết cắn trong cùng 1 tick
+    expect(maxPerTick).toBe(1);
   });
 });

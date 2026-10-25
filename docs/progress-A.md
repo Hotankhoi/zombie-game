@@ -9,9 +9,74 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 - Không xếp chồng lên `b/loot-online` hay PR #7.
 - Hệ quả: dữ liệu cân bằng mới của A để tạm ở `shared/sim/tuning/`; đổi định dạng gói theo cách tương thích (không tăng `PROTOCOL_VERSION`). Cả hai cần báo B.
 
-## Thứ tự merge (xếp chồng)
+## Thứ tự merge (phiên 2026-10-24, merge commit, không squash)
 
-`#4 (1a)` → `#3 (map, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `#14 (7b relay)`
+`#3 (map, B)` → `#4 (1a)` → `#15 (hợp đồng loot, B)` → `#6 (2a)` → `#8 (2b)` → `#9 (2c)` → `#10 (4)` → `#11 (5)` → `#12 (6)` → `#13 (7)` → `#14 (7b relay)`
+
+## Nhật ký phiên merge 2026-10-24 (cập nhật sau mỗi bước)
+
+- Bước 0: sửa 13 góp ý Codex còn mở trên #6–#13 ở nhánh `a/7-bots-perf` (commit 4fbafb2, 53915f0, fc2f29a, 02abae8), trả lời + resolve từng thread. Bản lưu thế giới: có byte phiên bản, gọn ~25 byte/zombie, mỗi người nhận 10s/lần (loadtest đợt tràn tối đa: 22.1 KB/s TB, đỉnh 24.98).
+- Đã merge: #3, #4, #15, #6, #8, #9, #10, #11, #12 (xung đột chỉ ở AGENTS.md mục 8 và `PROTOCOL_VERSION` → giữ 3).
+- Đã merge thêm: #13, #14 (xung đột chỉ AGENTS.md mục 8 + docs/progress-A.md).
+- PR #17 (spawn theo `spawnPoint()`/`isRoadTile()` của B) đã merge.
+- Thử link thật (2 tab, Browser pane bị ẩn nên chạy chậm 1–15 FPS): 2 tab cùng `?room=` thấy nhau (ping ~80 ms), khách thấy host, ngày/đêm + nón nhìn đúng, zombie đuổi và cắn. Lỗi thấy: hồi sinh ngay giữa bầy zombie ở điểm xuất phát → chết liên tục (Phần 2b sửa). Chém zombie trên link thật chưa xác nhận được (pane ẩn, phím không giữ được).
+- Phần 2a (#18, đã merge): tường/cửa đóng chặn nón nhìn, vòng quanh mình, đèn pin (raycast lưới, `shared/sim/vision.ts`); zombie sau tường không vẽ. Đo CPU (`tools/vision.loadtest.ts`): 0.2–0.3 ms/frame. F3 thêm "HUD ms".
+- Phần 2a: PR #18 đã merge.
+- Phần 2b (#19, đã merge): hồi sinh ở ô đường gần đồng đội còn sống nhất (không còn ai → gần điểm xuất phát), không zombie trong 10 ô; bất tử 4s (`PlayerState.shield`, không mất máu vì cắn/vũng/Boss); vòng sáng quanh người vừa hồi sinh. Bản lưu thế giới lên phiên bản 3 (thêm `shield`).
+- Phần 2b: PR #19 đã merge.
+- Phần 2c (#20, đã merge): khổng lồ/Boss đuổi người trong 9 ô thì đi thẳng, húc tường trước mặt (tường 100 máu, 30/s, Boss ×2) → ô trống mãi mãi. `SimWorld.mapChanges` → host gửi `GameMsg.MapDelta` (21, reliable: ô vừa vỡ cho mọi người; cả danh sách cho người mới vào/khi đổi host). Bản lưu thế giới phiên bản 4 (`brokenWalls`, `wallDamage`). Loadtest: đợt tràn tối đa 22.2 KB/s TB, đỉnh 24.7.
+- Phần 2d: `docs/save-format.md` ở PR #21 — CHỜ B GÓP Ý, A không tự merge. Sau khi chốt: PR hợp đồng `playerKey` (PROTOCOL_VERSION 4) rồi mới làm IndexedDB/xuất–nhập.
+- Thử ghép `b/loot-online` (#16) lên `main` (2026-10-25): chỉ xung đột chữ ở AGENTS.md và `shared/sim/mapgenSource.ts` (lấy bản `main`), typecheck đạt, 257 test đạt.
+
+## Phiên 2026-10-25 (chiều): 3 việc rủi ro
+
+- Việc 1 — chặn khác phiên bản (nhánh `a/version-gate`): Hello thêm khối build (`net/build.ts`, SHA + giờ build do
+  `vite.config.ts` đặt từ `GITHUB_SHA`); `Session.game` = Transport chỉ gồm người cùng PROTOCOL_VERSION → NetGame/bầu
+  host/snapshot/sao lưu/loot đều không đi tới người khác bản. `client/net/versionNotice.ts`: "Bạn đang dùng bản cũ,
+  bấm để tải lại" (che màn hình) hoặc "Có bản mới, nên tải lại" (dải nhỏ, cùng giao thức khác build). Thử bản dev:
+  thêm `&v=2` vào link. 199 test. Browser pane: tab `&v=2` hiện bảng bản cũ, 2 tab mỗi bên tự làm host, ↑↓ 0 KB/s.
+  PR #23 đã merge.
+- Việc 2 — chừa băng thông cho loot (nhánh `a/bandwidth-horde`), đo `npm run loadtest` (đợt tràn tối đa, KB/s TB · đỉnh 5s):
+  gốc 22.18 · 24.72 → bước 1 (zombie > 20 ô gửi gọn 5 byte, khối mở rộng cuối snapshot) 21.63 · 24.25 → bước 2
+  (sao lưu gửi phần thay đổi) BỎ: đo được chỉ 0.9% zombie không đổi sau 10s (đợt tràn), sao lưu chỉ chiếm 8.7% băng
+  thông → không đáng → bước 3 (`ZOMBIE_BUDGET` 200 → 170, chỗ xoay vòng ưu tiên zombie trên màn hình, ngoài màn hình
+  tối đa 8 con/snapshot; client giữ zombie vắng mặt 40 tick thay vì 24) **19.71 · 22.19**. Cơ cấu đợt tràn: snapshot
+  82%, sự kiện 10%, sao lưu 9%. Đỉnh 5s còn > 20 vì bản sao lưu ~23 KB dồn 1 lần/10s mỗi người → việc sau: rải bản sao
+  lưu thành nhiều mẩu.
+- Rủi ro 5 (kịch bản thường 17 → 12 KB/s): tụt đúng ở #19 (hồi sinh an toàn). Cho bot bất tử thì trước/sau #19 y hệt
+  (16.94 KB/s) → không phải lỗi gói/đo; do luật chơi: người hồi sinh ở chỗ không zombie trong 10 ô + bất tử 4s → chết
+  24 → 4 lần, mỗi snapshot TB 120 zombie thay vì 181.
+  PR #24 đã merge.
+- Việc 3 — mã bí mật relay (nhánh `a/relay-key`): `RelayTransport` tạo mã ngẫu nhiên 16 byte 1 lần/trang (`newRelayKey`),
+  gửi `&k=` mỗi lần nối/nối lại; relay lưu mã trong attachment, `admitPeer()` (net/relayProtocol.ts): cùng id + đúng mã
+  → thay kết nối cũ, khác mã → 409, không đá ai. `RELAY_PROTOCOL` 1 → 2 (bản game cũ gặp relay mới bị 409, việc 1 nhắc
+  tải lại). 204 test. `wrangler dev`: 2 bài relay thật đạt (người lạ cùng id bị 409); bài đo tải hụt 7.96 < 8 snapshot/s
+  vì `setInterval(50)` trên Windows chạy 62.5 ms (16 tick/s) — lỗi đồng hồ của công cụ đo, không phải relay.
+- Số test: AGENTS.md mục 8 (186 = `main` trước #20; 194 = sau #20).
+  PR #25 đã merge.
+- Việc 4 — đỉnh 5s đợt tràn ≤ 20 (nhánh `a/backup-parts`). `tools/loadTest.ts` thêm cột "đỉnh 5s 1 người" (cột cũ là
+  trung bình cả nhóm, che mất người xui nhận cả bản lưu 23 KB). Đợt tràn tối đa, KB/s TB · đỉnh nhóm · đỉnh 1 người:
+  main 19.71 · 22.19 · 24.99 → rải 10 mẩu (gói 125 v5, `BackupParts`) 19.96 · 22.53 · 22.96 → zombie trong bản lưu gọn
+  (~18 B/con: varint id, i16 1/32 ô, máu u16) 19.18 · 21.61 · 22.04 → gộp sự kiện cắn (1/người/tick; trước ~8, chiếm 2.2
+  KB/s) 17.93 · 19.66 · 20.09 → `ZOMBIE_BUDGET` 165 **17.55 · 19.33 · 19.70**. Bỏ hẳn sao lưu: đỉnh nhóm 19.83 (snapshot
+  gần chạm trần). Browser pane: tab khách có "bản lưu 10/10 mẩu", đóng tab host → lên host với 198/200 zombie.
+  PR #26 đã merge. `docs/save-format.md` (PR #21, chưa merge) đã cập nhật theo gói sao lưu v5 + chỗ cho loot ở mẩu 0.
+- PR #23, #24, #25, #26 đã merge (2026-10-25). Bảng băng thông cuối, đợt tràn tối đa (500 + 4 Boss), KB/s mỗi người:
+
+  | Bước                                                 | TB        | Đỉnh 5s cả nhóm | Đỉnh 5s 1 người |
+  | ---------------------------------------------------- | --------- | --------------- | --------------- |
+  | `main` trước #24                                     | 22.18     | 24.72           | —               |
+  | sau #24 (zombie xa gọn, ngân sách 170)               | 19.71     | 22.19           | 24.99           |
+  | sau #26 (10 mẩu, zombie gọn, gộp cắn, ngân sách 165) | **17.55** | 19.33           | **19.70**       |
+
+  Kịch bản khác sau #26 (TB · đỉnh nhóm · đỉnh 1 người): bình thường 10.31 · 14.88 · 15.01; trễ 150ms + mất 5% 9.28 · 14.58 ·
+  15.08; đợt tràn 1: 5.65 · 15.21 · 15.55. Còn ~0.3 KB/s đỉnh dưới ngưỡng 20 KB/s cho loot của B ở đợt tràn tối đa.
+
+## Việc còn lại của A (sau phiên 2026-10-25)
+
+- Chờ B: file save (#21), hành động 2 người, 2b' (delta snapshot, zombie tất định, ownership, hit do client) — làm sau khi #16 vào `main`.
+- Người dùng tự thử: chơi 2–4 máy thật, TURN trên 4G (Browser pane của Claude bị ẩn nên chạy 1–15 FPS, không thử chém/di chuyển được).
+- Giao diện: vào trận mất ~10–25 s khi tab bị ẩn (hẹn giờ bị trình duyệt làm chậm) — kiểm tra lại trên tab hiện bình thường.
 
 ## Các giai đoạn
 
@@ -30,7 +95,7 @@ File này để session mới đọc và làm tiếp nếu session cũ bị ng�
 
 ## Việc treo
 
-- API `spawnPoint`/ô đường của B: chưa có trên `b/map-generator` (kiểm tra lại giữa các giai đoạn). Khi có: rebase #6, thay `spawn = { x: 16, y: 16 }` trong `shared/sim/mapgenSource.ts`, xóa comment TẠM và mục giả định trong mô tả #6.
+- ~~API `spawnPoint`/ô đường của B~~: xong (nhánh `a/spawn-road`) — `MapgenSource.spawn = spawnPoint()`, `spawns` = 4 ô đường trống quanh đó; `SimWorld` đặt mỗi người (và người hồi sinh) vào chỗ chưa ai đứng.
 
 ## GĐ 2b – kế hoạch
 

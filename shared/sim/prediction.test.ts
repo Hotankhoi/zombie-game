@@ -80,6 +80,15 @@ describe('Predictor', () => {
     expect(Math.abs(pred.offsetX)).toBeLessThan(0.01);
   });
 
+  it('đang gục: không dự đoán đòn chém (host cũng chặn)', () => {
+    const host = new SimWorld({ seed: 's', map: arenaMap(), zombieCount: 0 });
+    const p = host.addPlayer('me');
+    const pred = new Predictor(host.blocked);
+    pred.reconcile({ ...p, downedFor: 20 }, 0);
+    expect(pred.step({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack })).toBe(false);
+    expect(pred.state!.attackCd).toBe(0);
+  });
+
   it('lệch quá xa (hồi sinh) thì nhảy luôn', () => {
     const host = new SimWorld({ seed: 's', map: arenaMap(), zombieCount: 0 });
     const p = host.addPlayer('me');

@@ -18,6 +18,10 @@ export interface MapSource {
   tileKind?(tx: number, ty: number): number;
   /** Điểm xuất phát của người chơi (tọa độ ô, số thực). */
   spawn: Vec2;
+  /** Không bắt buộc: ô đường (chỗ hồi sinh ưu tiên). Thiếu thì mọi ô trống đều được. */
+  isRoad?(tx: number, ty: number): boolean;
+  /** Không bắt buộc: chỗ đứng xuất phát cho từng người (không chồng nhau, gần `spawn` trước); thiếu thì dùng `spawn`. */
+  spawns?: readonly Vec2[];
 }
 
 const WALL = 1;
