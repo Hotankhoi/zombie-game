@@ -31,7 +31,7 @@ const MAX_INTERP_MS = 400;
  * Đợt tràn lớn: host chỉ gửi một phần zombie mỗi snapshot (ngân sách, xem host/hostServer.ts). Zombie vắng
  * mặt mà mới thấy cách đây ≤ bấy nhiêu tick (và không bị giết) thì giữ vị trí cũ thay vì cho biến mất.
  */
-const KEEP_MISSING_TICKS = 24;
+const KEEP_MISSING_TICKS = 40;
 /** Snapshot tới muộn: ngoại suy theo vận tốc tối đa bấy nhiêu tick (150ms) rồi đứng chờ, không đoán xa hơn. */
 const MAX_EXTRAP_TICKS = 3;
 const TICKS_PER_SEC = 1000 / SIM_TICK_MS;

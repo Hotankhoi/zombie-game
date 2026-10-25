@@ -1,6 +1,7 @@
 import {
   decodeGame,
   encodeGame,
+  FAR_ZOMBIE_TILES,
   GameMsg,
   TileChange,
   type SnapshotMsg,
@@ -25,12 +26,14 @@ export const SNAPSHOT_EVERY = 2;
  */
 export const INTEREST_RADIUS = 32;
 /**
- * Ngân sách zombie mỗi snapshot (giữ ≤ 25 KB/s mỗi người khi đợt tràn 500 con quây sát): luôn gửi
- * ZOMBIE_NEAR_ALWAYS con gần nhất, phần còn lại gửi xoay vòng trong số chỗ trống. Client giữ vị trí cũ
+ * Ngân sách zombie mỗi snapshot (đợt tràn tối đa ≤ 20 KB/s mỗi người, chừa ~5 KB/s cho loot): luôn gửi
+ * ZOMBIE_NEAR_ALWAYS con gần nhất, phần còn lại gửi xoay vòng trong số chỗ trống — ưu tiên con trên màn hình,
+ * con ngoài màn hình (> FAR_ZOMBIE_TILES ô) chỉ được tối đa ZOMBIE_OFFSCREEN_ROOM chỗ. Client giữ vị trí cũ
  * của con vắng mặt một lúc (net/clientSync.ts). Cách làm triệt để (delta + zombie tất định) để GĐ 2b'.
  */
-export const ZOMBIE_BUDGET = 200;
+export const ZOMBIE_BUDGET = 170;
 export const ZOMBIE_NEAR_ALWAYS = 130;
+export const ZOMBIE_OFFSCREEN_ROOM = 8;
 /**
  * Mỗi người nhận bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
  * trạng thái. Gửi so le (mỗi BACKUP_EVERY / số người tick gửi cho 1 người) để không dồn cùng một tick.
@@ -206,10 +209,13 @@ export class HostServer {
     if (list.length <= ZOMBIE_BUDGET) return list.map((e) => e.z);
     list.sort((a, b) => a.d - b.d || a.z.id - b.z.id);
     const out = list.slice(0, ZOMBIE_NEAR_ALWAYS).map((e) => e.z);
-    const rest = list.slice(ZOMBIE_NEAR_ALWAYS);
+    const onScreen: ZombieState[] = [];
+    const offScreen: ZombieState[] = [];
+    for (const e of list.slice(ZOMBIE_NEAR_ALWAYS)) (e.d > FAR_ZOMBIE_TILES ? offScreen : onScreen).push(e.z);
     const room = ZOMBIE_BUDGET - ZOMBIE_NEAR_ALWAYS;
-    const start = (round * room) % rest.length;
-    for (let i = 0; i < room; i++) out.push((rest[(start + i) % rest.length] as { z: ZombieState }).z);
+    const roomOff = Math.min(offScreen.length, Math.max(ZOMBIE_OFFSCREEN_ROOM, room - onScreen.length));
+    rotate(out, onScreen, room - roomOff, round);
+    rotate(out, offScreen, roomOff, round);
     return out;
   }
 
@@ -366,6 +372,16 @@ export function snapshotArea(s: SnapshotMsg): { x: number; y: number; radius: nu
   // gốc gói = vị trí người nhận làm tròn (lệch ≤ 0.5 ô) → lùi thêm 1 ô cho chắc
   area.zombieRadius = Math.max(0, (d[ZOMBIE_NEAR_ALWAYS - 1] ?? 0) - 1);
   return area;
+}
+
+/** Thêm `room` con từ `from` vào `out`, lượt sau lấy tiếp chỗ lượt trước dừng (xoay vòng); đủ chỗ thì lấy hết. */
+function rotate(out: ZombieState[], from: readonly ZombieState[], room: number, round: number): void {
+  if (room >= from.length) {
+    out.push(...from);
+    return;
+  }
+  const start = (round * room) % from.length;
+  for (let i = 0; i < room; i++) out.push(from[(start + i) % from.length] as ZombieState);
 }
 
 function near(p: { x: number; y: number }, x: number, y: number): boolean {

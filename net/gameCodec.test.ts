@@ -78,6 +78,35 @@ describe('gameCodec', () => {
     expect(encodeGame(many).length).toBeLessThan(200 * 8 + 120);
   });
 
+  it('zombie xa (> FAR_ZOMBIE_TILES ô) gửi gọn 5 byte, sai số ≤ 1/8 ô; zombie-từ-đồng-đội xa vẫn gửi đủ', () => {
+    const o = { x: snap.originX, y: snap.originY };
+    const far: SnapshotMsg = {
+      ...snap,
+      zombies: [
+        { id: 1, x: o.x + 25.3, y: o.y - 31.9, facing: 2, chasing: true, kind: 'spitter', turnedSlot: null },
+        { id: 2, x: o.x - 21, y: o.y + 3.14, facing: 5, chasing: false, kind: 'boss', turnedSlot: null },
+        { id: 3, x: o.x + 30, y: o.y, facing: 0, chasing: false, kind: 'normal', turnedSlot: 1 },
+        { id: 4, x: o.x + 5.5, y: o.y + 5.5, facing: 1, chasing: false, kind: 'normal', turnedSlot: null },
+      ],
+    };
+    const near = { ...far, zombies: far.zombies.slice(2) };
+    expect(encodeGame(far).length - encodeGame(near).length).toBe(2 * 5);
+    const out = decodeGame(encodeGame(far)) as SnapshotMsg;
+    const byId = new Map(out.zombies.map((z) => [z.id, z]));
+    expect([...byId.keys()].sort()).toEqual([1, 2, 3, 4]);
+    for (const z of far.zombies) {
+      const got = byId.get(z.id)!;
+      expect(Math.abs(got.x - z.x)).toBeLessThanOrEqual(1 / 8 + 1e-9);
+      expect(Math.abs(got.y - z.y)).toBeLessThanOrEqual(1 / 8 + 1e-9);
+      expect([got.kind, got.chasing, got.turnedSlot]).toEqual([z.kind, z.chasing, z.turnedSlot]);
+      expect(
+        Math.abs(Math.atan2(Math.sin(got.facing - z.facing), Math.cos(got.facing - z.facing))),
+      ).toBeLessThan(0.2);
+    }
+    // zombie-từ-đồng-đội và zombie gần: chính xác 1/64 ô như cũ
+    expect(Math.abs(byId.get(4)!.x - (o.x + 5.5))).toBeLessThanOrEqual(1 / POS_SCALE);
+  });
+
   it('input, sự kiện, roster, host claim đi về nguyên vẹn', () => {
     const msgs: GameMessage[] = [
       {
@@ -130,13 +159,14 @@ describe('gameCodec', () => {
 
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
-    // khối mở rộng nối cuối gói: GĐ 2c (người chơi), GĐ 4 (vũng), GĐ 5 (đợt tràn)
-    const hordeExt = 1 + 5 + snap.horde!.rows.length * 4;
+    // khối mở rộng nối cuối gói: GĐ 2c (người chơi), GĐ 4 (vũng), GĐ 5 (đợt tràn), zombie xa (gói này không có con nào)
+    const farExt = 2;
+    const hordeExt = 1 + 5 + snap.horde!.rows.length * 4 + farExt;
     const poolsExt = 1 + snap.pools.length * 8;
     const ext = 1 + snap.players.length * 10 + poolsExt + hordeExt;
     for (let n = 0; n < full.length; n++) {
       // cắt đúng ranh giới khối mở rộng = gói bản cũ hơn, vẫn hợp lệ
-      const boundary = [ext, poolsExt + hordeExt, hordeExt].some((e) => n === full.length - e);
+      const boundary = [ext, poolsExt + hordeExt, hordeExt, farExt].some((e) => n === full.length - e);
       if (!boundary) expect(decodeGame(full.subarray(0, n))).toBeNull();
     }
     expect(decodeGame(new Uint8Array([1, 2, 3]))).toBeNull(); // gói phòng chờ
@@ -146,7 +176,10 @@ describe('gameCodec', () => {
   it('snapshot bản cũ (không có khối mở rộng gục/cứu) vẫn đọc được, trạng thái gục = 0', () => {
     const full = encodeGame(snap);
     const old = decodeGame(
-      full.subarray(0, full.length - (1 + snap.players.length * 10 + 1 + snap.pools.length * 8 + 1 + 5 + 4)),
+      full.subarray(
+        0,
+        full.length - (1 + snap.players.length * 10 + 1 + snap.pools.length * 8 + 1 + 5 + 4 + 2),
+      ),
     ) as SnapshotMsg;
     expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });
     const now = decodeGame(full) as SnapshotMsg;
