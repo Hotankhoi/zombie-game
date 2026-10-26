@@ -30,6 +30,17 @@ it('đo tải 4 người', { timeout: 30 * 60_000 }, () => {
       startTime: 0.799,
     }),
     runLoadTest({
+      name: 'Đợt tràn tối đa + bot bắn súng trường liên tục',
+      zombieCount: 200,
+      seconds: 90,
+      latencyMs: 150,
+      loss: 0.05,
+      startDay: 150,
+      startTime: 0.799,
+      immortal: true,
+      guns: true,
+    }),
+    runLoadTest({
       name: 'Đợt tràn tối đa + bot mở rương liên tục (3–6 s)',
       zombieCount: 200,
       seconds: 90,

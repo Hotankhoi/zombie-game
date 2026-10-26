@@ -242,6 +242,12 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   hết rương đồn cảnh sát (2 súng lục, đạn, áo, quần), mặc áo + quần, cầm súng, nạp, bắn chết zombie phình (160 máu, 6
   phát trúng), bị cắn → nhiễm trùng tăng, 4 ăn/uống → no/nước ~99. Ảnh chụp thẳng từ canvas (`renderer.snapshot`) vì cửa
   sổ Claude ẩn. Loadtest đợt tràn tối đa 18.50 · 20.96 · **21.40**.
+  PR #46 đã merge.
+- PR 8 (`a/3b-report`): kịch bản đo tải mới "đợt tràn tối đa + bot bắn súng trường liên tục" (`LoadOptions.guns`:
+  host cấp súng trường + băng đầy) → 18.20 · 19.70 · 20.32; ảnh `docs/anh-3b/`; báo cáo `docs/bao-cao-3b.md`; AGENTS mục 8;
+  `shared/data/README.md`. **GĐ 3b xong phần A.** Việc tiếp (cần bàn với B): chế tạo/căn cứ, thùng thưởng, đồ rơi từ
+  zombie, file save (#21), hành động 2 người, 2b' (delta snapshot — băng thông đợt tràn còn ~0.6 KB/s tới ngưỡng 22);
+  người dùng tự thử 2–4 máy thật.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
