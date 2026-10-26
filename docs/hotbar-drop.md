@@ -1,6 +1,6 @@
 # Hotbar 5 ô và thả/nhặt đồ
 
-Nền: main sau #47. Giữ hệ Inventory/ClientLoot/HostLoot và gameplay của A. Hợp đồng riêng #48 nâng v9 → v10; không sửa ghi chú tương thích cũ.
+Nền: main sau #47. Giữ hệ Inventory/ClientLoot/HostLoot và gameplay của A. Hợp đồng riêng #48 bổ sung kiểu dữ liệu; PR triển khai #49 nâng v9 → v10 cùng codec. Không sửa ghi chú tương thích cũ.
 
 ## Điều khiển
 

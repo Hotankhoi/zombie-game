@@ -428,6 +428,8 @@ export class HostLoot {
         if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
         return this.equip(from, owner, a.itemId, a.rarity);
     }
+    // New contract intents become active only with the matching codec/implementation PR.
+    return { ok: false, error: 'invalid_command' };
   }
 
   /**
