@@ -75,7 +75,18 @@ interface Pending {
   resolve: (o: LootOutcome) => void;
 }
 
-const MUTATING = new Set<LootAction['type']>(['open', 'take', 'takeAll', 'move', 'sort', 'use', 'reload']);
+const MUTATING = new Set<LootAction['type']>([
+  'drop',
+  'pickup',
+  'unequip',
+  'open',
+  'take',
+  'takeAll',
+  'move',
+  'sort',
+  'use',
+  'reload',
+]);
 
 /**
  * Loot phía máy khách (phần 2A — lớp dữ liệu, KHÔNG có UI). Gửi intent cho host (tự điền revision mong đợi),

@@ -52,7 +52,7 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className: strin
   if (text !== undefined) el.textContent = text;
   return el;
 }
-function icon(category: ItemCategory, itemId?: ItemId) {
+export function icon(category: ItemCategory, itemId?: ItemId) {
   const el = element('span', 'inv-icon');
   el.innerHTML = `<svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${(itemId && ITEM_ICONS[itemId]) || ICONS[category]}</svg>`;
   return el;
@@ -62,6 +62,8 @@ function icon(category: ItemCategory, itemId?: ItemId) {
 export type InventoryPanelResult = InventoryResult | { ok: false; state: InventoryState; error: string };
 export interface InventoryPanelOptions {
   initial: InventoryState;
+  onAssign?(stack: ItemStack): void;
+  onDrop?(slot: number, quantity: number): Promise<InventoryPanelResult>;
   /** Send intent to authority; render only the returned or pushed authoritative snapshot. */
   onCommand(command: InventoryCommand): InventoryPanelResult | Promise<InventoryPanelResult>;
   /** Text for error codes outside INVENTORY_MESSAGES (online: host/network codes). */
@@ -119,7 +121,42 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
   cancel.type = 'button';
   const action = element('button', 'inv-sort inv-action', '');
   action.type = 'button';
-  quick.append(half, all);
+  const assign = element('button', '', 'Gán thanh nhanh');
+  assign.type = 'button';
+  assign.hidden = !options.onAssign;
+  assign.onclick = () => {
+    const item = selected === null ? null : state.slots[selected];
+    if (item) options.onAssign?.(item);
+  };
+  const dropOne = element('button', '', 'Thả 1'),
+    dropAll = element('button', '', 'Thả tất cả');
+  dropOne.type = dropAll.type = 'button';
+  dropOne.hidden = dropAll.hidden = !options.onDrop;
+  async function drop(everything: boolean) {
+    const index = selected,
+      item = index === null ? null : state.slots[index];
+    if (index === null || !item || busy || !options.onDrop) return;
+    busy = true;
+    render();
+    try {
+      const result = await options.onDrop(index, everything ? item.quantity : 1);
+      if (disposed) return;
+      state = result.state;
+      selected = null;
+      announce(
+        result.ok ? 'Đã thả đồ xuống đất.' : (options.describeError?.(result.error) ?? result.error),
+        !result.ok,
+      );
+    } catch {
+      announce('Chưa xác nhận thả đồ. Kiểm tra lại túi trước khi thử tiếp.', true);
+    } finally {
+      busy = false;
+      render();
+    }
+  }
+  dropOne.onclick = () => void drop(false);
+  dropAll.onclick = () => void drop(true);
+  quick.append(half, all, assign, dropOne, dropAll);
   controls.append(
     action,
     label,
@@ -200,6 +237,7 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
       description.textContent = 'Chọn một vật phẩm để xem chi tiết, chia số lượng hoặc chuyển sang ô khác.';
       stackInfo.textContent = `${state.slots.length - used} ô trống cho chuyến đi tiếp theo`;
     }
+    dropOne.disabled = dropAll.disabled = busy || selected === null || !state.slots[selected];
     sort.disabled = busy;
     all.disabled = cancel.disabled = quantity.disabled = busy;
     root.setAttribute('aria-busy', String(busy));

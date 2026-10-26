@@ -19,7 +19,7 @@ import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import { isUp, type PlayerState } from '@shared/sim/player';
 import { isWeaponId, weaponCode } from '@shared/sim/guns';
-import { isArmor } from '@shared/sim/armor';
+import { isArmor, armorAt } from '@shared/sim/armor';
 import { GUNS, type GunId } from '@shared/data/guns';
 import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
@@ -145,6 +145,55 @@ export class HostServer {
         },
         checkUse: (id, item, target) => this.world.checkItemUse(id, item.itemId, target),
         applyUse: (id, item, target) => this.world.applyItemUse(id, item.itemId, item.rarity, target),
+        dropPoint: (id) => {
+          const p = this.world.players.get(id);
+          if (!p || !isUp(p)) return null;
+          for (const turn of [0, 0.6, -0.6, 1.2, -1.2, Math.PI]) {
+            const x = p.x + Math.cos(p.facing + turn) * 0.8,
+              y = p.y + Math.sin(p.facing + turn) * 0.8;
+            if (
+              !this.world.blocked(Math.floor(x), Math.floor(y)) &&
+              hasLineOfSight(p, { x, y }, this.world.blocked)
+            )
+              return { x, y };
+          }
+          return null;
+        },
+        seesGround: (id, point) => {
+          const p = this.world.players.get(id);
+          return !!p && hasLineOfSight(p, point, this.world.blocked);
+        },
+        dropRefund: (id, item) => {
+          const p = this.world.players.get(id);
+          if (!p || (item.itemId !== 'pistol' && item.itemId !== 'rifle')) return undefined;
+          const code = item.itemId === 'pistol' ? 1 : 2;
+          const quantity =
+            (code === 1 ? p.magPistol : p.magRifle) + (p.reloadGun === code ? p.reloadAmount : 0);
+          return quantity > 0 ? { itemId: GUNS[item.itemId].ammo, quantity, rarity: 'common' } : undefined;
+        },
+        dropped: (id, item) => {
+          const p = this.world.players.get(id);
+          if (!p) return;
+          if (item.itemId === 'pistol' || item.itemId === 'rifle') {
+            const code = item.itemId === 'pistol' ? 1 : 2;
+            if (code === 1) p.magPistol = 0;
+            else p.magRifle = 0;
+            if (p.reloadGun === code) {
+              p.reloadGun = 0;
+              p.reloadLeft = 0;
+              p.reloadAmount = 0;
+            }
+          }
+          const owner = this.loot.ownerOf(id),
+            bag = owner ? this.loot.authority.inventory(owner) : null;
+          if (bag?.slots.some((i) => i?.itemId === item.itemId && i.rarity === item.rarity)) return;
+          if (p.weapon === item.itemId && p.weaponRarity === item.rarity)
+            this.world.equip(id, 'fists', 'common');
+          if (item.itemId === 'helmet' && armorAt(p, 'head') === item.rarity) p.armorHead = 0;
+          if (item.itemId === 'vest' && armorAt(p, 'body') === item.rarity) p.armorBody = 0;
+          if (item.itemId === 'pants' && armorAt(p, 'legs') === item.rarity) p.armorLegs = 0;
+        },
+        unequip: (id) => this.world.equip(id, 'fists', 'common'),
         equip: (id, item) => {
           if (isArmor(item.itemId))
             return this.world.wearArmor(id, item.itemId, item.rarity) ? null : 'not_equippable';

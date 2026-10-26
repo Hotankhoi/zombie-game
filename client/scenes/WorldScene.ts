@@ -1,3 +1,4 @@
+import { GroundLayer } from '../loot/groundLayer';
 import Phaser from 'phaser';
 import { KNIFE } from '@shared/data/melee';
 import { PLAYER } from '@shared/data/player';
@@ -20,7 +21,6 @@ import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 import { ChestLayer, preloadChestSprites } from '../loot/chestLayer';
 import { LootUi } from '../loot/lootUi';
 import { canKeepChestOpen } from '../loot/nearChest';
-import type { QuickKey } from '../loot/quickUse';
 
 /** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
 export { TILE_SIZE };
@@ -76,6 +76,7 @@ export class WorldScene extends Phaser.Scene {
   private worldMap!: WorldMap;
   private mapRenderer!: MapRenderer;
   /** Rương (phần 2B loot): thùng trong nhà, gợi ý F khi tới gần. */
+  ground!: GroundLayer;
   chests!: ChestLayer;
   /** Panel túi (I) / rương (F); mở thì khóa điều khiển nhân vật. */
   lootUi!: LootUi;
@@ -210,14 +211,27 @@ export class WorldScene extends Phaser.Scene {
       const now = this.time.now;
       if (this.lootUi.open || dy === 0 || now - this.wheelAt < 200) return;
       this.wheelAt = now;
-      this.lootUi.weapons.cycle(this.me() ?? null, dy > 0 ? 1 : -1);
+      if (!isTyping()) this.lootUi.hotbar.cycle(dy > 0 ? 1 : -1);
     });
     // GĐ 3b: dùng nhanh 1 băng gạc · 2 sơ cứu · 3 kháng sinh · 4 ăn/uống
-    (['ONE', 'TWO', 'THREE', 'FOUR'] as const).forEach((name, i) =>
+    (['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'] as const).forEach((name, i) =>
       kb.addKey(name, false).on('down', () => {
-        if (!isTyping()) this.lootUi.items.quick((i + 1) as QuickKey);
+        if (!isTyping() && !this.lootUi.open) void this.lootUi.hotbar.select(i);
       }),
     );
+    this.ground = new GroundLayer(
+      this,
+      this.net.loot,
+      () => this.lootUi.open,
+      (s) => this.lootUi.toast(s),
+    );
+    kb.addKey('V', false).on('down', () => {
+      if (!isTyping()) void this.ground.pickup();
+    });
+    this.events.once('shutdown', () => {
+      this.ground.destroy();
+      this.lootUi.hotbar.destroy();
+    });
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -378,6 +392,7 @@ export class WorldScene extends Phaser.Scene {
     const seen = this.zombieSeer(others, alpha);
     const me0 = this.me();
     const up = me0 && isUp(me0) ? me0 : null;
+    this.ground?.update(me0 ?? null, seen);
     this.chests.update(up, seen, this.lootUi.open);
     this.autoCloseLoot(up, seen);
     let shown = 0;
