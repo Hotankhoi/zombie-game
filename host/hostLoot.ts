@@ -342,6 +342,11 @@ export class HostLoot {
       case 'move':
       case 'sort':
         return this._authority.move(actor, a);
+      case 'use':
+      case 'reload':
+      case 'equip':
+        // GĐ 3b: hợp đồng đã có, host xử lý ở các PR sau
+        return { ok: false, error: 'invalid_command' };
     }
   }
 

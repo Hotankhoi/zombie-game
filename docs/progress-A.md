@@ -182,6 +182,10 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
 - PR 2 (`a/host-wait`): `HostElection` `expectHostUntil` / `waitHostMs` (10 s) / `waitingForHostMs()`, gói 126 byte cờ
   "đang theo host"; NetGame ghi `zombie-coop.lastRoom` (sessionStorage) khi có host, tải lại < 60 s cùng phòng có người →
   chờ host thật; HUD đếm giây. `TestMatch.join(..., connectAfterMs)` giả WebRTC nối chậm. 342 test.
+  PR #41 đã merge.
+- PR 3 (`a/3b-contract`): `LootAction` thêm `use {expectedRevision, slot, target}`, `reload {expectedRevision}`,
+  `equip {itemId, rarity}` (mã 8–10 trong `net/lootCodec.ts`), `ChestWire.version` `1 | 2`; host tạm trả
+  `invalid_command`. Ghi `shared/types/loot-protocol.md` mục "GĐ 3b". 342 test.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

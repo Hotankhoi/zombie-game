@@ -86,6 +86,10 @@ describe('codec loot 110–113', () => {
       { type: 'move', expectedRevision: 9, from: 0, to: 23, quantity: 3 },
       { type: 'sort', expectedRevision: Number.MAX_SAFE_INTEGER - 1 },
       { type: 'claim', key: 'AbCdEfGhIjKlMnOpQrSt_-', resume: true },
+      { type: 'use', expectedRevision: 4, slot: 11, target: null },
+      { type: 'use', expectedRevision: 0, slot: 0, target: 'peer-Xy_9' },
+      { type: 'reload', expectedRevision: 12 },
+      { type: 'equip', itemId: 'rifle', rarity: 'epic' },
     ];
     for (const action of actions) {
       const p = { type: LootMessage.Request, term: '1.abc', requestId: 'r-1', action } as const;
