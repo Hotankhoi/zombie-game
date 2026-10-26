@@ -178,6 +178,10 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   60 → 200; host báo tab cũ (reply `key_in_use` đúng requestId claim cũ) → `claimError = 'key_taken'`, sự kiện `lost`,
   HUD "Túi đang mở ở tab khác"; `unknown_player` → claim lại không resume. `TestMatch`: `MemStorage`, `hidden`, `frozen`.
   334 test.
+  PR #40 đã merge.
+- PR 2 (`a/host-wait`): `HostElection` `expectHostUntil` / `waitHostMs` (10 s) / `waitingForHostMs()`, gói 126 byte cờ
+  "đang theo host"; NetGame ghi `zombie-coop.lastRoom` (sessionStorage) khi có host, tải lại < 60 s cùng phòng có người →
+  chờ host thật; HUD đếm giây. `TestMatch.join(..., connectAfterMs)` giả WebRTC nối chậm. 342 test.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

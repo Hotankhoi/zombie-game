@@ -19,7 +19,18 @@ export interface ElectionOptions {
   getScore?: () => number;
   /** Báo điểm cho cả phòng mỗi bấy nhiêu ms. */
   scoreEveryMs?: number;
+  /**
+   * Biết chắc phòng đang có host (vd tab vừa tải lại, trước đó chơi cùng người khác): chờ nghe host thật tới mốc này
+   * (theo đồng hồ `now`) rồi mới được tự nhận host — WebRTC sau khi tải lại thường nối lâu hơn `listenMs`, tự nhận sớm
+   * thì thành một thế giới tạm (túi tạm) ~0,5 s rồi mới nhập vào host thật.
+   */
+  expectHostUntil?: number;
+  /** Chờ host thật tối đa bấy nhiêu ms kể từ lúc vào phòng (người đã nối báo "có host" mà mình chưa nghe host). */
+  waitHostMs?: number;
 }
+
+/** Chờ host thật tối đa (ms) — quá thì tự làm host như cũ (host thật có thể đã rời). */
+export const WAIT_HOST_MS = 10_000;
 
 /**
  * Chọn host (AGENTS.md mục 2.1: theo ping + sức máy; host migration):
@@ -38,6 +49,12 @@ export class HostElection {
   private claims = new Map<PeerId, { at: number; hostedMs: number }>();
   /** Điểm làm host mới nhất của từng người. */
   private scores = new Map<PeerId, number>();
+  /** Người đó báo (kèm điểm) là đang theo một host — mình chưa nghe host đó thì chờ thêm. */
+  private following = new Map<PeerId, boolean>();
+  /** Từng có host kể từ lúc vào phòng (mất host giữa trận thì chọn lại ngay như cũ, không chờ). */
+  private everHadHost = false;
+  private readonly expectHostUntil: number;
+  private readonly waitHostMs: number;
   private claiming = false;
   private claimSince = 0;
   private lastClaimAt = -Infinity;
@@ -62,12 +79,16 @@ export class HostElection {
     this.claimTimeoutMs = opts.claimTimeoutMs ?? 3500;
     this.scoreEveryMs = opts.scoreEveryMs ?? 2000;
     this.getScore = opts.getScore ?? (() => 0);
+    this.expectHostUntil = opts.expectHostUntil ?? -Infinity;
+    this.waitHostMs = opts.waitHostMs ?? WAIT_HOST_MS;
     this.noHostSince = now();
     this.subs = [
       transport.onMessage((data, from) => {
         if (data[0] === HOST_SCORE_MSG) {
           const score = decodeScore(data);
           if (score !== null) this.scores.set(from, score);
+          const f = decodeFollowing(data);
+          if (f !== null) this.following.set(from, f);
           return;
         }
         if (data[0] !== GameMsg.HostClaim) return;
@@ -80,11 +101,12 @@ export class HostElection {
       transport.onPeerJoin((id) => {
         // người mới vào: báo ngay mình là host (không bắt họ chờ) và điểm của mình
         if (this.claiming) this.transport.send(this.claimPacket(), { to: id });
-        this.transport.send(encodeScore(this.myScore()), { to: id });
+        this.transport.send(this.scorePacket(), { to: id });
       }),
       transport.onPeerLeave((id) => {
         this.silent.delete(id);
         this.scores.delete(id);
+        this.following.delete(id);
         if (this.claims.delete(id)) this.tick();
       }),
     ];
@@ -104,7 +126,7 @@ export class HostElection {
     const self = this.transport.selfId;
     if (t - this.lastScoreAt >= this.scoreEveryMs) {
       this.lastScoreAt = t;
-      this.transport.send(encodeScore(this.myScore()));
+      this.transport.send(this.scorePacket());
     }
 
     const candidates: Candidate[] = [];
@@ -128,8 +150,8 @@ export class HostElection {
         { id: self, score: this.myScore() },
         ...alive.map((id) => ({ id, score: this.scores.get(id) ?? Infinity })),
       ]);
-      // máy tốt nhất nhận sau listenMs; máy khác chờ gấp đôi (phòng khi máy đó treo)
-      if (waited >= this.listenMs * (best === self ? 1 : 2)) {
+      // máy tốt nhất nhận sau listenMs; máy khác chờ gấp đôi (phòng khi máy đó treo); biết phòng có host thì chờ host
+      if (waited >= this.listenMs * (best === self ? 1 : 2) && !this.waitingForHost(t, alive)) {
         this.claiming = true;
         this.claimSince = t;
         host = self;
@@ -144,8 +166,35 @@ export class HostElection {
     }
     if (host !== this.hostId) {
       this.hostId = host;
+      if (host !== null) this.everHadHost = true;
+      // báo ngay cờ "đang theo host" mới (người vừa vào nhờ cờ này biết có nên chờ host không)
+      this.transport.send(this.scorePacket());
       this.changed.emit(host);
     }
+  }
+
+  /** Còn bao lâu (ms) mình chờ host thật trước khi tự nhận; null = không chờ (HUD: "Đang tìm host của phòng…"). */
+  waitingForHostMs(): number | null {
+    if (this.hostId !== null) return null;
+    const t = this.now();
+    const alive = this.transport.peers().filter((id) => !this.silent.has(id));
+    return this.waitingForHost(t, alive) ? Math.max(0, this.noHostSince + this.waitHostMs - t) : null;
+  }
+
+  /**
+   * Chưa từng có host mà biết phòng đang có host: (1) người đã nối báo đang theo một host mình chưa nghe, hoặc (2) tab vừa
+   * tải lại (`expectHostUntil`) và chưa ai đã nối nói "phòng không có host" → chờ, tối đa `waitHostMs` từ lúc vào.
+   */
+  private waitingForHost(t: number, alive: readonly PeerId[]): boolean {
+    if (this.everHadHost || t - this.noHostSince >= this.waitHostMs) return false;
+    const flags = alive.map((id) => this.following.get(id));
+    if (flags.some((f) => f === true)) return true;
+    if (t >= this.expectHostUntil) return false;
+    return !(flags.length > 0 && flags.every((f) => f === false));
+  }
+
+  private scorePacket(): Uint8Array {
+    return encodeScore(this.myScore(), this.hostId !== null);
   }
 
   private myScore(): number {
@@ -203,11 +252,21 @@ function clampScore(s: number): number {
   return Number.isFinite(s) ? Math.max(0, Math.min(MAX_SCORE, Math.round(s))) : MAX_SCORE;
 }
 
-export function encodeScore(score: number): Uint8Array {
-  const buf = new Uint8Array(3);
+/**
+ * Gói điểm: [126][điểm u16][cờ]. Byte cờ (bit 0 = "mình đang theo một host") nối cuối — bản cũ chỉ đọc 3 byte đầu.
+ */
+export function encodeScore(score: number, following = false): Uint8Array {
+  const buf = new Uint8Array(4);
   buf[0] = HOST_SCORE_MSG;
   new DataView(buf.buffer).setUint16(1, clampScore(score));
+  buf[3] = following ? 1 : 0;
   return buf;
+}
+
+/** Cờ "đang theo một host" trong gói điểm; null = gói bản cũ (không có cờ). */
+export function decodeFollowing(buf: Uint8Array): boolean | null {
+  if (buf.length < 4 || buf[0] !== HOST_SCORE_MSG) return null;
+  return (buf[3]! & 1) !== 0;
 }
 
 export function decodeScore(buf: Uint8Array): number | null {

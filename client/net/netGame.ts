@@ -1,7 +1,7 @@
 import { ClientLoot } from '@net/clientLoot';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
-import { HostElection } from '@net/hostElection';
+import { HostElection, WAIT_HOST_MS } from '@net/hostElection';
 import { isLootPacket } from '@net/lootCodec';
 import { loadPlayerKey, rememberPlayerKey, replacePlayerKey, type KeyStorage } from '@net/playerKey';
 import type { Transport } from '@net/transport';
@@ -70,6 +70,27 @@ function storedPlayerKey(s: { local: KeyStorage | null; session: KeyStorage | nu
 /** Báo worker "vẫn nghe người này" tối đa mỗi bấy nhiêu ms mỗi người. */
 const SEEN_EVERY_MS = 500;
 
+/**
+ * Nhớ (sessionStorage của tab) "đang ở phòng X cùng người khác" — tải lại trang trong ROOM_MEMO_MS thì chờ host thật
+ * (`HostElection.expectHostUntil`, tối đa WAIT_HOST_MS) thay vì tự làm host tạm ~0,5 s.
+ */
+export const ROOM_MEMO_STORAGE = 'zombie-coop.lastRoom';
+const ROOM_MEMO_EVERY_MS = 2000;
+const ROOM_MEMO_MS = 60_000;
+
+function readRoomMemo(s: KeyStorage | null): { room: string; at: number; others: number } | null {
+  try {
+    const v = JSON.parse(s?.getItem(ROOM_MEMO_STORAGE) ?? 'null') as unknown;
+    if (!v || typeof v !== 'object') return null;
+    const m = v as { room?: unknown; at?: unknown; others?: unknown };
+    return typeof m.room === 'string' && typeof m.at === 'number' && typeof m.others === 'number'
+      ? { room: m.room, at: m.at, others: m.others }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Điểm làm host = ping trung bình + hệ số × thời gian chạy thử 20 tick mô phỏng (ms). */
 const SIM_MS_WEIGHT = 4;
 
@@ -103,28 +124,39 @@ export class NetGame {
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
   private seenAt = new Map<PeerId, number>();
+  private readonly session: KeyStorage | null;
+  private readonly wallNow: () => number;
+  private memoAt = -Infinity;
 
   constructor(
     private transport: Transport,
-    room: string,
+    private readonly room: string,
     opts: NetGameOptions = {},
   ) {
     this.seed = worldSeedForRoom(room);
     this.testHooks = opts.test;
     this.now = opts.test?.now ?? (() => performance.now());
+    // đồng hồ thật (còn đúng sau khi tải lại trang) cho ghi nhớ phòng; test dùng đồng hồ giả chung cả trận
+    this.wallNow = opts.test?.now ?? (() => Date.now());
+    const storage = opts.storage ?? (opts.playerKey ? null : browserStorage());
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
     this.loot = new ClientLoot({
       seed: this.seed,
-      ...(opts.playerKey ?? storedPlayerKey(opts.storage ?? browserStorage())),
+      ...(opts.playerKey ?? storedPlayerKey(storage ?? { local: null, session: null })),
       send: (d) => this.sendLoot(d),
       now: opts.test?.now,
     });
     this.simBenchMs = opts.test?.simBenchMs ?? measureSimMs();
     const rttOf = opts.rttOf ?? (() => null);
+    this.session = storage?.session ?? null;
+    const memo = readRoomMemo(this.session);
+    const reloaded =
+      memo !== null && memo.room === room && memo.others > 0 && this.wallNow() - memo.at < ROOM_MEMO_MS;
     this.election = new HostElection(transport, opts.test?.now, {
+      ...(reloaded && { expectHostUntil: this.now() + WAIT_HOST_MS }),
       getScore: () => {
         const rtts = transport
           .peers()
@@ -168,7 +200,23 @@ export class NetGame {
     if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data: packet });
     else if (host) this.transport.send(packet, { to: host, channel: 'unreliable' });
     this.loot.tick();
+    this.rememberRoom();
     return swung;
+  }
+
+  /** Ghi nhớ phòng (mỗi ~2 s, chỉ khi đã có host): tải lại trang lúc đang chơi cùng người khác → chờ host thật. */
+  private rememberRoom(): void {
+    const t = this.now();
+    if (!this.session || this.election.hostId === null || t - this.memoAt < ROOM_MEMO_EVERY_MS) return;
+    this.memoAt = t;
+    try {
+      this.session.setItem(
+        ROOM_MEMO_STORAGE,
+        JSON.stringify({ room: this.room, at: this.wallNow(), others: this.transport.peers().length }),
+      );
+    } catch {
+      // bị chặn lưu trữ: tải lại thì chờ host như vào phòng mới (2 s)
+    }
   }
 
   /** Gói loot (intent/ACK) tới host hiện tại: chính mình → worker; người khác → mạng (reliable). */

@@ -58,7 +58,13 @@ Lỗi 2A tìm thấy khi thử 2 tab (chưa sửa, cần duyệt vì đụng `/n
    khi mở trang → tab thứ 2 tải lại (trước khi host trả `key_in_use`) được coi là `resume` và lấy túi của tab 1; host cũng cho
    lấy nếu tab 1 im ≥ 3 s (tab ẩn/thu nhỏ). Tab 1 không được báo: vẫn hiện túi của tab 2 như túi mình, mọi thao tác
    `unknown_player`. Hướng sửa: chỉ ghi sessionStorage sau khi `claim` thành công; ClientLoot gặp `unknown_player` → claim lại.
-2. **Tab vừa tải lại tự làm host riêng ~0,5 s** (thế giới trống, túi mới chỉ có dao) rồi mới nhập vào host thật; kết quả cuối
+2. **ĐÃ SỬA (PR `a/host-wait`, 2026-10-26).** NetGame nhớ "đang ở phòng X cùng người khác" (sessionStorage
+   `zombie-coop.lastRoom`, mỗi 2 s); tải lại trong 60 s → `HostElection.expectHostUntil` = chờ host thật tối đa 10 s
+   (`WAIT_HOST_MS`) rồi mới tự nhận; gói điểm 126 thêm byte cờ "đang theo host" (bản cũ đọc 3 byte đầu) → người mới vào mà
+   người đã nối báo có host thì cũng chờ; mọi người đã nối báo không có host thì thôi chờ. Lúc chờ: `role = waiting`,
+   loot `not_ready`, không túi tạm, HUD "Đang tìm host của phòng… (n s)". Test: `host/lootOnline.test.ts` "tab vừa tải
+   lại…", `net/hostElection.test.ts` "chờ host thật".
+   Mô tả cũ: **Tab vừa tải lại tự làm host riêng ~0,5 s** (thế giới trống, túi mới chỉ có dao) rồi mới nhập vào host thật; kết quả cuối
    đúng nhưng HUD nháy "Túi 1/12" và nếu mạng chậm thì người chơi có thể nhặt đồ trong thế giới tạm rồi mất.
 
 ## API ClientLoot (cho phần 2B: UI/scene)
