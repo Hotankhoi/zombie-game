@@ -25,16 +25,22 @@ const EMPTY_TERM = '0.none';
  * - `not_ready`: chưa nhận replica của host hiện tại (vừa vào trận / vừa đổi host);
  * - `busy`: đang chờ kết quả một thao tác sửa đồ khác (mỗi lúc 1 thao tác — revision mới đúng);
  * - `host_changed`: host đổi khi đang chờ → KHÔNG biết thao tác có xảy ra không; trạng thái thật = replica host mới;
- * - `timeout`: quá LOOT_TIMEOUT_MS chưa có kết quả (trạng thái sẽ tự đúng khi replica/kết quả tới).
+ * - `timeout`: quá LOOT_TIMEOUT_MS chưa có kết quả (trạng thái sẽ tự đúng khi replica/kết quả tới);
+ * - `key_taken`: túi của mình đã bị một tab khác (cùng khóa) lấy — tab này không còn túi (claimError), xem `lost`.
  */
-export type LootClientError = LootErrorCode | 'not_ready' | 'busy' | 'host_changed' | 'timeout';
+export type LootClientError = LootErrorCode | 'not_ready' | 'busy' | 'host_changed' | 'timeout' | 'key_taken';
 export type LootOutcome =
   | { ok: true; inventory: InventoryState; chest: ChestState | null }
   | { ok: false; error: LootClientError; inventory: InventoryState | null; chest: ChestState | null };
 
 /** Báo UI cái gì vừa đổi (UI đọc lại trạng thái từ ClientLoot, không dùng dữ liệu trong sự kiện). */
 export type LootChange =
-  { kind: 'ready' } | { kind: 'reset' } | { kind: 'inventory' } | { kind: 'chest'; chestId: string };
+  | { kind: 'ready' }
+  | { kind: 'reset' }
+  | { kind: 'inventory' }
+  | { kind: 'chest'; chestId: string }
+  /** Tab khác cùng khóa đã lấy túi của mình (host báo, hoặc thao tác bị `unknown_player` và nhận lại không được). */
+  | { kind: 'lost' };
 
 export interface ClientLootOptions {
   seed: string;
@@ -44,6 +50,8 @@ export interface ClientLootOptions {
   resume?: boolean;
   /** Host báo khóa đang được tab khác dùng → trả khóa mới (NetGame: `replacePlayerKey`). Không có thì dừng ở lỗi. */
   onKeyInUse?: () => string;
+  /** Host đã nhận khóa này (claim thành công) → NetGame nhớ vào sessionStorage của tab (tải lại = `resume`). */
+  onClaimed?: (key: string) => void;
   /** Gửi gói cho host hiện tại (reliable). NetGame: worker nếu mình là host, không thì transport tới host. */
   send: (data: Uint8Array) => void;
   now?: () => number;
@@ -80,6 +88,10 @@ export class ClientLoot {
   /** Term của host đã gửi `_replica` (khác `_term` khi đã đổi host mà host mới chưa gửi bản nào). */
   private replicaTerm: string | null = null;
   private claimed = false;
+  /** requestId của lần claim gần nhất — host dùng nó để báo "túi đã bị kết nối khác lấy". */
+  private claimId: string | null = null;
+  /** Đã mất túi vào tay tab khác: claim lại KHÔNG đổi khóa và không giành lại (tránh 2 tab giành qua lại). */
+  private lost = false;
   private key: string;
   private _owner: string;
   private resume: boolean;
@@ -186,6 +198,7 @@ export class ClientLoot {
     } catch {
       return Promise.resolve(this.fail('invalid_command', chestId));
     }
+    if (action.type === 'claim') this.claimId = requestId;
     return new Promise((resolve) => {
       this.pending.set(requestId, { action, mutating, internal, sentAt: this.now(), chestId, resolve });
       this.stats.sent++;
@@ -300,8 +313,19 @@ export class ClientLoot {
       const wasReady = this.ready;
       this.claimed = true;
       this.claimError = null;
+      this.lost = false;
       this.resume = true;
+      this.opts.onClaimed?.(this.key);
       if (!wasReady && this.ready) this.changed.emit({ kind: 'ready' });
+    } else if (r.error === 'key_in_use' && this.lost) {
+      // túi đang ở tab khác: báo rõ, không tạo túi mới, không giành lại
+      const had = this._inventory !== null || this.claimError !== 'key_taken';
+      this.claimError = 'key_taken';
+      this._inventory = null;
+      if (had) {
+        this.changed.emit({ kind: 'inventory' });
+        this.changed.emit({ kind: 'lost' });
+      }
     } else if (r.error === 'key_in_use' && this.opts.onKeyInUse) {
       // 2 tab chung khóa: tab này đổi khóa riêng (túi mới) rồi nhận lại
       this.key = this.opts.onKeyInUse();
@@ -314,6 +338,11 @@ export class ClientLoot {
 
   private reply(r: LootReply): void {
     const p = this.pending.get(r.requestId);
+    // host báo: túi của khóa này vừa được giao cho kết nối khác (tab khác cùng trình duyệt)
+    if (!p && !r.ok && r.error === 'key_in_use' && r.requestId === this.claimId && this.claimed) {
+      this.loseInventory();
+      return;
+    }
     // kết quả claim: túi trong đó là của khóa vừa gửi
     if (r.inventory && (!p?.internal || r.ok)) this.learnInventory(r.inventory as InventoryState, false);
     if (r.chest) this.learnChest(r.chest as ChestState, false);
@@ -324,6 +353,13 @@ export class ClientLoot {
       return;
     }
     const chest = p.chestId ? this.chest(p.chestId) : null;
+    // host không còn biết mình (túi bị tab khác lấy, hoặc host quên) → nhận lại bằng khóa hiện tại, không giành
+    if (!r.ok && r.error === 'unknown_player' && this.claimed) {
+      this.claimed = false;
+      this.resume = false;
+      this.lost = true;
+      this.claim();
+    }
     if (r.ok && this._inventory) p.resolve({ ok: true, inventory: this.inventory!, chest });
     else
       p.resolve({
@@ -332,6 +368,18 @@ export class ClientLoot {
         inventory: this.inventory,
         chest,
       });
+  }
+
+  /** Mất túi: không còn thao tác được; claim lại (không resume) — host nhận thì có lại túi, không thì `key_taken`. */
+  private loseInventory(): void {
+    this.claimed = false;
+    this.resume = false;
+    this.lost = true;
+    this.claimError = 'key_taken';
+    this._inventory = null;
+    this.changed.emit({ kind: 'inventory' });
+    this.changed.emit({ kind: 'lost' });
+    this.claim();
   }
 
   private learnInventory(s: InventoryState, force: boolean): void {

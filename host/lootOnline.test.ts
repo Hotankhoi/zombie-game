@@ -3,7 +3,8 @@ import { generateChest } from '@shared/loot/chest';
 import { chestLocations } from '@shared/mapgen/chests';
 import { generateChunk, worldSeedForRoom } from '@shared/mapgen/world';
 import type { LootReplicaWire } from '@shared/types/loot';
-import { TestMatch, type MatchNode } from './testMatch';
+import { PLAYER_KEY_STORAGE } from '@net/playerKey';
+import { MemStorage, TestMatch, type MatchNode } from './testMatch';
 
 const ROOM = 'LOOTNET';
 const seed = worldSeedForRoom(ROOM);
@@ -150,5 +151,81 @@ describe('loot online — đồng bộ và đổi host (NetGame thật trên m�
     const bag = (r: LootReplicaWire) => r.inventories.find((e) => e.id === other.game.loot.owner)!.state;
     expect(bag(after)).toEqual(bag(before));
     expect(qty(after.chests.find((c) => c.id === chest.id)!.slots)).toBe(0);
+  });
+});
+
+describe('loot online — 2 tab cùng trình duyệt không cướp túi nhau (lỗi 2A #1)', () => {
+  /** Host `h` + tab 1 của trình duyệt (localStorage chung `local`). */
+  function browser() {
+    const m = new TestMatch(ROOM);
+    const local = new MemStorage();
+    const h = m.join('h', key('h'));
+    const s1 = new MemStorage();
+    const t1 = m.join('t1', { local, session: s1 });
+    m.until(() => h.game.loot.ready && t1.game.loot.ready);
+    const chest = chests[0]!;
+    m.place('t1', chest.x, chest.y);
+    return { m, local, h, t1, s1, chest };
+  }
+
+  it('khóa chỉ được nhớ cho tab sau khi host nhận; tab 2 tải lại trước khi claim xong không lấy túi tab 1', async () => {
+    const { m, local, t1, s1, chest } = browser();
+    expect(s1.getItem(PLAYER_KEY_STORAGE)).toBe(local.getItem(PLAYER_KEY_STORAGE));
+    await run(m, t1.game.loot.open(chest.id));
+    await run(m, t1.game.loot.takeAll(chest.id));
+    const bag = t1.game.loot.inventory!;
+    const owner = t1.game.loot.owner;
+    // tab 2 mở, tải lại ngay (chưa kịp claim) → sessionStorage của tab 2 vẫn trống → lần sau không phải "resume"
+    const s2 = new MemStorage();
+    m.join('t2', { local, session: s2 });
+    m.step(2);
+    expect(s2.getItem(PLAYER_KEY_STORAGE)).toBeNull();
+    m.leave('t2');
+    const t2b = m.join('t2b', { local, session: s2 });
+    m.until(() => t2b.game.loot.ready);
+    expect(t2b.game.loot.owner).not.toBe(owner); // host từ chối khóa chung → tab 2 có khóa + túi riêng
+    expect(s2.getItem(PLAYER_KEY_STORAGE)).not.toBe(local.getItem(PLAYER_KEY_STORAGE));
+    m.step(20);
+    expect(t1.game.loot.ready).toBe(true);
+    expect(t1.game.loot.owner).toBe(owner);
+    expect(t1.game.loot.inventory!.slots).toEqual(bag.slots);
+    expect(m.server().loot.ownerOf('t1')).toBe(owner);
+  });
+
+  it('tab 1 ẩn lâu (không input, vẫn gửi điểm host) → tab mới cùng khóa không lấy được túi', () => {
+    const { m, local, t1 } = browser();
+    const owner = t1.game.loot.owner;
+    m.hidden.add('t1');
+    m.step(400); // 20 s ẩn
+    const t3 = m.join('t3', { local, session: new MemStorage() });
+    m.until(() => t3.game.loot.ready);
+    expect(t3.game.loot.owner).not.toBe(owner);
+    expect(m.server().loot.ownerOf('t1')).toBe(owner);
+    m.hidden.delete('t1');
+    m.step(10);
+    expect(t1.game.loot.ready).toBe(true);
+    expect(t1.game.loot.claimError).toBeNull();
+  });
+
+  it('tab 1 treo hẳn ≥ 10 s → tab mới lấy được túi; tab 1 được báo ngay "key_taken", không giành lại', () => {
+    const { m, local, t1 } = browser();
+    const owner = t1.game.loot.owner;
+    const events: string[] = [];
+    t1.game.loot.changed.on((e) => events.push(e.kind));
+    m.frozen.add('t1');
+    m.step(220);
+    const t4 = m.join('t4', { local, session: new MemStorage() });
+    m.until(() => t4.game.loot.ready);
+    expect(t4.game.loot.owner).toBe(owner); // cùng khóa chung → lấy lại túi của tab đã treo
+    m.frozen.delete('t1');
+    m.step(40);
+    expect(events).toContain('lost');
+    expect(t1.game.loot.claimError).toBe('key_taken');
+    expect(t1.game.loot.ready).toBe(false);
+    expect(t1.game.loot.inventory).toBeNull();
+    // không giành qua lại: túi vẫn ở tab 4
+    m.step(100);
+    expect(m.server().loot.ownerOf('t4')).toBe(owner);
+    expect(t4.game.loot.ready).toBe(true);
   });
 });

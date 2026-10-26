@@ -59,6 +59,11 @@ export class LootUi {
       true,
     );
     loot.changed.on((e) => {
+      if (e.kind === 'lost') {
+        // tab khác cùng trình duyệt vừa lấy túi: đóng panel (đang hiện túi không còn là của mình) + báo rõ
+        this.closeAll();
+        this.toast(lootErrorText('key_taken'), true);
+      }
       if (e.kind !== 'chest') this.updateBag();
       if (e.kind === 'chest' && e.chestId !== this._chest?.id) return;
       this.refresh();

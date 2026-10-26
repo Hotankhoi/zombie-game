@@ -59,6 +59,30 @@ function setup(ids: PeerId[]) {
 }
 
 describe('ClientLoot – lớp dữ liệu loot phía máy khách', () => {
+  it('host không còn biết mình (unknown_player) → tự claim lại bằng khóa cũ, lấy lại đúng túi', async () => {
+    const { host, loot, step } = setup(['a']);
+    step(3);
+    const a = loot.get('a')!;
+    const bag = a.inventory!;
+    (host.loot as unknown as { owners: Map<string, string> }).owners.delete('a');
+    let done = false;
+    let outcome: Awaited<ReturnType<ClientLoot['open']>> | null = null;
+    void a.open(chest.id).then((o) => {
+      outcome = o;
+      done = true;
+    });
+    for (let i = 0; i < 10 && !done; i++) {
+      step();
+      await Promise.resolve();
+    }
+    expect(outcome).toMatchObject({ ok: false, error: 'unknown_player' });
+    step(3);
+    expect(a.ready).toBe(true);
+    expect(a.claimError).toBeNull();
+    expect(host.loot.ownerOf('a')).toBe(a.owner);
+    expect(a.inventory!.slots).toEqual(bag.slots);
+  });
+
   it('chưa có replica → not_ready; vào trận → ready, túi có dao, báo sự kiện', async () => {
     const { loot, step } = setup(['a']);
     const a = loot.get('a')!;

@@ -5,6 +5,7 @@ import {
   loadPlayerKey,
   newPlayerKey,
   ownerIdOf,
+  rememberPlayerKey,
   replacePlayerKey,
   type KeyStorage,
 } from './playerKey';
@@ -45,17 +46,24 @@ describe('playerKey', () => {
     expect(ownerIdOf(newPlayerKey())).not.toBe(ownerIdOf(key));
   });
 
-  it('tải lại tab → cùng khóa (resume); tab mới cùng trình duyệt → khóa chung (không resume); đổi khóa chỉ cho tab đó', () => {
+  it('tải lại tab → cùng khóa (resume) chỉ khi host đã nhận; tab mới cùng trình duyệt → khóa chung (không resume)', () => {
     const local = new Mem();
     const tab1 = new Mem();
     const first = loadPlayerKey(local, tab1);
     expect(first.resume).toBe(false);
     expect(local.getItem(PLAYER_KEY_STORAGE)).toBe(first.key);
+    // chưa claim thành công → sessionStorage trống → tải lại vẫn chưa phải "resume"
+    expect(tab1.getItem(PLAYER_KEY_STORAGE)).toBeNull();
+    expect(loadPlayerKey(local, tab1)).toEqual({ key: first.key, resume: false });
+    rememberPlayerKey(tab1, first.key);
     expect(loadPlayerKey(local, tab1)).toEqual({ key: first.key, resume: true });
     const tab2 = new Mem();
     expect(loadPlayerKey(local, tab2)).toEqual({ key: first.key, resume: false });
-    const own = replacePlayerKey(tab2);
+    const own = replacePlayerKey();
     expect(own).not.toBe(first.key);
+    // tab 2 tải lại trước khi host nhận khóa riêng → lại thử khóa chung (host từ chối), không lấy túi tab 1
+    expect(loadPlayerKey(local, tab2)).toEqual({ key: first.key, resume: false });
+    rememberPlayerKey(tab2, own);
     expect(loadPlayerKey(local, tab2)).toEqual({ key: own, resume: true });
     expect(local.getItem(PLAYER_KEY_STORAGE)).toBe(first.key);
   });

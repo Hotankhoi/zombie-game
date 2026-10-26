@@ -3,6 +3,8 @@ import { ConditionedTransport, type NetConditions } from '@net/conditions';
 import { LoopbackHub } from '@net/loopback';
 import { FakeTimers } from '@net/testTimers';
 import type { FromWorker, ToWorker } from '@host/workerProtocol';
+import type { KeyStorage } from '@net/playerKey';
+import type { Transport } from '@net/transport';
 import { MapgenSource } from '@shared/sim/mapgenSource';
 import { SIM_TICK_MS, type PeerId } from '@shared/types';
 import { Rng } from '@shared/util/rng';
@@ -27,6 +29,7 @@ export class InProcessHost implements HostRunner {
         loot: m.loot,
       });
     else if (m.t === 'in') this.server?.receive(m.from, m.data);
+    else if (m.t === 'seen') this.server?.heard(m.peer);
     else this.server?.removePeer(m.peer);
   }
   step(): void {
@@ -49,6 +52,17 @@ export interface MatchNode {
   key: string;
 }
 
+/** Bộ nhớ Web Storage giả (localStorage chung cả "trình duyệt", sessionStorage riêng từng tab). */
+export class MemStorage implements KeyStorage {
+  data = new Map<string, string>();
+  getItem(k: string) {
+    return this.data.get(k) ?? null;
+  }
+  setItem(k: string, v: string) {
+    this.data.set(k, v);
+  }
+}
+
 /**
  * Trận thử nhiều máy (chỉ cho test): NetGame thật của từng người trên LoopbackHub + ConditionedTransport (trễ, mất gói
  * kênh unreliable), đồng hồ giả, host chạy trong tiến trình. Mỗi `step()` = 1 tick 20Hz trên mọi máy.
@@ -59,20 +73,46 @@ export class TestMatch {
   readonly nodes = new Map<PeerId, MatchNode>();
   private rng = new Rng('match-loss');
   private seq = 0;
+  /** Tab ẩn: requestAnimationFrame dừng (không tick game / không input) nhưng hẹn giờ vẫn chạy (bầu host, điểm host). */
+  readonly hidden = new Set<PeerId>();
+  /** Tab treo hẳn: không chạy gì, không gửi gì (mạng chưa báo rời). */
+  readonly frozen = new Set<PeerId>();
 
   constructor(
     readonly room: string,
     private conditions: NetConditions = { latencyMs: 0, jitterMs: 0, loss: 0 },
   ) {}
 
-  /** Một máy vào phòng. `key` = playerKey (cùng khóa = cùng người, vd tải lại trang). */
-  join(id: PeerId, key: string, resume = false): MatchNode {
+  /**
+   * Một máy vào phòng. `key` = playerKey (cùng khóa = cùng người, vd tải lại trang), hoặc Web Storage giả (NetGame tự
+   * đọc/ghi khóa như trên trình duyệt: `local` chung, `session` riêng tab).
+   */
+  join(id: PeerId, key: string | { local: KeyStorage; session: KeyStorage }, resume = false): MatchNode {
     const sched = { setTimeout: this.timers.setTimeout, now: this.timers.now, random: () => this.rng.next() };
-    const transport = new ConditionedTransport(this.hub.join(id), this.conditions, sched);
-    const node: MatchNode = { id, transport, host: null, key, game: null as unknown as NetGame };
+    // tab treo (frozen): không gửi được gì (kể cả trả lời gói tới)
+    const raw = this.hub.join(id);
+    const mutable: Transport = {
+      selfId: raw.selfId,
+      peers: () => raw.peers(),
+      send: (data, o) => {
+        if (!this.frozen.has(id)) raw.send(data, o);
+      },
+      onMessage: (h) => raw.onMessage(h),
+      onPeerJoin: (h) => raw.onPeerJoin(h),
+      onPeerLeave: (h) => raw.onPeerLeave(h),
+      leave: () => raw.leave(),
+    };
+    const transport = new ConditionedTransport(mutable, this.conditions, sched);
+    const node: MatchNode = {
+      id,
+      transport,
+      host: null,
+      key: typeof key === 'string' ? key : '',
+      game: null as unknown as NetGame,
+    };
     node.game = new NetGame(transport, this.room, {
       zombieCount: 0,
-      playerKey: { key, resume },
+      ...(typeof key === 'string' ? { playerKey: { key, resume } } : { storage: key }),
       test: {
         now: this.timers.now,
         simBenchMs: 1,
@@ -96,10 +136,13 @@ export class TestMatch {
     for (let i = 0; i < n; i++) {
       this.seq++;
       for (const node of this.nodes.values()) {
+        if (this.frozen.has(node.id)) continue;
         node.game.election.tick();
-        node.game.tick({ seq: this.seq, moveX: 0, moveY: 0, aim: 0, buttons: 0 });
+        if (!this.hidden.has(node.id))
+          node.game.tick({ seq: this.seq, moveX: 0, moveY: 0, aim: 0, buttons: 0 });
       }
       for (const node of this.nodes.values()) {
+        if (this.frozen.has(node.id)) continue;
         if (node.host?.dead) node.host = null;
         node.host?.step();
       }

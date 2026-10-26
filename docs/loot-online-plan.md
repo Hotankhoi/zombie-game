@@ -49,7 +49,12 @@ E vẫn là cửa; mở panel thì nhân vật đứng yên (thế giới vẫn 
 
 Lỗi 2A tìm thấy khi thử 2 tab (chưa sửa, cần duyệt vì đụng `/net`, `/host`):
 
-1. **2 tab cùng trình duyệt có thể cướp túi nhau.** `loadPlayerKey` ghi khóa chung của localStorage vào sessionStorage ngay
+1. **ĐÃ SỬA (PR `a/loot-key-fix`, 2026-10-26).** sessionStorage chỉ ghi khóa khi host đã nhận (`rememberPlayerKey` sau
+   `claim` thành công); host đo "im lặng" theo mọi gói (ping/điểm host vẫn chạy khi tab ẩn, NetGame báo worker `seen`),
+   ngưỡng 10 s; túi bị giao cho kết nối khác → host trả lại đúng requestId claim cũ `key_in_use` cho tab cũ → tab đó
+   báo "Túi đồ của bạn đang được mở ở tab khác…" (`key_taken`, sự kiện `lost`), không tự tạo túi mới, không giành lại;
+   thao tác gặp `unknown_player` → claim lại (không resume). Test: `host/lootOnline.test.ts` "2 tab cùng trình duyệt…".
+   Mô tả cũ: **2 tab cùng trình duyệt có thể cướp túi nhau.** `loadPlayerKey` ghi khóa chung của localStorage vào sessionStorage ngay
    khi mở trang → tab thứ 2 tải lại (trước khi host trả `key_in_use`) được coi là `resume` và lấy túi của tab 1; host cũng cho
    lấy nếu tab 1 im ≥ 3 s (tab ẩn/thu nhỏ). Tab 1 không được báo: vẫn hiện túi của tab 2 như túi mình, mọi thao tác
    `unknown_player`. Hướng sửa: chỉ ghi sessionStorage sau khi `claim` thành công; ClientLoot gặp `unknown_player` → claim lại.

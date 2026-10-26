@@ -24,6 +24,8 @@ export const LOOT_ERROR_TEXT: Record<LootClientError, string> = {
   busy: 'Đang chờ host xác nhận thao tác trước.',
   host_changed: 'Vừa đổi host. Kiểm tra lại túi/rương rồi thử lại.',
   timeout: 'Host chưa trả lời. Kiểm tra kết nối rồi thử lại.',
+  key_taken:
+    'Túi đồ của bạn đang được mở ở tab khác của trình duyệt này. Đóng tab kia rồi tải lại tab này để lấy lại túi.',
 };
 
 export function lootErrorText(code: string): string {

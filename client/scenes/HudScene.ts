@@ -178,10 +178,11 @@ export class HudScene extends Phaser.Scene {
     this.bar(g, x, yStam, w, 6, me.stamina / PLAYER.maxStamina, me.exhausted ? 0x6d6d6d : 0xfdd835);
     this.barText.setText(`Máu ${Math.ceil(me.hp)}`).setPosition(x + w + 8, yHp - 3);
     const bag = this.world.lootUi.bag;
+    const taken = net?.loot.claimError === 'key_taken';
     this.bagText
-      .setVisible(bag !== null)
-      .setText(bag ? `Túi ${bag.used}/${bag.size} ô` : '')
-      .setColor(bag && bag.used >= bag.size ? '#ffb74d' : '#8d9891')
+      .setVisible(bag !== null || taken)
+      .setText(bag ? `Túi ${bag.used}/${bag.size} ô` : taken ? 'Túi đang mở ở tab khác' : '')
+      .setColor(taken || (bag && bag.used >= bag.size) ? '#ffb74d' : '#8d9891')
       .setPosition(x + w + 8, yStam - 4);
     this.hintText.setPosition(x, height - 66);
 
