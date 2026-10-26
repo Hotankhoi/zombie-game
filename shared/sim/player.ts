@@ -1,7 +1,9 @@
 import { PLAYER } from '@shared/data/player';
+import { SURVIVAL } from '@shared/data/survival';
 import type { PeerId, Vec2 } from '@shared/types';
 import { moveCircle, type BlockedFn } from './collision';
 import { Btn, aimToRad, hasBtn, type PlayerInput } from './input';
+import { staminaRegenFactor, stepSurvival } from './survival';
 import { countdown, reached } from './timer';
 import { PARTY } from './tuning/party';
 
@@ -35,6 +37,12 @@ export interface PlayerState {
   flashlight: boolean;
   /** > 0 = vừa hồi sinh, còn bất tử bấy nhiêu giây (không mất máu vì cắn/vũng/Boss). */
   shield: number;
+  /** GĐ 3b — no bụng 0..100 (100 = no), nước 0..100, nhiễm trùng 0..100 (0 = sạch). Xem shared/sim/survival.ts. */
+  food: number;
+  water: number;
+  infection: number;
+  /** Máu tối đa hiện tại (nhiễm trùng nặng làm giảm dần, ≤ PLAYER.maxHp). */
+  maxHp: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -56,6 +64,10 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     dragging: false,
     flashlight: false,
     shield: 0,
+    food: SURVIVAL.food.start,
+    water: SURVIVAL.water.start,
+    infection: 0,
+    maxHp: PLAYER.maxHp,
   };
 }
 
@@ -81,6 +93,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
     return;
   }
   p.facing = aimToRad(input.aim);
+  stepSurvival(p, dt);
   if (hasBtn(input, Btn.Flashlight) && (p.prevButtons & Btn.Flashlight) === 0) p.flashlight = !p.flashlight;
 
   let mx = Math.sign(input.moveX);
@@ -122,7 +135,10 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
 function regenStamina(p: PlayerState, dt: number): void {
   p.staminaIdle += dt;
   if (reached(p.staminaIdle, PLAYER.staminaRegenDelaySec)) {
-    p.stamina = Math.min(PLAYER.maxStamina, p.stamina + PLAYER.staminaRegenPerSec * dt);
+    p.stamina = Math.min(
+      PLAYER.maxStamina,
+      p.stamina + PLAYER.staminaRegenPerSec * staminaRegenFactor(p) * dt,
+    );
   }
   if (p.exhausted && p.stamina >= PLAYER.maxStamina * PLAYER.sprintResumeFraction) {
     p.exhausted = false;

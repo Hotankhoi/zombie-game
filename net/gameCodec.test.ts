@@ -33,6 +33,7 @@ const snap: SnapshotMsg = {
   ],
   doors: [{ x: -38, y: 1003 }],
   pools: [{ kind: 'acid', x: -35.5, y: 1002.25, radius: 1.125, arming: true, ttl: 3.2 }],
+  vitals: [{ slot: 2, food: 42.5, water: 7.25, infection: 63, maxHp: 81.5 }],
   horde: {
     number: 2,
     active: true,
@@ -160,13 +161,16 @@ describe('gameCodec', () => {
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
     // khối mở rộng nối cuối gói: GĐ 2c (người chơi), GĐ 4 (vũng), GĐ 5 (đợt tràn), zombie xa (gói này không có con nào)
-    const farExt = 2;
+    const vitalsExt = 1 + snap.vitals!.length * 9;
+    const farExt = 2 + vitalsExt;
     const hordeExt = 1 + 5 + snap.horde!.rows.length * 4 + farExt;
     const poolsExt = 1 + snap.pools.length * 8;
     const ext = 1 + snap.players.length * 10 + poolsExt + hordeExt;
     for (let n = 0; n < full.length; n++) {
       // cắt đúng ranh giới khối mở rộng = gói bản cũ hơn, vẫn hợp lệ
-      const boundary = [ext, poolsExt + hordeExt, hordeExt, farExt].some((e) => n === full.length - e);
+      const boundary = [ext, poolsExt + hordeExt, hordeExt, farExt, vitalsExt].some(
+        (e) => n === full.length - e,
+      );
       if (!boundary) expect(decodeGame(full.subarray(0, n))).toBeNull();
     }
     expect(decodeGame(new Uint8Array([1, 2, 3]))).toBeNull(); // gói phòng chờ
@@ -178,7 +182,17 @@ describe('gameCodec', () => {
     const old = decodeGame(
       full.subarray(
         0,
-        full.length - (1 + snap.players.length * 10 + 1 + snap.pools.length * 8 + 1 + 5 + 4 + 2),
+        full.length -
+          (1 +
+            snap.players.length * 10 +
+            1 +
+            snap.pools.length * 8 +
+            1 +
+            5 +
+            4 +
+            2 +
+            1 +
+            snap.vitals!.length * 9),
       ),
     ) as SnapshotMsg;
     expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });

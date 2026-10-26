@@ -8,6 +8,7 @@ import {
   type WireEvent,
   type WireHorde,
   type WirePlayer,
+  type WireVitals,
 } from '@net/gameCodec';
 import { isLootPacket } from '@net/lootCodec';
 import { encodeRoomFull } from '@net/roomFull';
@@ -350,6 +351,23 @@ export class HostServer {
     }
   }
 
+  /**
+   * Chỉ số sinh tồn gửi cho người nhận `c`: của chính họ (dự đoán + HUD) + 1 đồng đội xoay vòng theo số thứ tự snapshot
+   * (mỗi đồng đội ≤ 0,3 s một lần — đủ để lên host thay mà không mất chỉ số, ~190 B/s mỗi người).
+   */
+  private vitalsFor(c: Client, round: number): WireVitals[] {
+    const out: WireVitals[] = [];
+    const add = (id: PeerId, slot: number) => {
+      const p = this.world.players.get(id);
+      if (p) out.push({ slot, food: p.food, water: p.water, infection: p.infection, maxHp: p.maxHp });
+    };
+    add(c.id, c.slot);
+    const others = [...this.clients.values()].filter((o) => o !== c).sort((a, b) => a.slot - b.slot);
+    const o = others[round % Math.max(1, others.length)];
+    if (o) add(o.id, o.slot);
+    return out;
+  }
+
   private sendSnapshots(): void {
     const w = this.world;
     const players: WirePlayer[] = [];
@@ -376,6 +394,7 @@ export class HostServer {
           })),
         }
       : null;
+    const round = w.tick / SNAPSHOT_EVERY;
     for (const c of this.clients.values()) {
       const me = w.players.get(c.id);
       if (!me) continue;
@@ -413,6 +432,7 @@ export class HostServer {
               arming: p.armIn > 0,
               ttl: p.ttl,
             })),
+          vitals: this.vitalsFor(c, round),
         }),
         channel: 'unreliable',
       });

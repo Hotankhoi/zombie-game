@@ -35,17 +35,15 @@ describe('worldBackup', () => {
     expect(d.tick).toBe(s.tick);
     expect(d.rngState).toBe(s.rngState);
     expect(d.nextZombieId).toBe(s.nextZombieId);
-    expect(d.players).toEqual(
-      s.players.map((p) => ({
-        ...p,
-        facing: Math.fround(p.facing),
-        hp: Math.fround(p.hp),
-        stamina: Math.fround(p.stamina),
-        staminaIdle: Math.fround(p.staminaIdle),
-        attackCd: Math.fround(p.attackCd),
-        respawnIn: Math.fround(p.respawnIn),
-      })),
-    );
+    // mọi số của người chơi ghi f32, trừ vị trí (f64)
+    const f32 = (p: (typeof s.players)[number]) =>
+      Object.fromEntries(
+        Object.entries(p).map(([k, v]) => [
+          k,
+          typeof v === 'number' && k !== 'x' && k !== 'y' ? Math.fround(v) : v,
+        ]),
+      );
+    expect(d.players).toEqual(s.players.map(f32));
     expect(d.zombies.map((z) => z.id)).toEqual(s.zombies.map((z) => z.id));
     for (let i = 0; i < s.zombies.length; i++) {
       expect(Math.abs(d.zombies[i]!.x - s.zombies[i]!.x)).toBeLessThanOrEqual(1 / 64 + 1e-9);
