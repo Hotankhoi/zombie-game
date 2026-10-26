@@ -7,7 +7,7 @@ import { bagUsage, gainedItems, pickupText, toInventoryResult, toLootResult } fr
 import type { InventoryState, ItemStack } from '@shared/inventory/inventory';
 
 const chest = (id: string, revision: number): ChestState => ({
-  version: 1,
+  version: 2,
   id,
   region: 'residential',
   revision,

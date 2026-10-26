@@ -18,6 +18,7 @@ import { PARTY } from './tuning/party';
 import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
 import { applyUse, checkUse, type UseError } from './items';
 import { fireGun, isGun, magOf, meleeOf, startReload, type WeaponId } from './guns';
+import { absorb, infectionFactor, wearArmor } from './armor';
 import type { GunId } from '@shared/data/guns';
 import { infectFromBite, respawnSurvival } from './survival';
 import type { ItemId, Rarity } from '@shared/data/items';
@@ -174,6 +175,8 @@ export class SimWorld {
   private wallHp = new Map<number, number>();
   /** Ô map vừa đổi trong tick (tường vỡ) — host gửi cho mọi người dạng danh sách ô (GameMsg.MapDelta). */
   mapChanges: Vec2[] = [];
+  /** Giáp vừa vỡ trong tick (GĐ 3b) — host trừ 1 món đó khỏi túi người chơi. */
+  armorBreaks: { player: PeerId; item: ItemId; rarity: Rarity }[] = [];
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
@@ -320,6 +323,7 @@ export class SimWorld {
   step(inputs: ReadonlyMap<PeerId, PlayerInput>): void {
     this.events = [];
     this.mapChanges = [];
+    this.armorBreaks = [];
     const players = this.sortedPlayers();
 
     for (const p of players) {
@@ -425,7 +429,7 @@ export class SimWorld {
       if (pool.armIn > 0) continue;
       for (const p of players) {
         if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - pool.x, p.y - pool.y) > pool.radius) continue;
-        p.hp = Math.max(0, p.hp - pool.dps * DT);
+        p.hp = Math.max(0, p.hp - this.hurt(p, pool.dps * DT, pool.kind === 'acid'));
         if (p.hp === 0) this.down(p);
       }
     }
@@ -437,7 +441,7 @@ export class SimWorld {
     const reach = radiusOf(z) + BOSS.slamRange;
     for (const p of this.sortedPlayers()) {
       if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - z.x, p.y - z.y) > reach) continue;
-      p.hp = Math.max(0, p.hp - BOSS.slamDamage);
+      p.hp = Math.max(0, p.hp - this.hurt(p, BOSS.slamDamage));
       this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
       if (p.hp === 0) this.down(p);
     }
@@ -743,7 +747,8 @@ export class SimWorld {
           `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)},` +
           `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)},${f(p.healLeft)},${f(p.healRate)},` +
           `${f(p.stillFor)},${p.weapon},${p.weaponRarity},${p.magPistol},${p.magRifle},${p.reloadGun},` +
-          `${f(p.reloadLeft)},${p.reloadAmount},${f(p.recoil)},${p.shots}`,
+          `${f(p.reloadLeft)},${p.reloadAmount},${f(p.recoil)},${p.shots},${p.armorHead},${p.armorBody},` +
+          `${p.armorLegs},${f(p.durHead)},${f(p.durBody)},${f(p.durLegs)}`,
       );
     }
     for (const z of this.zombies) {
@@ -987,6 +992,19 @@ export class SimWorld {
     }
   }
 
+  /** Sát thương qua giáp (GĐ 3b): giảm theo bộ đang mặc, giáp mòn; món vỡ → `armorBreaks` (host trừ khỏi túi). */
+  private hurt(p: PlayerState, damage: number, acid = false): number {
+    const r = absorb(p, damage, acid);
+    for (const b of r.broken) this.armorBreaks.push({ player: p.id, ...b });
+    return r.damage;
+  }
+
+  /** Mặc giáp (GĐ 3b, host đã kiểm tra có món trong túi). */
+  wearArmor(id: PeerId, itemId: ItemId, rarity: Rarity): boolean {
+    const p = this.players.get(id);
+    return !!p && wearArmor(p, itemId, rarity);
+  }
+
   private bite(z: ZombieState, p: PlayerState): void {
     if (p.shield > 0) return; // vừa hồi sinh: bất tử
     this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
@@ -995,8 +1013,9 @@ export class SimWorld {
       if (p.downedFor === 0) this.die(p);
       return;
     }
-    p.hp = Math.max(0, p.hp - Z.biteDamage * KIND[z.kind].biteDamage);
-    infectFromBite(p, KIND[z.kind].biteDamage);
+    const factor = infectionFactor(p);
+    p.hp = Math.max(0, p.hp - this.hurt(p, Z.biteDamage * KIND[z.kind].biteDamage));
+    infectFromBite(p, KIND[z.kind].biteDamage * factor);
     if (p.hp === 0) this.down(p);
   }
 

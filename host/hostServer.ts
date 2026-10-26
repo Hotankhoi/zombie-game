@@ -19,6 +19,7 @@ import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import { isUp, type PlayerState } from '@shared/sim/player';
 import { isWeaponId, weaponCode } from '@shared/sim/guns';
+import { isArmor } from '@shared/sim/armor';
 import { GUNS, type GunId } from '@shared/data/guns';
 import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
@@ -28,7 +29,7 @@ import { HostLoot } from './hostLoot';
 import { chestLocations } from '@shared/mapgen/chests';
 import { CHUNK_SIZE, generateChunk } from '@shared/mapgen/world';
 import type { LootRegion } from '@shared/data/loot';
-import type { ItemStack } from '@shared/inventory/inventory';
+import { removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -145,6 +146,8 @@ export class HostServer {
         checkUse: (id, item, target) => this.world.checkItemUse(id, item.itemId, target),
         applyUse: (id, item, target) => this.world.applyItemUse(id, item.itemId, item.rarity, target),
         equip: (id, item) => {
+          if (isArmor(item.itemId))
+            return this.world.wearArmor(id, item.itemId, item.rarity) ? null : 'not_equippable';
           if (!isWeaponId(item.itemId)) return 'not_equippable';
           this.world.equip(id, item.itemId, item.rarity);
           return null;
@@ -221,6 +224,7 @@ export class HostServer {
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
+    this.breakArmor();
     // loot trước sao lưu: mẩu 0 mang đúng bản vừa phát cho mọi người
     this.loot.flush(this.world.tick);
     for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
@@ -270,6 +274,20 @@ export class HostServer {
       if (changed.length > 0) this.sendMapDelta(changed, [id]);
     }
     return c;
+  }
+
+  /** Giáp vỡ trong tick (GĐ 3b): host trừ 1 món đó (đúng độ hiếm) khỏi túi người mặc — giao dịch do host tạo. */
+  private breakArmor(): void {
+    for (const b of this.world.armorBreaks) {
+      const owner = this.loot.ownerOf(b.player);
+      if (!owner) continue;
+      this.loot.hostUpdate(owner, (s) => {
+        const slot = s.slots.findIndex((x) => x?.itemId === b.item && x.rarity === b.rarity);
+        return slot < 0
+          ? { ok: false, state: s, error: 'empty_slot' }
+          : removeFromSlot(s, slot, 1, s.revision);
+      });
+    }
   }
 
   /** Rương gần điểm xuất phát nhất của khu `devRegion` (tìm 1 lần, trong 7×7 chunk). */

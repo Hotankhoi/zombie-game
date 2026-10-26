@@ -59,6 +59,12 @@ const snap: SnapshotMsg = {
       reloadAmount: 12,
       recoil: 6.5,
       shots: 63,
+      armorHead: 3,
+      armorBody: 0,
+      armorLegs: 5,
+      durHead: 72.5,
+      durBody: 0,
+      durLegs: 100,
     },
   ],
   horde: {

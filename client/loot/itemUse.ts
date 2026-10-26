@@ -7,6 +7,10 @@ import { isUp, type PlayerState } from '@shared/sim/player';
 import type { PeerId } from '@shared/types';
 import { lootErrorText } from './lootMessages';
 import { pickQuickUse, type Mate, type QuickKey } from './quickUse';
+import { brokenArmor } from './weaponControl';
+
+/** Câu lỗi riêng cho dùng đồ (câu chung của loot nói về lấy đồ trong rương). */
+const NOT_UP_TEXT = 'Đang gục hoặc đã chết nên không dùng đồ được.';
 
 /** Đang chờ đứng yên để dùng bộ sơ cứu. */
 interface Channel {
@@ -24,6 +28,8 @@ interface Channel {
 export class ItemUse {
   private channel: Channel | null = null;
   private me: PlayerState | null = null;
+  /** Trạng thái frame trước (báo giáp vỡ). */
+  private last: PlayerState | null = null;
   private mates: readonly Mate[] = [];
 
   constructor(
@@ -34,6 +40,8 @@ export class ItemUse {
 
   /** Gọi mỗi frame: nhân vật mình (dự đoán) + đồng đội — để chọn mục tiêu và theo dõi đứng yên. */
   update(me: PlayerState | null, mates: readonly Mate[]): void {
+    if (me) for (const name of brokenArmor(this.last, me)) this.toast(`${name} đã vỡ!`, true);
+    this.last = me ? { ...me } : null;
     this.me = me;
     this.mates = mates;
     const c = this.channel;
@@ -84,7 +92,7 @@ export class ItemUse {
   private start(slot: number, itemId: ItemId, target: PeerId | null): void {
     const me = this.me;
     if (!me || !isUp(me)) {
-      this.toast(lootErrorText('player_not_up'), true);
+      this.toast(NOT_UP_TEXT, true);
       return;
     }
     if (this.loot.busy || this.channel) {
@@ -94,7 +102,7 @@ export class ItemUse {
     // kiểm tra sớm phía mình (máu đầy, không nhiễm…) — host vẫn kiểm tra lại
     const early = target === null ? checkUse({ ...me, stillFor: Infinity }, null, itemId, () => false) : null;
     if (early) {
-      this.toast(lootErrorText(early), true);
+      this.toast(early === 'player_not_up' ? NOT_UP_TEXT : lootErrorText(early), true);
       return;
     }
     const still = CONSUMABLES[itemId]?.stillSec;
@@ -116,7 +124,7 @@ export class ItemUse {
   private async send(slot: number, itemId: ItemId, target: PeerId | null): Promise<void> {
     const out: LootOutcome = await this.loot.use(slot, target);
     if (!out.ok) {
-      this.toast(lootErrorText(out.error), true);
+      this.toast(out.error === 'player_not_up' ? NOT_UP_TEXT : lootErrorText(out.error), true);
       return;
     }
     const name = ITEMS[itemId].name;

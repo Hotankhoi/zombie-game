@@ -11,7 +11,7 @@ import { PARTY } from '@shared/sim/tuning/party';
 import { visionPolygon, visionShapes } from '@shared/sim/vision';
 import type { WorldScene } from './WorldScene';
 import { QUICK_KEYS, QUICK_LABELS, countOf, quickItem } from '../loot/quickUse';
-import { weaponLabel } from '../loot/weaponControl';
+import { armorLabel, weaponLabel } from '../loot/weaponControl';
 import { isGun, magOf, reloading } from '@shared/sim/guns';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
@@ -38,6 +38,8 @@ export class HudScene extends Phaser.Scene {
   private quickText!: Phaser.GameObjects.Text;
   /** Vũ khí đang cầm + đạn (GĐ 3b). */
   private weaponText!: Phaser.GameObjects.Text;
+  /** Giáp đang mặc + độ bền (GĐ 3b). */
+  private armorText!: Phaser.GameObjects.Text;
   /** Số ô túi đã dùng (phần 2B loot). */
   private bagText!: Phaser.GameObjects.Text;
   /** Chữ dùng lại cho mũi tên và khung đội (tối đa MAX_PLAYERS - 1 đồng đội). */
@@ -93,6 +95,9 @@ export class HudScene extends Phaser.Scene {
     this.vitalText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
     this.weaponText = this.add
       .text(0, 0, '', { ...style, fontSize: '13px', fontStyle: 'bold', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(1, 1);
+    this.armorText = this.add
+      .text(0, 0, '', { ...style, fontSize: '11px', color: '#c9d1cc', stroke: '#000', strokeThickness: 3 })
       .setOrigin(1, 1);
     this.quickText = this.add
       .text(0, 0, '', { ...style, fontSize: '11px', color: '#c9d1cc', stroke: '#000', strokeThickness: 3 })
@@ -489,6 +494,10 @@ export class HudScene extends Phaser.Scene {
       .setText(weaponLabel(me, inv))
       .setColor(empty ? '#ffb74d' : '#e6ebe7')
       .setPosition(width - 16, height - 26)
+      .setVisible(true);
+    this.armorText
+      .setText(armorLabel(me))
+      .setPosition(width - 16, height - 44)
       .setVisible(true);
     const p = ui.items.progress;
     if (p === null) return;

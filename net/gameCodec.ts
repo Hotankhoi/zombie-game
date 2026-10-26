@@ -117,6 +117,13 @@ export const VITAL_FIELDS = [
   'reloadAmount',
   'recoil',
   'shots',
+  /** giáp (GĐ 3b): độ hiếm đang mặc (0 = không) + độ bền từng chỗ */
+  'armorHead',
+  'armorBody',
+  'armorLegs',
+  'durHead',
+  'durBody',
+  'durLegs',
 ] as const;
 export type VitalField = (typeof VITAL_FIELDS)[number];
 export type WireVitals = { slot: number } & Record<VitalField, number>;

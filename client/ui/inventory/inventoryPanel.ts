@@ -36,6 +36,7 @@ const ICONS: Record<ItemCategory, string> = {
   medical: '<path d="M6 10h20v17H6zM11 10V6h10v4m-5 4v9m-4-4h8"/>',
   food: '<path d="M11 4h10v5l3 5v13H8V14l3-5Zm0 5h10M8 17h16m-12 4h8"/>',
   material: '<path d="m6 11 10-6 10 6v14L16 29 6 25Zm0 0 10 6 10-6M16 17v12M11 8l10 6"/>',
+  armor: '<path d="M16 4 6 8v8c0 6 4 10 10 12 6-2 10-6 10-12V8Zm0 5v15"/>',
 };
 const ITEM_ICONS: Partial<Record<ItemId, string>> = {
   pistol: '<path d="M5 10h23v6H17l-3 11H8l2-11H5Zm14 6v4h-5M24 10V7"/>',

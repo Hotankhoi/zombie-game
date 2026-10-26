@@ -3,6 +3,7 @@ import type { ChestLocation } from '@shared/mapgen/chests';
 import { mountInventoryPanel } from '../ui/inventory/inventoryPanel';
 import { mountLootPanel } from '../ui/loot/lootPanel';
 import type { WeaponId } from '@shared/sim/guns';
+import { isArmor } from '@shared/sim/armor';
 import { ItemUse } from './itemUse';
 import { WEAPON_ORDER, WeaponControl } from './weaponControl';
 import { lootErrorText } from './lootMessages';
@@ -168,7 +169,13 @@ export class LootUi {
         toInventoryResult(await this.loot.command(cmd), this.loot.inventory ?? inventory),
       describeError: lootErrorText,
       actionLabel: (stack) =>
-        ItemUse.usable(stack) ? 'Dùng' : WEAPON_ORDER.includes(stack.itemId as WeaponId) ? 'Cầm' : null,
+        ItemUse.usable(stack)
+          ? 'Dùng'
+          : WEAPON_ORDER.includes(stack.itemId as WeaponId)
+            ? 'Cầm'
+            : isArmor(stack.itemId)
+              ? 'Mặc'
+              : null,
       onAction: (slot, stack) => {
         if (ItemUse.usable(stack)) this.items.useSlot(slot, stack);
         else void this.weapons.equip(stack.itemId, stack.rarity);
