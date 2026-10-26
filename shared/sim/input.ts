@@ -13,6 +13,11 @@ export interface PlayerInput {
   aim: number;
   /** Các bit trong Btn. */
   buttons: number;
+  /**
+   * GĐ 3b: tick của thế giới máy mình đang VẼ zombie (đã lùi nội suy) lúc tạo input này — host bắn súng với vị trí
+   * zombie lùi về lúc đó (bù trễ, tối đa SHOT_REWIND_TICKS). Không có = không lùi.
+   */
+  view?: number;
 }
 
 export const Btn = {

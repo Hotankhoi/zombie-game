@@ -1,4 +1,4 @@
-# Hợp đồng loot online (từ v3; hiện tại v7 — xem mục "Tương thích")
+# Hợp đồng loot online (từ v3; hiện tại v8 — xem mục "Tương thích")
 
 PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dùng v2 ở PR #6). Chưa có codec hay kết nối gameplay. Khi tích hợp các PR xếp chồng, giữ phiên bản 3; v1/v2 không được vào cùng phòng v3.
 
@@ -24,7 +24,7 @@ PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dù
 
 ## Tương thích giữa các phiên bản (gộp từ PR #35 của B, sửa theo `main`)
 
-`PROTOCOL_VERSION` hiện là **7** (`shared/types/index.ts`). Session chỉ cho người **cùng** `PROTOCOL_VERSION` vào chung
+`PROTOCOL_VERSION` hiện là **8** (`shared/types/index.ts`). Session chỉ cho người **cùng** `PROTOCOL_VERSION` vào chung
 trận (PR #23: khác bản → "Bạn đang dùng bản cũ, bấm để tải lại").
 
 | Bản | Ai / PR | Thay đổi                                                                                            |
@@ -34,6 +34,7 @@ trận (PR #23: khác bản → "Bạn đang dùng bản cũ, bấm để tải 
 | 5   | A, #32  | Hành động `claim` (playerKey → `ownerId`), host mới thu replica của mọi người trước khi nhận ghi.   |
 | 6   | A, 3b   | Chỉ số sinh tồn trong snapshot (khối mở rộng) + bản lưu 125 bố cục 7.                               |
 | 7   | A, 3b   | Host xử lý `use` (trừ đồ + hiệu ứng khi mọi người đã ACK), lỗi `not_usable`…, bản lưu 125 bố cục 8. |
+| 8   | A, 3b   | Host xử lý `equip`/`reload`, sự kiện bắn (tia đạn), vũ khí trong snapshot, bản lưu 125 bố cục 9.    |
 
 - Bản 5 yêu cầu xử lý đủ gói 110–113 và **thu hồi bản sao túi/rương trước khi host mới nhận ghi**; bản 3–4 thiếu phần này
   nên không được vào chung phòng bản 5.

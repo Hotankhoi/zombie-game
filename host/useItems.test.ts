@@ -203,3 +203,61 @@ describe('dùng đồ khi host rời giữa chừng — không nhân đôi', () 
       expect(left + fed).toBeLessThanOrEqual(1);
     });
 });
+
+describe('vũ khí online (GĐ 3b) — cầm và nạp đạn qua host', () => {
+  it('cầm món có trong túi; món không có → not_owned; súng không có đạn trong túi → no_ammo', async () => {
+    const { host, loot, step, give } = setup(['a']);
+    give('a', 'pistol', 1);
+    step(3);
+    const a = loot.get('a')!;
+    const me = host.world.players.get('a')!;
+    expect(await settle(a.equip('rifle', 'common'), step)).toMatchObject({ ok: false, error: 'not_owned' });
+    expect(await settle(a.reload(), step)).toMatchObject({ ok: false, error: 'no_gun' });
+    expect((await settle(a.equip('pistol', 'common'), step)).ok).toBe(true);
+    expect(me.weapon).toBe('pistol');
+    expect(await settle(a.reload(), step)).toMatchObject({ ok: false, error: 'no_ammo' });
+  });
+
+  it('nạp đạn: trừ đúng số còn thiếu khỏi túi, hết giờ nạp mới vào băng; đổi vũ khí giữa chừng vẫn vào đúng súng', async () => {
+    const { host, loot, step, give } = setup(['a']);
+    give('a', 'pistol', 1);
+    give('a', 'pistol_ammo', 30);
+    step(3);
+    const a = loot.get('a')!;
+    const me = host.world.players.get('a')!;
+    await settle(a.equip('pistol', 'common'), step);
+    me.magPistol = 4;
+    const p = a.reload();
+    await settle(a.equip('knife', 'common'), step); // đổi sang dao ngay
+    expect((await settle(p, step)).ok).toBe(true);
+    expect(count(a.inventory, 'pistol_ammo')).toBe(30 - 8);
+    step(30); // 1.5 s > 1.2 s nạp
+    expect(me.magPistol).toBe(12);
+    expect(me.magRifle).toBe(0);
+    await settle(a.equip('pistol', 'common'), step);
+    expect(await settle(a.reload(), step)).toMatchObject({ ok: false, error: 'mag_full' });
+  });
+
+  it('bắn qua mạng: tốn đạn trong băng, zombie trúng mất máu, mọi máy nhận sự kiện tia đạn của người khác', () => {
+    const m = new TestMatch('GUNNET', { latencyMs: 150, jitterMs: 0, loss: 0.05 });
+    const nodes = ['a', 'b'].map((id) => m.join(id, `gun${id}`.padEnd(22, 'x')));
+    m.until(() => nodes.every((n) => n.game.loot.ready));
+    const shooter = nodes[0]!;
+    const w = m.server().world;
+    const p = w.players.get(shooter.id)!;
+    w.equip(shooter.id, 'pistol', 'common');
+    p.magPistol = 12;
+    m.step(10);
+    expect(shooter.game.sync.predictor.state!.weapon).toBe('pistol');
+    let saw = false;
+    nodes[1]!.game.sync.events = [];
+    for (let i = 0; i < 60 && !saw; i++) {
+      // bấm chuột mỗi 2 tick (súng lục bán tự động)
+      shooter.game.tick({ seq: 100000 + i, moveX: 0, moveY: 0, aim: 0, buttons: i % 2 === 0 ? 2 : 0 });
+      m.step();
+      saw = nodes[1]!.game.sync.events.some((e) => e.type === 'shot' && e.player === shooter.id);
+    }
+    expect(saw).toBe(true);
+    expect(p.magPistol).toBeLessThan(12);
+  });
+});

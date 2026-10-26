@@ -28,6 +28,12 @@ export const LOOT_ERROR_TEXT: Record<LootClientError, string> = {
   not_still: 'Phải đứng yên vài giây (không đi, không đánh) mới dùng được bộ sơ cứu.',
   no_target: 'Đồng đội ở quá xa hoặc bị che. Lại gần hơn rồi thử lại.',
   not_needed: 'Chưa cần dùng món này lúc này.',
+  not_equippable: 'Món này không cầm/mặc được.',
+  not_owned: 'Món này không còn trong túi của bạn.',
+  no_gun: 'Đang không cầm súng.',
+  mag_full: 'Băng đạn đã đầy.',
+  no_ammo: 'Hết đạn loại này trong túi.',
+  reloading: 'Đang nạp đạn…',
   key_taken:
     'Túi đồ của bạn đang được mở ở tab khác của trình duyệt này. Đóng tab kia rồi tải lại tab này để lấy lại túi.',
 };

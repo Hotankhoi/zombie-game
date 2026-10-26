@@ -2,7 +2,9 @@ import type { ClientLoot } from '@net/clientLoot';
 import type { ChestLocation } from '@shared/mapgen/chests';
 import { mountInventoryPanel } from '../ui/inventory/inventoryPanel';
 import { mountLootPanel } from '../ui/loot/lootPanel';
+import type { WeaponId } from '@shared/sim/guns';
 import { ItemUse } from './itemUse';
+import { WEAPON_ORDER, WeaponControl } from './weaponControl';
 import { lootErrorText } from './lootMessages';
 import { bagUsage, gainedItems, pickupText, toInventoryResult, toLootResult } from './outcome';
 import './lootUi.css';
@@ -30,6 +32,8 @@ export class LootUi {
   private opening = false;
   /** Dùng đồ (GĐ 3b): phím 1–4, nút "Dùng", sơ cứu đứng yên. */
   readonly items: ItemUse;
+  /** Vũ khí (GĐ 3b): X / lăn chuột đổi, Q nạp đạn, nút "Cầm". */
+  readonly weapons: WeaponControl;
 
   constructor(
     parent: HTMLElement,
@@ -37,6 +41,7 @@ export class LootUi {
     nameOf: (id: string) => string = () => 'đồng đội',
   ) {
     this.items = new ItemUse(loot, (t, e) => this.toast(t, e), nameOf);
+    this.weapons = new WeaponControl(loot, (t, e) => this.toast(t, e));
     this.overlay = document.createElement('div');
     this.overlay.className = 'loot-ui';
     this.overlay.hidden = true;
@@ -162,8 +167,12 @@ export class LootUi {
       onCommand: async (cmd) =>
         toInventoryResult(await this.loot.command(cmd), this.loot.inventory ?? inventory),
       describeError: lootErrorText,
-      actionLabel: (stack) => (ItemUse.usable(stack) ? 'Dùng' : null),
-      onAction: (slot, stack) => this.items.useSlot(slot, stack),
+      actionLabel: (stack) =>
+        ItemUse.usable(stack) ? 'Dùng' : WEAPON_ORDER.includes(stack.itemId as WeaponId) ? 'Cầm' : null,
+      onAction: (slot, stack) => {
+        if (ItemUse.usable(stack)) this.items.useSlot(slot, stack);
+        else void this.weapons.equip(stack.itemId, stack.rarity);
+      },
     });
     if (!this.chestPanel) this.focusFirst();
   }

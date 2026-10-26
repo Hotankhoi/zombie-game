@@ -2,6 +2,7 @@ import type { WorldState } from '@shared/sim/world';
 import type { Channel, PeerId } from '@shared/types';
 import type { LootReplicaWire } from '@shared/types/loot';
 import type { ItemStack } from '@shared/inventory/inventory';
+import type { LootRegion } from '@shared/data/loot';
 
 /** Tin nhắn luồng chính → Web Worker host. */
 export type ToWorker =
@@ -12,6 +13,8 @@ export type ToWorker =
       zombieCount?: number;
       startTick?: number;
       restore?: WorldState;
+      /** CHỈ bản dev (`?den=`). */
+      devSpawnRegion?: LootRegion;
       /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
       loot?: {
         restore?: LootReplicaWire;

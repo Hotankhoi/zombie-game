@@ -26,6 +26,7 @@ export class InProcessHost implements HostRunner {
         zombieCount: m.zombieCount,
         startTick: m.startTick,
         restore: m.restore,
+        devSpawnRegion: m.devSpawnRegion,
         loot: m.loot,
       });
     else if (m.t === 'in') this.server?.receive(m.from, m.data);

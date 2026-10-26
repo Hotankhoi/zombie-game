@@ -3,6 +3,8 @@ import { SURVIVAL } from '@shared/data/survival';
 import type { PeerId, Vec2 } from '@shared/types';
 import { moveCircle, type BlockedFn } from './collision';
 import { Btn, aimToRad, hasBtn, type PlayerInput } from './input';
+import type { Rarity } from '@shared/data/items';
+import { stepGun, type WeaponId } from './guns';
 import { staminaRegenFactor, stepSurvival } from './survival';
 import { countdown, reached } from './timer';
 import { PARTY } from './tuning/party';
@@ -48,6 +50,20 @@ export interface PlayerState {
   healRate: number;
   /** Đã đứng yên (không đi, không đánh) bao lâu (giây) — bộ sơ cứu cần đứng yên. */
   stillFor: number;
+  /** GĐ 3b — vũ khí đang cầm (món + độ hiếm trong túi, host kiểm tra khi `equip`). Xem shared/sim/guns.ts. */
+  weapon: WeaponId;
+  weaponRarity: Rarity;
+  /** Đạn đang trong băng của súng lục / súng trường (theo người, không theo món). */
+  magPistol: number;
+  magRifle: number;
+  /** Đang nạp: mã súng (GUN_CODE, 0 = không), còn bao lâu (giây), bao nhiêu viên sẽ vào băng. */
+  reloadGun: number;
+  reloadLeft: number;
+  reloadAmount: number;
+  /** Độ giật hiện tại (độ tản cộng thêm), hồi dần. */
+  recoil: number;
+  /** Số phát đã bắn (mod 64) — chọn độ lệch tản tất định. */
+  shots: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -76,6 +92,15 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     healLeft: 0,
     healRate: 0,
     stillFor: 0,
+    weapon: 'knife',
+    weaponRarity: 'common',
+    magPistol: 0,
+    magRifle: 0,
+    reloadGun: 0,
+    reloadLeft: 0,
+    reloadAmount: 0,
+    recoil: 0,
+    shots: 0,
   };
 }
 
@@ -104,6 +129,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
   p.facing = aimToRad(input.aim);
   stepSurvival(p, dt);
   stepHealing(p, dt);
+  stepGun(p, dt);
   if (hasBtn(input, Btn.Flashlight) && (p.prevButtons & Btn.Flashlight) === 0) p.flashlight = !p.flashlight;
 
   let mx = Math.sign(input.moveX);

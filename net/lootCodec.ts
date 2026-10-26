@@ -80,6 +80,13 @@ export const LOOT_ERRORS = [
   'not_still',
   'no_target',
   'not_needed',
+  // vũ khí (GĐ 3b, PR vũ khí)
+  'not_equippable',
+  'not_owned',
+  'no_gun',
+  'mag_full',
+  'no_ammo',
+  'reloading',
 ] as const;
 export type LootErrorCode = (typeof LOOT_ERRORS)[number];
 
