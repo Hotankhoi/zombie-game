@@ -30,6 +30,11 @@ export interface LoadTestOptions {
   room?: string;
   /** Bot mở rương mỗi bấy nhiêu tick (khoảng ngẫu nhiên). Mặc định 15–30 s; `false` = không loot. */
   loot?: [number, number] | false;
+  /**
+   * GĐ 3b: bot cầm súng trường (host cấp thẳng, băng luôn đầy) → bot đánh = bắn liên tục: đo cả sự kiện tia đạn +
+   * tiếng súng kéo bầy.
+   */
+  guns?: boolean;
 }
 
 export interface LoadReport {
@@ -187,6 +192,12 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
     const h0 = performance.now();
     const out = host.tick();
     hostTimes.push(performance.now() - h0);
+    if (opts.guns) {
+      for (const p of host.world.players.values()) {
+        p.weapon = 'rifle';
+        p.magRifle = 20;
+      }
+    }
     if (opts.immortal) {
       for (const p of host.world.players.values()) {
         p.hp = 100;
