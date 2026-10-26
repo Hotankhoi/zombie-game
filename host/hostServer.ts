@@ -259,6 +259,26 @@ export class HostServer {
 
   /** Chạy 1 tick, trả về các gói cần gửi. */
   tick(): Outgoing[] {
+    // Loot can be newer than the ten-second world backup during migration.
+    // Never keep using equipment which the recovered inventory no longer owns.
+    for (const c of this.clients.values()) {
+      const owner = this.loot.ownerOf(c.id);
+      const bag = owner ? this.loot.authority.inventory(owner) : null;
+      const p = this.world.players.get(c.id);
+      if (!bag || !p) continue;
+      const owns = (id: string) => bag.slots.some((s) => s?.itemId === id);
+      if (
+        p.weapon !== 'fists' &&
+        !bag.slots.some((s) => s?.itemId === p.weapon && s.rarity === p.weaponRarity)
+      )
+        this.world.equip(c.id, 'fists', 'common');
+      if (!owns('pistol')) p.magPistol = 0;
+      if (!owns('rifle')) p.magRifle = 0;
+      if ((p.reloadGun === 1 && !owns('pistol')) || (p.reloadGun === 2 && !owns('rifle'))) {
+        p.reloadGun = 0;
+        p.reloadLeft = p.reloadAmount = 0;
+      }
+    }
     const inputs = new Map<PeerId, PlayerInput>();
     for (const c of this.clients.values()) {
       const input = this.nextInput(c);

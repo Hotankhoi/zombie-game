@@ -245,6 +245,10 @@ describe('vũ khí online (GĐ 3b) — cầm và nạp đạn qua host', () => {
     const shooter = nodes[0]!;
     const w = m.server().world;
     const p = w.players.get(shooter.id)!;
+    const owner = m.server().loot.ownerOf(shooter.id)!;
+    m.server().loot.hostUpdate(owner, (bag) =>
+      addItems(bag, { itemId: 'pistol', rarity: 'common', quantity: 1 }, bag.revision),
+    );
     w.equip(shooter.id, 'pistol', 'common');
     p.magPistol = 12;
     m.step(10);

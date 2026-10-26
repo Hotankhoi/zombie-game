@@ -25,6 +25,38 @@ function setup() {
   return { m, nodes };
 }
 describe('drop/pickup through four real clients with latency', () => {
+  it('unloads a held rifle on drop and cannot recover a ghost weapon from an older world state', async () => {
+    const { m, nodes } = setup();
+    const a = nodes[1]!;
+    const owner = m.server().loot.ownerOf(a.id)!;
+    m.server().loot.hostUpdate(owner, (s) =>
+      addItems(s, { itemId: 'rifle', rarity: 'epic', quantity: 1 }, s.revision),
+    );
+    m.step(20);
+    expect((await settle(m, [a.game.loot.equip('rifle', 'epic')]))[0]!.ok).toBe(true);
+    const p = m.server().world.players.get(a.id)!;
+    p.magRifle = 12;
+    const bag = a.game.loot.inventory!;
+    const slot = bag.slots.findIndex((s) => s?.itemId === 'rifle');
+    expect(
+      (
+        await settle(m, [
+          a.game.loot.request({ type: 'drop', slot, quantity: 1, expectedRevision: bag.revision }),
+        ])
+      )[0]!.ok,
+    ).toBe(true);
+    expect(p.magRifle).toBe(0);
+    expect(p.weapon).toBe('fists');
+    expect(a.game.loot.inventory!.slots.find((s) => s?.itemId === 'rifle_ammo')?.quantity).toBe(12);
+    // Simulate the stale equipment fields an older world backup can contain.
+    p.weapon = 'rifle';
+    p.weaponRarity = 'epic';
+    p.magRifle = 12;
+    m.step();
+    expect(p.weapon).toBe('fists');
+    expect(p.magRifle).toBe(0);
+    expect(a.game.loot.inventory!.slots.find((s) => s?.itemId === 'rifle_ammo')?.quantity).toBe(12);
+  });
   it('drop knife, race pickup, reject stale replay; host migration preserves remaining ground item', async () => {
     const { m, nodes } = setup(),
       a = nodes[0]!,

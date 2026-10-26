@@ -52,6 +52,9 @@ export class Hotbar {
     if (this.assignPending) {
       this.bindings[index] = this.assignPending;
       this.assignPending = null;
+      // Assigning is different from activating. Avoid highlighting a new binding
+      // while the previously selected weapon is still being held.
+      if (this.selected === index) this.selected = -1;
       this.render();
       return;
     }
@@ -72,15 +75,24 @@ export class Hotbar {
         const serial = this.serial;
         const binding = this.bindings[i] ?? null;
         const resolved = resolveBinding(this.loot.inventory, binding);
-        const weapon = resolved && binding && ITEMS[binding.itemId].category === 'weapon';
-        const result = weapon
+        const equippable =
+          resolved &&
+          binding &&
+          (ITEMS[binding.itemId].category === 'weapon' || ITEMS[binding.itemId].category === 'armor');
+        const result = equippable
           ? await this.loot.equip(binding.itemId, binding.rarity)
           : await this.loot.request({ type: 'unequip' });
         if (serial !== this.serial) continue;
         if (!result.ok) {
           this.toast('Chưa đổi được vật phẩm: ' + result.error);
           this.selected = -1;
-        } else if (resolved && binding && !weapon) this.use(resolved.slot);
+        } else if (
+          resolved &&
+          binding &&
+          !equippable &&
+          (ITEMS[binding.itemId].category === 'food' || ITEMS[binding.itemId].category === 'medical')
+        )
+          this.use(resolved.slot);
         this.render();
       }
     } finally {
@@ -148,8 +160,14 @@ export class Hotbar {
         else if (this.selected === i) this.selected = a;
         this.render();
       };
-      el.ondragend = () => {
-        if (!this.landed && this.dragFrom >= 0) {
+      el.ondragend = (event) => {
+        const bounds = this.root.getBoundingClientRect();
+        const outside =
+          event.clientX < bounds.left ||
+          event.clientX > bounds.right ||
+          event.clientY < bounds.top ||
+          event.clientY > bounds.bottom;
+        if (!this.landed && outside && this.dragFrom >= 0) {
           const a = this.dragFrom;
           this.bindings[a] = null;
           if (this.selected === a) {

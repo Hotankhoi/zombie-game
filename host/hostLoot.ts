@@ -378,6 +378,9 @@ export class HostLoot {
     const sees = (c: ChestLocation) => this.opts.world.sees(at, c);
     switch (a.type) {
       case 'drop': {
+        // A pending reload has removed reserve ammo but has not installed it in
+        // the world yet. Finish that transaction before calculating a refund.
+        if (this.pending.some((p) => p.peer === from && p.effect)) return { ok: false, error: 'busy' };
         const at = this.opts.world.dropPoint?.(from);
         if (!at) return { ok: false, error: 'blocked' };
         const item = this._authority.inventory(owner)?.slots[a.slot];

@@ -18,14 +18,14 @@ Host xác thực người gửi và revision; thả/nhặt cập nhật túi + d
 
 ## Kiểm tra
 
-- Unit/integration: model 5 ô, vòng cuộn, tham chiếu sau di chuyển; codec đồ rơi và xóa qua delta; Drop 1/all; túi đầy; ngoài tầm/tường/gục; hoàn đạn.
+- Unit/integration: model 5 ô, vòng cuộn, tham chiếu sau di chuyển; codec đồ rơi và xóa qua delta; Drop 1/all; túi đầy; ngoài tầm/tường/gục; hoàn đạn và loại bỏ vũ khí/đạn không còn sở hữu khi phục hồi từ trạng thái thế giới cũ.
 - Bốn NetGame thật trên LoopbackHub, trễ 150 ms và mất 5% gói unreliable: drop → tranh pickup chỉ một người thắng, tổng đồ bảo toàn, yêu cầu cũ bị từ chối, đổi host giữ đồ rơi.
 - Chromium + Worker thật: gán dao bằng UI, phím 1 trang bị, ô 5 trống về tay không, nút thả → V/nút nhặt; đổi ô liên tục và hoán đổi ô bằng sự kiện drag/drop; không lỗi runtime trong lượt kiểm tra. Hotbar 5 ô nằm vừa viewport 390 px và desktop 1280 px.
 - Chưa kiểm tra 2 máy thật/TURN, tải tối đa 128 đồ rơi hoặc kéo/thả bằng thiết bị cảm ứng. Không coi đây là nghiệm thu toàn bộ GĐ3 (các loại vũ khí/công cụ và phụ kiện ngoài main chưa được bổ sung).
 
 ## Bàn giao
 
-Kiểm tra ngày 26/10/2026: `npm run check` đạt (391 test/50 file, typecheck và lint); `npm run build` đạt. PR hợp đồng #48 đã mở. Push/PR triển khai bị chặn bởi GitHub HTTP 401 (Bad credentials), không phải lỗi build.
+Kiểm tra ngày 26/10/2026: `npm run check` đạt (392 test/50 file, typecheck và lint); `npm run build` đạt. PR hợp đồng #48 đã mở. Quyền GitHub đã hoạt động lại; nhánh triển khai được đẩy để A review.
 
 Các file chính:
 
