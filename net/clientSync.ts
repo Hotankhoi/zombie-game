@@ -18,8 +18,20 @@ import {
   type SnapshotMsg,
   type WireEvent,
   type WirePlayer,
+  type WireVitals,
   type WireZombie,
 } from './gameCodec';
+import { SURVIVAL } from '@shared/data/survival';
+import { PLAYER } from '@shared/data/player';
+
+/** Chỉ số sinh tồn đã biết của 1 người (GĐ 3b). */
+export type Vitals = Omit<WireVitals, 'slot'>;
+const DEFAULT_VITALS: Vitals = {
+  food: SURVIVAL.food.start,
+  water: SURVIVAL.water.start,
+  infection: 0,
+  maxHp: PLAYER.maxHp,
+};
 
 /** Gửi dư: mỗi gói input kèm bấy nhiêu input gần nhất (AGENTS.md mục 2.9). */
 export const INPUT_REDUNDANCY = 3;
@@ -108,6 +120,8 @@ export class ClientSync {
   /** Xác đồng đội chưa thành zombie (sự kiện death + vị trí cuối) — chuyển host không làm mất xác. */
   private corpses: { player: PeerId; x: number; y: number; tick: number }[] = [];
   private recent: PlayerInput[] = [];
+  /** Chỉ số sinh tồn mới nhất đã nghe của từng người (snapshot chỉ mang mình + 1 đồng đội xoay vòng). */
+  private vitals = new Map<PeerId, Vitals>();
   /** Ước lượng (giờ máy mình) − (tick host × 50ms). */
   private clockOffset: number | null = null;
   private lastRecv: { at: number; tick: number } | null = null;
@@ -296,7 +310,7 @@ export class ClientSync {
     const players: PlayerState[] = [];
     for (const wp of s.players) {
       const id = this.slots.get(wp.slot);
-      if (id && keep.has(id)) players.push(toPlayerState(id, wp));
+      if (id && keep.has(id)) players.push(toPlayerState(id, wp, this.vitals.get(id)));
     }
     const alive = players.filter((p) => p.respawnIn <= 0);
     let maxId = 0;
@@ -382,6 +396,11 @@ export class ClientSync {
       const id = this.slots.get(p.slot);
       if (id) players.set(id, p);
     }
+    for (const v of msg.vitals ?? []) {
+      const id = this.slots.get(v.slot);
+      if (id) this.vitals.set(id, { food: v.food, water: v.water, infection: v.infection, maxHp: v.maxHp });
+    }
+    for (const id of this.vitals.keys()) if (!players.has(id)) this.vitals.delete(id);
     const zmap = new Map(msg.zombies.map((z) => [z.id, z]));
     for (const z of msg.zombies) this.zombieSeen.set(z.id, msg.tick);
     const prev = this.snaps[this.snaps.length - 1];
@@ -401,7 +420,8 @@ export class ClientSync {
     this.doors = doors;
 
     const mine = players.get(this.selfId);
-    if (mine) this.predictor.reconcile(toPlayerState(this.selfId, mine), msg.ack);
+    if (mine)
+      this.predictor.reconcile(toPlayerState(this.selfId, mine, this.vitals.get(this.selfId)), msg.ack);
   }
 
   private fromWire(e: WireEvent): SimEvent | null {
@@ -435,7 +455,7 @@ export class ClientSync {
   }
 }
 
-export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
+export function toPlayerState(id: PeerId, w: WirePlayer, v: Vitals = DEFAULT_VITALS): PlayerState {
   return {
     id,
     x: w.x,
@@ -454,6 +474,10 @@ export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
     dragging: w.dragging,
     flashlight: w.flashlight,
     shield: 0, // máy khách không cần (chỉ host tính sát thương)
+    food: v.food,
+    water: v.water,
+    infection: v.infection,
+    maxHp: v.maxHp,
   };
 }
 

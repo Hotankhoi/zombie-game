@@ -186,6 +186,18 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
 - PR 3 (`a/3b-contract`): `LootAction` thêm `use {expectedRevision, slot, target}`, `reload {expectedRevision}`,
   `equip {itemId, rarity}` (mã 8–10 trong `net/lootCodec.ts`), `ChestWire.version` `1 | 2`; host tạm trả
   `invalid_command`. Ghi `shared/types/loot-protocol.md` mục "GĐ 3b". 342 test.
+  PR #42 đã merge.
+- PR 4 (`a/3b-survival`): `shared/data/survival.ts` (vùng B) + `shared/sim/survival.ts`; `PlayerState` thêm `food`,
+  `water`, `infection`, `maxHp` (tính trong `stepPlayer` theo input → dự đoán khớp host). No hết ~25 phút, nước ~18 phút
+  (chạy ×1.5); < 25 → stamina hồi ×0.5 mỗi thứ; = 0 → −0.5 máu/s mỗi thứ, hết máu → gục. Cắn: nhiễm +8 × hệ số cắn của
+  loại zombie; > 0 tự tăng 0.05/s; ≥ 50 → máu tối đa −1/6 s (sàn 40); = 0 → +0.1/s. Hồi sinh: nhiễm 0, máu tối đa 100,
+  no/nước ≥ 60. Snapshot: khối "chỉ số" (người nhận + 1 đồng đội xoay vòng, u16 1/600); `ClientSync` nhớ chỉ số từng người
+  → `toWorldState`; bản lưu 125 bố cục 7. HUD: 3 thanh (no cam / nước xanh / nhiễm xanh bệnh, thấp/nặng thì nháy đỏ) +
+  phần xám máu tối đa. `PROTOCOL_VERSION` 6. 350 test. Loadtest (KB/s TB · đỉnh nhóm · đỉnh 1 người): bình thường
+  11.14 · 15.17 · 15.41; trễ 150 + mất 5% 9.39 · 14.74 · 15.12; **đợt tràn tối đa 17.85 · 20.30 · 20.73**; đợt tràn 1
+  5.57 · 15.41 · 15.89; tràn + mở rương liên tục 14.68 · 16.94 · 17.24.
+  Ghi chú: `npm run loadtest` không in bảng nếu không có `--silent=false` → dùng
+  `npx vitest run --config tools/vitest.config.ts tools/scenarios.loadtest.ts --silent=false`.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

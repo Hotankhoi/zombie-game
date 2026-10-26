@@ -16,6 +16,7 @@ import { BOSS, HORDE } from './tuning/horde';
 import { DAY, NOISE } from './tuning/night';
 import { PARTY } from './tuning/party';
 import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
+import { infectFromBite, respawnSurvival } from './survival';
 import { countdown } from './timer';
 import { createZombie, hearNoise, radiusOf, stepZombie, type ZombieState } from './zombie';
 
@@ -580,6 +581,8 @@ export class SimWorld {
   /** Phần "theo input" của người chơi: đi/chạy, mở cửa, chém. Giống hệt Predictor phía client. */
   private applyInput(p: PlayerState, input: PlayerInput): void {
     stepPlayer(p, input, DT, this.blocked);
+    // đói/khát cạn làm hết máu → gục như bị cắn
+    if (isUp(p) && p.hp <= 0) this.down(p);
     if (isAlive(p)) {
       if (isUp(p) && hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
       // gục thì không chém được (luồng E ở trên giữ nguyên — B đang nối loot vào đó)
@@ -641,7 +644,7 @@ export class SimWorld {
   private standUp(p: PlayerState): void {
     p.downedFor = 0;
     p.reviveProgress = 0;
-    p.hp = PARTY.reviveHp;
+    p.hp = Math.min(PARTY.reviveHp, p.maxHp);
   }
 
   /** Hết máu: còn đồng đội đứng được thì gục (chờ cứu), không thì chết hẳn. */
@@ -706,7 +709,8 @@ export class SimWorld {
       parts.push(
         `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
           `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
-          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)}`,
+          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)},` +
+          `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)}`,
       );
     }
     for (const z of this.zombies) {
@@ -805,7 +809,8 @@ export class SimWorld {
     p.x = at.x;
     p.y = at.y;
     p.shield = PARTY.respawnShieldSec;
-    p.hp = PLAYER.maxHp;
+    respawnSurvival(p);
+    p.hp = p.maxHp;
     p.stamina = PLAYER.maxStamina;
     p.exhausted = false;
     p.staminaIdle = 0;
@@ -867,6 +872,7 @@ export class SimWorld {
       return;
     }
     p.hp = Math.max(0, p.hp - Z.biteDamage * KIND[z.kind].biteDamage);
+    infectFromBite(p, KIND[z.kind].biteDamage);
     if (p.hp === 0) this.down(p);
   }
 

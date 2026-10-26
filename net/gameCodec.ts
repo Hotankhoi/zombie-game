@@ -92,6 +92,19 @@ export interface WireHorde {
   rows: { slot: number; kills: number; downs: number }[];
 }
 
+/**
+ * Chỉ số sinh tồn (GĐ 3b) của 1 người — khối mở rộng cuối snapshot. Host gửi của **người nhận** mỗi snapshot (dự đoán +
+ * HUD) và của **1 đồng đội xoay vòng** (để lên host thay thì có chỉ số của cả đội, ≤ 0,3 s tuổi). u16 theo 1/VITAL_SCALE.
+ */
+export interface WireVitals {
+  slot: number;
+  food: number;
+  water: number;
+  infection: number;
+  maxHp: number;
+}
+export const VITAL_SCALE = 600;
+
 export interface SnapshotMsg {
   type: GameMsg.Snapshot;
   tick: number;
@@ -107,6 +120,8 @@ export interface SnapshotMsg {
   pools: WirePool[];
   /** Đợt tràn (GĐ 5, khối mở rộng). */
   horde: WireHorde | null;
+  /** Chỉ số sinh tồn (GĐ 3b, khối mở rộng): người nhận + 1 đồng đội xoay vòng. Gói cũ không có → []. */
+  vitals?: WireVitals[];
 }
 
 export type WireEvent =
@@ -146,6 +161,7 @@ const angleToByte = (a: number) => Math.round((((a % TAU) + TAU) % TAU) * (256 /
 const byteToAngle = (b: number) => (b / 256) * TAU;
 const clampI16 = (v: number) => Math.max(-32768, Math.min(32767, Math.round(v)));
 const clampI8 = (v: number) => Math.max(-128, Math.min(127, Math.round(v)));
+const vitalToU16 = (v: number) => Math.max(0, Math.min(0xffff, Math.round(v * VITAL_SCALE)));
 
 /** Ghi tuần tự vào bộ đệm tự nới rộng. */
 export class Writer {
@@ -342,6 +358,13 @@ export function encodeGame(msg: GameMessage): Uint8Array {
             (z.chasing ? 16 : 0) |
             ((Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) & 7) << 5),
         );
+      }
+      // khối mở rộng GĐ 3b: chỉ số sinh tồn
+      const vitals = msg.vitals ?? [];
+      w.u8(vitals.length);
+      for (const v of vitals) {
+        w.u8(v.slot);
+        for (const n of [v.food, v.water, v.infection, v.maxHp]) w.u16(vitalToU16(n));
       }
       break;
     }
@@ -540,7 +563,17 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             });
           }
         }
-        return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde };
+        const vitals: WireVitals[] = [];
+        if (r.more()) {
+          for (let i = 0, n = r.u8(); i < n; i++) {
+            const slot = r.u8();
+            const [food, water, infection, maxHp] = [r.u16(), r.u16(), r.u16(), r.u16()].map(
+              (u) => u / VITAL_SCALE,
+            ) as [number, number, number, number];
+            vitals.push({ slot, food, water, infection, maxHp });
+          }
+        }
+        return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde, vitals };
       }
       case GameMsg.Events: {
         const tick = r.u32();

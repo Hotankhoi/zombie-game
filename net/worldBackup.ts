@@ -15,7 +15,7 @@ export const WORLD_BACKUP_MSG = 125;
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 6;
+export const WORLD_BACKUP_VERSION = 7;
 /** Khối loot (gói 112 đầy đủ, net/lootCodec.ts) ở cuối mẩu 0 lớn nhất bấy nhiêu byte (≈ 4096 rương). */
 export const MAX_BACKUP_LOOT = 256 * 1024;
 /**
@@ -131,6 +131,11 @@ export function encodeBackupPart(
     w.f32(p.downedFor);
     w.f32(p.reviveProgress);
     w.f32(p.shield);
+    // bản 7 (GĐ 3b): chỉ số sinh tồn
+    w.f32(p.food);
+    w.f32(p.water);
+    w.f32(p.infection);
+    w.f32(p.maxHp);
   }
   // zombie gọn (~18 byte/con, bản 4 là ~32): id ghi chênh lệch (varint), vị trí/đích i16 theo 1/ZPOS ô so với gốc của
   // gói (xa quá ±1024 ô thì f32), máu u16 theo 0.1, hướng 1 byte, đồng hồ 1/100 giây chỉ ghi cái khác 0, đích bỏ qua
@@ -302,6 +307,10 @@ export function decodeBackupPart(
       const downedFor = r.f32();
       const reviveProgress = r.f32();
       const shield = r.f32();
+      const food = r.f32();
+      const water = r.f32();
+      const infection = r.f32();
+      const maxHp = r.f32();
       players.push({
         id,
         x,
@@ -320,6 +329,10 @@ export function decodeBackupPart(
         dragging: (flags & 4) !== 0,
         flashlight: (flags & 8) !== 0,
         shield,
+        food,
+        water,
+        infection,
+        maxHp,
       });
     }
     const zombies: ZombieState[] = [];
