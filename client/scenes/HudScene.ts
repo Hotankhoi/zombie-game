@@ -11,6 +11,8 @@ import { PARTY } from '@shared/sim/tuning/party';
 import { visionPolygon, visionShapes } from '@shared/sim/vision';
 import type { WorldScene } from './WorldScene';
 import { QUICK_KEYS, QUICK_LABELS, countOf, quickItem } from '../loot/quickUse';
+import { weaponLabel } from '../loot/weaponControl';
+import { isGun, magOf, reloading } from '@shared/sim/guns';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
 /** Mũi tên đồng đội cách mép màn hình (px). */
@@ -34,6 +36,8 @@ export class HudScene extends Phaser.Scene {
   private vitalText!: Phaser.GameObjects.Text;
   /** Thanh dùng nhanh 1–4 (GĐ 3b). */
   private quickText!: Phaser.GameObjects.Text;
+  /** Vũ khí đang cầm + đạn (GĐ 3b). */
+  private weaponText!: Phaser.GameObjects.Text;
   /** Số ô túi đã dùng (phần 2B loot). */
   private bagText!: Phaser.GameObjects.Text;
   /** Chữ dùng lại cho mũi tên và khung đội (tối đa MAX_PLAYERS - 1 đồng đội). */
@@ -87,13 +91,16 @@ export class HudScene extends Phaser.Scene {
     this.barText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
     this.bagText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
     this.vitalText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
+    this.weaponText = this.add
+      .text(0, 0, '', { ...style, fontSize: '13px', fontStyle: 'bold', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(1, 1);
     this.quickText = this.add
       .text(0, 0, '', { ...style, fontSize: '11px', color: '#c9d1cc', stroke: '#000', strokeThickness: 3 })
       .setOrigin(1, 1);
     this.hintText = this.add.text(
       0,
       0,
-      'WASD đi · Shift chạy · Chuột trái chém · E cửa · F đèn pin/mở rương · I túi · 1–4 dùng nhanh · Esc đóng · R cứu · G kéo · F3 mạng',
+      'WASD đi · Shift chạy · Chuột trái chém/bắn · X/lăn chuột đổi vũ khí · Q nạp đạn · E cửa · F đèn pin/mở rương · I túi · 1–4 dùng nhanh · Esc đóng · R cứu · G kéo · F3 mạng',
       { ...style, fontSize: '12px', color: '#8d9891' },
     );
     this.respawnText = this.add
@@ -477,6 +484,12 @@ export class HudScene extends Phaser.Scene {
       .setText(parts.join('   '))
       .setPosition(width - 16, height - 10)
       .setVisible(inv !== null);
+    const empty = isGun(me.weapon) && magOf(me, me.weapon) === 0 && !reloading(me, me.weapon);
+    this.weaponText
+      .setText(weaponLabel(me, inv))
+      .setColor(empty ? '#ffb74d' : '#e6ebe7')
+      .setPosition(width - 16, height - 26)
+      .setVisible(true);
     const p = ui.items.progress;
     if (p === null) return;
     // tiến độ sơ cứu: ngay dưới nhân vật (giữa màn hình)

@@ -1,4 +1,5 @@
 import type { PlayerState } from '@shared/sim/player';
+import { decodeWeapon, weaponCode } from '@shared/sim/guns';
 import { ZOMBIE_KINDS } from '@shared/sim/tuning/zombieKinds';
 import type { Corpse, HordeState, Noise, Pool, WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
@@ -15,7 +16,7 @@ export const WORLD_BACKUP_MSG = 125;
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 8;
+export const WORLD_BACKUP_VERSION = 9;
 /** Khối loot (gói 112 đầy đủ, net/lootCodec.ts) ở cuối mẩu 0 lớn nhất bấy nhiêu byte (≈ 4096 rương). */
 export const MAX_BACKUP_LOOT = 256 * 1024;
 /**
@@ -140,6 +141,15 @@ export function encodeBackupPart(
     w.f32(p.healLeft);
     w.f32(p.healRate);
     w.f32(p.stillFor);
+    // bản 9: vũ khí + súng
+    w.u8(weaponCode(p.weapon, p.weaponRarity));
+    w.u8(p.magPistol);
+    w.u8(p.magRifle);
+    w.u8(p.reloadGun);
+    w.f32(p.reloadLeft);
+    w.u8(p.reloadAmount);
+    w.f32(p.recoil);
+    w.u8(p.shots);
   }
   // zombie gọn (~18 byte/con, bản 4 là ~32): id ghi chênh lệch (varint), vị trí/đích i16 theo 1/ZPOS ô so với gốc của
   // gói (xa quá ±1024 ô thì f32), máu u16 theo 0.1, hướng 1 byte, đồng hồ 1/100 giây chỉ ghi cái khác 0, đích bỏ qua
@@ -318,6 +328,14 @@ export function decodeBackupPart(
       const healLeft = r.f32();
       const healRate = r.f32();
       const stillFor = r.f32();
+      const { weapon, rarity: weaponRarity } = decodeWeapon(r.u8());
+      const magPistol = r.u8();
+      const magRifle = r.u8();
+      const reloadGun = r.u8();
+      const reloadLeft = r.f32();
+      const reloadAmount = r.u8();
+      const recoil = r.f32();
+      const shots = r.u8();
       players.push({
         id,
         x,
@@ -343,6 +361,15 @@ export function decodeBackupPart(
         healLeft,
         healRate,
         stillFor,
+        weapon,
+        weaponRarity,
+        magPistol,
+        magRifle,
+        reloadGun,
+        reloadLeft,
+        reloadAmount,
+        recoil,
+        shots,
       });
     }
     const zombies: ZombieState[] = [];

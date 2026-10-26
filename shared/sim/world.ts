@@ -1,4 +1,4 @@
-import { KNIFE } from '@shared/data/melee';
+import { GUNS } from '@shared/data/guns';
 import { PLAYER } from '@shared/data/player';
 import { ZOMBIE_NORMAL as Z } from '@shared/data/zombies';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
@@ -17,6 +17,8 @@ import { DAY, NOISE } from './tuning/night';
 import { PARTY } from './tuning/party';
 import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
 import { applyUse, checkUse, type UseError } from './items';
+import { fireGun, isGun, magOf, meleeOf, startReload, type WeaponId } from './guns';
+import type { GunId } from '@shared/data/guns';
 import { infectFromBite, respawnSurvival } from './survival';
 import type { ItemId, Rarity } from '@shared/data/items';
 import { countdown } from './timer';
@@ -94,6 +96,8 @@ export type SimEvent =
     }
   | { type: 'bite'; zombie: number; player: PeerId; x: number; y: number }
   | { type: 'door'; x: number; y: number; open: boolean }
+  /** Bắn 1 phát (GĐ 3b): tia từ (x, y) theo `angle`, dài `dist` ô; `hit` = trúng zombie. */
+  | { type: 'shot'; player: PeerId; x: number; y: number; angle: number; dist: number; hit: boolean }
   | { type: 'death'; player: PeerId }
   | { type: 'respawn'; player: PeerId };
 
@@ -134,6 +138,8 @@ export interface SimWorldOptions {
   restore?: WorldState;
 }
 
+/** Bắn súng: lùi vị trí zombie tối đa bấy nhiêu tick (500 ms) về lúc người bắn nhìn thấy (bù trễ). */
+export const SHOT_REWIND_TICKS = 10;
 /** Tính lại flow field mỗi bao nhiêu tick (10 tick = 0.5s). */
 const FLOW_EVERY = 10;
 /** Số lần thử tìm chỗ sinh zombie cho mỗi con còn thiếu, trong một tick. */
@@ -363,6 +369,7 @@ export class SimWorld {
     this.separate(alive);
     this.directHorde(alive);
     this.refillZombies();
+    this.recordHistory();
     this.tick++;
   }
 
@@ -609,7 +616,7 @@ export class SimWorld {
     if (isAlive(p)) {
       if (isUp(p) && hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
       // gục thì không chém được (luồng E ở trên giữ nguyên — B đang nối loot vào đó)
-      if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p);
+      if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p, input);
     }
     p.prevButtons = input.buttons;
   }
@@ -735,7 +742,8 @@ export class SimWorld {
           `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
           `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)},` +
           `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)},${f(p.healLeft)},${f(p.healRate)},` +
-          `${f(p.stillFor)}`,
+          `${f(p.stillFor)},${p.weapon},${p.weaponRarity},${p.magPistol},${p.magRifle},${p.reloadGun},` +
+          `${f(p.reloadLeft)},${p.reloadAmount},${f(p.recoil)},${p.shots}`,
       );
     }
     for (const z of this.zombies) {
@@ -868,8 +876,61 @@ export class SimWorld {
     return this.zombies.some((z) => z.hp > 0 && circleOverlapsTile(z.x, z.y, radiusOf(z), d.x, d.y));
   }
 
-  private attack(p: PlayerState): void {
-    const res = meleeAttack(p, KNIFE, this.zombies, this.blocked);
+  /**
+   * Vị trí zombie ở vài tick trước (bù trễ khi bắn súng): chỉ ghi khi có người cầm súng, giữ SHOT_REWIND_TICKS tick.
+   * Không nằm trong trạng thái/hash: chỉ phụ thuộc chuỗi tick đã chạy (host dựng lại sau đổi host thì bắt đầu trống).
+   */
+  private history: { tick: number; pos: Map<number, { x: number; y: number }> }[] = [];
+
+  private recordHistory(): void {
+    if (![...this.players.values()].some((p) => isGun(p.weapon))) {
+      this.history.length = 0;
+      return;
+    }
+    const pos = new Map<number, { x: number; y: number }>();
+    for (const z of this.zombies) pos.set(z.id, { x: z.x, y: z.y });
+    // = trạng thái sau tick này, snapshot gắn nhãn tick + 1 (tick tăng ngay sau đây)
+    this.history.push({ tick: this.tick + 1, pos });
+    if (this.history.length > SHOT_REWIND_TICKS) this.history.shift();
+  }
+
+  /**
+   * Cầm vũ khí (GĐ 3b, host đã kiểm tra có món trong túi). Đang nạp súng khác thì vẫn nạp tiếp: đạn đã trừ khỏi túi
+   * vào băng súng đó khi hết giờ.
+   */
+  equip(id: PeerId, weapon: WeaponId, rarity: Rarity): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.weapon = weapon;
+    p.weaponRarity = rarity;
+  }
+
+  /**
+   * Nạp đạn (GĐ 3b): súng đang cầm + số viên còn thiếu, hoặc lỗi. Host trừ đúng số đó (hoặc ít hơn nếu túi ít đạn),
+   * rồi khi giao dịch đã xác nhận gọi `beginReload`.
+   */
+  reloadNeed(
+    id: PeerId,
+  ): { gun: GunId; need: number } | { error: 'no_gun' | 'mag_full' | 'reloading' | 'player_not_up' } {
+    const p = this.players.get(id);
+    if (!p || !isUp(p)) return { error: 'player_not_up' };
+    if (!isGun(p.weapon)) return { error: 'no_gun' };
+    if (p.reloadLeft > 0) return { error: 'reloading' };
+    const need = GUNS[p.weapon].magazine - magOf(p, p.weapon);
+    return need > 0 ? { gun: p.weapon, need } : { error: 'mag_full' };
+  }
+
+  beginReload(id: PeerId, gun: GunId, amount: number): void {
+    const p = this.players.get(id);
+    if (p && amount > 0) startReload(p, gun, amount);
+  }
+
+  private attack(p: PlayerState, input: PlayerInput): void {
+    if (isGun(p.weapon)) {
+      this.shoot(p, p.weapon, input);
+      return;
+    }
+    const res = meleeAttack(p, meleeOf(p.weapon, p.weaponRarity), this.zombies, this.blocked);
     if (!res) return;
     this.events.push({ type: 'swing', player: p.id, x: p.x, y: p.y, facing: p.facing });
     if (!res.hit) return;
@@ -887,6 +948,43 @@ export class SimWorld {
       silent,
       hp: Math.max(0, z.hp),
     });
+  }
+
+  /** Bắn súng: trúng do mô phỏng quyết, vị trí zombie lùi về lúc người bắn nhìn thấy (`input.view`). Súng ồn. */
+  private shoot(p: PlayerState, gun: GunId, input: PlayerInput): void {
+    const pressed = (p.prevButtons & Btn.Attack) === 0;
+    let at: ((z: ZombieState) => { x: number; y: number }) | undefined;
+    if (input.view !== undefined && input.view < this.tick) {
+      const back = Math.max(input.view, this.tick - SHOT_REWIND_TICKS);
+      const h = this.history.find((e) => e.tick >= back);
+      if (h) at = (z) => h.pos.get(z.id) ?? z;
+    }
+    const shot = fireGun(p, gun, p.weaponRarity, this.zombies, this.blocked, pressed, at);
+    if (!shot) return;
+    this.emitNoise(p.x, p.y, GUNS[gun].noise);
+    this.events.push({
+      type: 'shot',
+      player: p.id,
+      x: shot.x,
+      y: shot.y,
+      angle: shot.angle,
+      dist: shot.dist,
+      hit: shot.hits.length > 0,
+    });
+    for (const { zombie: z, killed } of shot.hits) {
+      if (killed && this.horde?.active) this.horde.kills[p.id] = (this.horde.kills[p.id] ?? 0) + 1;
+      this.events.push({
+        type: 'hit',
+        player: p.id,
+        zombie: z.id,
+        x: z.x,
+        y: z.y,
+        killed,
+        assassination: false,
+        silent: false,
+        hp: Math.max(0, z.hp),
+      });
+    }
   }
 
   private bite(z: ZombieState, p: PlayerState): void {

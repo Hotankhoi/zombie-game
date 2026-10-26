@@ -6,6 +6,7 @@ import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/worl
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
 import { isAlive, isDowned, isUp, type PlayerState } from '@shared/sim/player';
+import { meleeOf, type WeaponId } from '@shared/sim/guns';
 import { hasLineOfSight } from '@shared/sim/collision';
 import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
@@ -50,12 +51,15 @@ export interface WorldSceneData {
 
 /** Hiệu ứng tạm thời vẽ bằng code (thay bằng sprite/particle sau). */
 interface Fx {
-  kind: 'swing' | 'hit' | 'blood';
+  kind: 'swing' | 'hit' | 'blood' | 'tracer' | 'muzzle';
   x: number;
   y: number;
   facing: number;
   born: number;
   life: number;
+  /** tia đạn: dài bao nhiêu ô; vết chém: tầm + nửa góc quạt (theo vũ khí). */
+  dist?: number;
+  arc?: number;
 }
 
 /**
@@ -110,6 +114,8 @@ export class WorldScene extends Phaser.Scene {
   private mouseHeldFromPanel = false;
   private interactQueued = false;
   private myAim = 0;
+  /** Lần đổi vũ khí bằng lăn chuột gần nhất (ms) — 1 nấc lăn có thể bắn nhiều sự kiện. */
+  private wheelAt = -Infinity;
 
   constructor() {
     super('world');
@@ -193,6 +199,19 @@ export class WorldScene extends Phaser.Scene {
     kb.addKey('I', false).on('down', () => {
       if (!isTyping()) this.lootUi.toggleInventory();
     });
+    // GĐ 3b: X / lăn chuột đổi vũ khí, Q nạp đạn (R đã là cứu người)
+    kb.addKey('X', false).on('down', () => {
+      if (!isTyping() && !this.lootUi.open) this.lootUi.weapons.cycle(this.me() ?? null, 1);
+    });
+    kb.addKey('Q', false).on('down', () => {
+      if (!isTyping()) this.lootUi.weapons.reload(this.me() ?? null);
+    });
+    this.input.on('wheel', (_p: unknown, _o: unknown, _dx: number, dy: number) => {
+      const now = this.time.now;
+      if (this.lootUi.open || dy === 0 || now - this.wheelAt < 200) return;
+      this.wheelAt = now;
+      this.lootUi.weapons.cycle(this.me() ?? null, dy > 0 ? 1 : -1);
+    });
     // GĐ 3b: dùng nhanh 1 băng gạc · 2 sơ cứu · 3 kháng sinh · 4 ăn/uống
     (['ONE', 'TWO', 'THREE', 'FOUR'] as const).forEach((name, i) =>
       kb.addKey(name, false).on('down', () => {
@@ -231,12 +250,30 @@ export class WorldScene extends Phaser.Scene {
 
   private stepSim() {
     const input = this.readInput();
-    // vết chém của mình vẽ ngay (dự đoán), không chờ host
-    if (this.net.tick(input)) {
-      const me = this.me();
-      if (me)
-        this.fx.push({ kind: 'swing', x: me.x, y: me.y, facing: me.facing, born: this.time.now, life: 140 });
-    }
+    if (input.buttons & Btn.Attack) this.lootUi.weapons.onFire(this.me() ?? null, this.time.now);
+    // vết chém / tia đạn của mình vẽ ngay (dự đoán), không chờ host
+    const fx = this.net.tick(input);
+    const me = this.me();
+    if (fx?.kind === 'swing' && me) {
+      const w = meleeOf(me.weapon, me.weaponRarity);
+      this.fx.push({
+        kind: 'swing',
+        x: me.x,
+        y: me.y,
+        facing: me.facing,
+        born: this.time.now,
+        life: 140,
+        dist: w.range,
+        arc: w.arcDeg,
+      });
+    } else if (fx?.kind === 'shot') this.pushShot(fx.x, fx.y, fx.angle, fx.dist);
+  }
+
+  /** Tia đạn vàng mờ dần + chớp nòng (GĐ 3b, vẽ tạm bằng code). */
+  private pushShot(x: number, y: number, angle: number, dist: number) {
+    const now = this.time.now;
+    this.fx.push({ kind: 'tracer', x, y, facing: angle, born: now, life: 120, dist });
+    this.fx.push({ kind: 'muzzle', x, y, facing: angle, born: now, life: 60 });
   }
 
   /** Vẽ các chunk quanh camera (thêm 1 vòng chunk dự phòng để đi nhanh không thấy mép trống). */
@@ -316,6 +353,10 @@ export class WorldScene extends Phaser.Scene {
       case 'respawn':
         this.shieldUntil.set(e.player, now + PARTY.respawnShieldSec * 1000);
         break;
+      case 'shot':
+        // tia đạn của đồng đội (của mình đã vẽ lúc dự đoán)
+        if (e.player !== self) this.pushShot(e.x, e.y, e.angle, e.dist);
+        break;
       case 'door':
         break;
     }
@@ -364,14 +405,14 @@ export class WorldScene extends Phaser.Scene {
     for (const p of others) {
       if (!p.alive) continue;
       if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
-      else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
+      else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id), p.weapon);
       this.drawShield(g, p.x * T, p.y * T, p.id, now);
     }
     const me = this.me();
     const pos = this.myDrawPos(alpha);
     if (me && isDowned(me)) this.drawDowned(g, pos.x * T, pos.y * T, this.myColor, me.reviveProgress);
     else if (me && isAlive(me))
-      this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
+      this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor, me.weapon);
     if (me && isAlive(me)) this.drawShield(g, pos.x * T, pos.y * T, this.session.selfId, now);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
@@ -548,7 +589,14 @@ export class WorldScene extends Phaser.Scene {
     g.lineStyle(1.5, 0x80d8ff, 0.4 + 0.5 * pulse).strokeCircle(x, y, TILE_SIZE * 0.6);
   }
 
-  private drawPlayer(g: Phaser.GameObjects.Graphics, x: number, y: number, facing: number, color: number) {
+  private drawPlayer(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    facing: number,
+    color: number,
+    weapon: WeaponId = 'knife',
+  ) {
     const r = PLAYER.radius * TILE_SIZE;
     g.fillStyle(color).fillCircle(x, y, r);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(
@@ -557,15 +605,39 @@ export class WorldScene extends Phaser.Scene {
       x + Math.cos(facing) * (r + 4),
       y + Math.sin(facing) * (r + 4),
     );
+    // vũ khí trên tay (TẠM vẽ bằng code): súng = nòng đen dài, gậy = thanh nâu
+    if (weapon === 'fists' || weapon === 'knife') return;
+    const len = weapon === 'rifle' ? 9 : weapon === 'pistol' ? 6 : 7;
+    const col = weapon === 'bat' ? 0x8d6e63 : 0x212121;
+    const sx = x + Math.cos(facing + 0.6) * r * 0.6;
+    const sy = y + Math.sin(facing + 0.6) * r * 0.6;
+    g.lineStyle(weapon === 'bat' ? 2 : 1.6, col, 1).lineBetween(
+      sx,
+      sy,
+      sx + Math.cos(facing) * len,
+      sy + Math.sin(facing) * len,
+    );
   }
 
   private drawFx(g: Phaser.GameObjects.Graphics, f: Fx, t: number) {
     const T = TILE_SIZE;
     const x = f.x * T;
     const y = f.y * T;
-    if (f.kind === 'swing') {
-      const half = ((KNIFE.arcDeg / 2) * Math.PI) / 180;
-      const reach = (PLAYER.radius + KNIFE.range) * T;
+    if (f.kind === 'tracer') {
+      const d = (f.dist ?? 0) * T;
+      g.lineStyle(1, 0xffe082, 0.9 * (1 - t)).lineBetween(
+        x,
+        y,
+        x + Math.cos(f.facing) * d,
+        y + Math.sin(f.facing) * d,
+      );
+    } else if (f.kind === 'muzzle') {
+      const mx = x + Math.cos(f.facing) * (PLAYER.radius * T + 8);
+      const my = y + Math.sin(f.facing) * (PLAYER.radius * T + 8);
+      g.fillStyle(0xfff59d, 0.9 * (1 - t)).fillCircle(mx, my, 2.5 + 1.5 * (1 - t));
+    } else if (f.kind === 'swing') {
+      const half = (((f.arc ?? KNIFE.arcDeg) / 2) * Math.PI) / 180;
+      const reach = (PLAYER.radius + (f.dist ?? KNIFE.range)) * T;
       g.lineStyle(2, 0xffffff, 0.7 * (1 - t));
       g.beginPath();
       g.arc(x, y, reach * (0.7 + 0.3 * t), f.facing - half, f.facing + half);

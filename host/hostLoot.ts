@@ -8,7 +8,14 @@ import {
 } from '@net/lootCodec';
 import { isPlayerKey, ownerIdOf } from '@net/playerKey';
 import { LootAuthority, type AuthorityResult, type LootActor, type LootSave } from '@shared/loot/authority';
-import { addItems, removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
+import {
+  addItems,
+  countItem,
+  removeFromSlot,
+  removeItemUpTo,
+  type ItemStack,
+} from '@shared/inventory/inventory';
+import type { ItemId } from '@shared/data/items';
 import type { ChestLocation } from '@shared/mapgen/chests';
 import { LootMessage, type ChestWire, type LootReplicaWire, type LootRequest } from '@shared/types/loot';
 import type { PeerId } from '@shared/types';
@@ -46,6 +53,11 @@ export interface LootWorld {
    */
   checkUse?(peer: PeerId, item: ItemStack, target: PeerId | null): string | null;
   applyUse?(peer: PeerId, item: ItemStack, target: PeerId | null): void;
+  /** GĐ 3b — cầm vũ khí (món có trong túi). null = được; không có hàm → `not_equippable`. */
+  equip?(peer: PeerId, item: Omit<ItemStack, 'quantity'>): string | null;
+  /** GĐ 3b — nạp đạn: loại đạn + số viên còn thiếu, hoặc lỗi; `beginReload` khi giao dịch trừ đạn đã xác nhận. */
+  reloadNeed?(peer: PeerId): { ammo: ItemId; need: number } | { error: string };
+  beginReload?(peer: PeerId, ammo: ItemId, amount: number): void;
 }
 
 export interface HostLootOptions {
@@ -376,9 +388,9 @@ export class HostLoot {
       case 'use':
         return this.use(from, owner, actor, a);
       case 'reload':
+        return this.reload(from, owner, actor, a.expectedRevision);
       case 'equip':
-        // GĐ 3b: hợp đồng đã có, host xử lý ở PR vũ khí/giáp
-        return { ok: false, error: 'invalid_command' };
+        return this.equip(from, owner, a.itemId, a.rarity);
     }
   }
 
@@ -409,6 +421,44 @@ export class HostLoot {
       const item = { ...stack, quantity: 1 };
       const apply = w.applyUse.bind(w);
       this.effect = () => apply(from, item, target);
+    }
+    return result;
+  }
+
+  /** Cầm vũ khí / mặc giáp đang có trong túi (GĐ 3b): không đổi túi → đổi trạng thái người chơi ngay. */
+  private equip(from: PeerId, owner: string, itemId: string, rarity: ItemStack['rarity']): AuthorityResult {
+    const inventory = this._authority.inventory(owner);
+    if (!inventory) return { ok: false, error: 'unknown_player' };
+    if (!this.opts.world.equip) return { ok: false, error: 'not_equippable' };
+    if (!inventory.slots.some((s) => s?.itemId === itemId && s.rarity === rarity))
+      return { ok: false, error: 'not_owned' };
+    const err = this.opts.world.equip(from, { itemId: itemId as ItemId, rarity });
+    return err ? { ok: false, error: err } : { ok: true, inventory };
+  }
+
+  /**
+   * Nạp đạn (GĐ 3b): trừ đạn đúng loại (mọi độ hiếm, tối đa số còn thiếu trong băng) = 1 revision; bắt đầu nạp khi
+   * mọi người đã ACK revision đó (như dùng đồ — đổi host không bao giờ được đạn mà túi vẫn còn).
+   */
+  private reload(from: PeerId, owner: string, actor: LootActor, expectedRevision: number): AuthorityResult {
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    const w = this.opts.world;
+    if (!w.reloadNeed || !w.beginReload) return { ok: false, error: 'no_gun' };
+    const need = w.reloadNeed(from);
+    if ('error' in need) return { ok: false, error: need.error };
+    const inventory = this._authority.inventory(owner);
+    if (!inventory) return { ok: false, error: 'unknown_player' };
+    if (inventory.revision !== expectedRevision) return { ok: false, error: 'stale_revision' };
+    if (countItem(inventory, need.ammo) === 0) return { ok: false, error: 'no_ammo' };
+    let removed = 0;
+    const result = this._authority.update(owner, (s) => {
+      const r = removeItemUpTo(s, need.ammo, need.need, expectedRevision);
+      removed = r.removed ?? 0;
+      return r;
+    });
+    if (result.ok) {
+      const begin = w.beginReload.bind(w);
+      this.effect = () => begin(from, need.ammo, removed);
     }
     return result;
   }

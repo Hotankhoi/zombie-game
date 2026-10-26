@@ -11,9 +11,11 @@ import { snapshotArea } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
+import type { AttackFx } from '@shared/sim/prediction';
 import { MapgenSource } from '@shared/sim/mapgenSource';
 import type { PeerId } from '@shared/types';
 import type { ItemStack } from '@shared/inventory/inventory';
+import { LOOT_REGIONS, type LootRegion } from '@shared/data/loot';
 import { measureSimMs } from './benchmark';
 
 export type NetRole = 'host' | 'client' | 'waiting';
@@ -24,6 +26,8 @@ export interface NetGameOptions {
   startTick?: number;
   /** CHỈ bản dev (`?kit=1`): mình làm host thì túi mới có sẵn đồ thử. */
   starterKit?: ItemStack[];
+  /** CHỈ bản dev (`?den=police`): mình làm host thì người vào trận đứng cạnh rương của khu này. */
+  devSpawnRegion?: LootRegion;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
   /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
@@ -68,6 +72,11 @@ function storedPlayerKey(s: { local: KeyStorage | null; session: KeyStorage | nu
     onKeyInUse: () => replacePlayerKey(),
     onClaimed: (k: string) => rememberPlayerKey(s.session, k),
   };
+}
+
+/** Tên khu loot hợp lệ (tham số dev `?den=`). */
+export function isLootRegion(s: string): s is LootRegion {
+  return Object.hasOwn(LOOT_REGIONS, s);
 }
 
 /** Báo worker "vẫn nghe người này" tối đa mỗi bấy nhiêu ms mỗi người. */
@@ -125,6 +134,7 @@ export class NetGame {
   private zombieCount: number | undefined;
   private startTick: number | undefined;
   private starterKit: ItemStack[] | undefined;
+  private devSpawnRegion: LootRegion | undefined;
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
   private seenAt = new Map<PeerId, number>();
@@ -146,6 +156,7 @@ export class NetGame {
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
     this.starterKit = opts.starterKit;
+    this.devSpawnRegion = opts.devSpawnRegion;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
     this.loot = new ClientLoot({
@@ -198,15 +209,15 @@ export class NetGame {
     return this.election.hostId;
   }
 
-  /** Một tick 20Hz của mình: dự đoán + gửi input cho host. Trả về true nếu vừa chém. */
-  tick(input: PlayerInput): boolean {
-    const { packet, swung } = this.sync.tick(input);
+  /** Một tick 20Hz của mình: dự đoán + gửi input cho host. Trả về vết chém / tia đạn vừa dự đoán (để vẽ ngay). */
+  tick(input: PlayerInput): AttackFx | null {
+    const { packet, fx } = this.sync.tick(input);
     const host = this.election.hostId;
     if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data: packet });
     else if (host) this.transport.send(packet, { to: host, channel: 'unreliable' });
     this.loot.tick();
     this.rememberRoom();
-    return swung;
+    return fx;
   }
 
   /** Ghi nhớ phòng (mỗi ~2 s, chỉ khi đã có host): tải lại trang lúc đang chơi cùng người khác → chờ host thật. */
@@ -312,6 +323,7 @@ export class NetGame {
       zombieCount: this.zombieCount,
       startTick: this.startTick,
       restore,
+      devSpawnRegion: this.devSpawnRegion,
       // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
       loot: { recover: { expected: [...keep] }, starterKit: this.starterKit },
     });

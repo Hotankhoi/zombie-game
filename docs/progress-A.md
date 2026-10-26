@@ -212,6 +212,23 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   `PROTOCOL_VERSION` 7, bản lưu 125 bố cục 8. 367 test. Browser pane (pane ẩn → đẩy vòng lặp bằng `setInterval`): phím 4
   nước 20 → 64.6 rồi đồ hộp no 30 → 69.7; phím 3 nhiễm 40 → 0; phím 2 đứng yên 3 s → máu 45 → 100. Loadtest đợt tràn
   tối đa 18.01 · 20.46 · **20.89**.
+  PR #44 đã merge.
+- PR 6 (`a/3b-weapons`): `shared/data/guns.ts` + `BAT`/`FISTS` trong `shared/data/melee.ts` (vùng B). Súng lục 30 sát
+  thương, 14 ô, 4 phát/s bán tự động, băng 12, nạp 1.2 s, tản 3°, giật +4°/phát (tối đa 12°, hồi 10°/s), ồn 18 ô; súng
+  trường 55, 22 ô, 3 phát/s giữ chuột, băng 20, nạp 2 s, tản 1.5°, giật +6° (tối đa 15°, hồi 10°/s), xuyên 1, ồn 28 ô;
+  gậy 55, 1.4 ô, 110°, 0.75 s, 14 stamina, không ám sát; độ hiếm × 1 · 1.1 · 1.2 · 1.35 · 1.5. `shared/sim/guns.ts`:
+  tia + tản tất định (hash id + số phát mod 64), tường/cửa đóng chặn, `SimWorld.shoot` **trúng do host quyết** + bù trễ
+  (input có `view` = tick máy khách đang vẽ, host lùi vị trí zombie ≤ 10 tick, lịch sử chỉ ghi khi có người cầm súng).
+  `PlayerState`: `weapon`, `weaponRarity`, `magPistol`, `magRifle`, `reloadGun/Left/Amount`, `recoil`, `shots`. Host:
+  `equip` (món phải có trong túi), `reload` (trừ đạn đúng loại ≤ số thiếu, bắt đầu nạp khi đã ACK, đạn vào đúng súng
+  lúc yêu cầu). Mã lỗi mới `not_equippable`, `not_owned`, `no_gun`, `mag_full`, `no_ammo`, `reloading`. Mạng: sự kiện
+  `shot` (EV 7), khối "trang bị" (vũ khí mọi người), trường súng trong khối chỉ số (đồng đội xoay vòng còn mỗi 2
+  snapshot), input nối `view` u32. Client: X / lăn chuột đổi vũ khí, Q nạp, bắn hết đạn tự nạp, tia vàng + chớp nòng,
+  súng/gậy vẽ trên tay, HUD "Súng lục 8/12 · túi 24", panel túi nút "Cầm". Chỉ bản dev: `?den=police` (vào trận cạnh rương
+  đồn cảnh sát gần nhất; phòng `GUN000` có súng lục + đạn). `PROTOCOL_VERSION` 8, bản lưu 125 bố cục 9. 378 test.
+  Browser pane (`?room=GUN000&zombies=10&den=police`, pane ẩn → đẩy vòng lặp + chuột giả trên canvas): mở rương, lấy hết
+  (súng lục + 18 đạn), X → gậy → súng lục, Q nạp 12/12 (túi 18 → 6), bắn: zombie −30 máu/phát, giết 2 con, hết đạn tự
+  nạp. Loadtest đợt tràn tối đa 18.27 · 20.73 · **21.16** (gửi 0.43 → 0.75 KB/s vì `view`).
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

@@ -1,6 +1,12 @@
 import type { InventoryCommand, InventoryState } from '@shared/inventory/inventory';
 import type { ChestState, LootCommand } from '@shared/loot/chest';
-import { LootMessage, type LootAction, type LootReplicaWire, type LootReply } from '@shared/types/loot';
+import {
+  LootMessage,
+  type LootAction,
+  type LootReplicaWire,
+  type LootReply,
+  type LootStackWire,
+} from '@shared/types/loot';
 import {
   applyLootPatch,
   decodeLoot,
@@ -180,6 +186,14 @@ export class ClientLoot {
    */
   use(slot: number, target: PeerId | null = null): Promise<LootOutcome> {
     return this.request({ type: 'use', slot, target, expectedRevision: this._inventory?.revision ?? 0 });
+  }
+  /** Nạp đạn cho súng đang cầm (GĐ 3b): host lấy đạn đúng loại trong túi. */
+  reload(): Promise<LootOutcome> {
+    return this.request({ type: 'reload', expectedRevision: this._inventory?.revision ?? 0 });
+  }
+  /** Cầm vũ khí / mặc giáp đang có trong túi (GĐ 3b) — không đổi túi. */
+  equip(itemId: string, rarity: LootStackWire['rarity']): Promise<LootOutcome> {
+    return this.request({ type: 'equip', itemId, rarity });
   }
   /** Lệnh của panel rương (`client/ui/loot`) — dùng nguyên revision trong lệnh. */
   command(cmd: LootCommand | InventoryCommand): Promise<LootOutcome> {

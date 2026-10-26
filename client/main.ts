@@ -13,7 +13,7 @@ import { Session } from '@net/session';
 import { TrysteroTransport } from '@net/trystero';
 import type { Transport } from '@net/transport';
 import { selfId as trysteroSelfId } from '@trystero-p2p/nostr';
-import { NetGame } from './net/netGame';
+import { NetGame, isLootRegion } from './net/netGame';
 import { mountVersionNotice } from './net/versionNotice';
 import { HudScene } from './scenes/HudScene';
 import { WorldScene } from './scenes/WorldScene';
@@ -96,10 +96,14 @@ const starterKit =
         ] as const
       ).map((s) => ({ ...s }))
     : undefined;
+// ?den=police (chỉ bản dev): vào trận cạnh rương đồn cảnh sát gần nhất (residential/market/hospital/police/military)
+const denParam = url.searchParams.get('den');
+const devSpawnRegion = import.meta.env.DEV && denParam && isLootRegion(denParam) ? denParam : undefined;
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
   starterKit,
+  devSpawnRegion,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 

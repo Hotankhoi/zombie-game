@@ -52,6 +52,8 @@ export interface WirePlayer {
   dragging: boolean;
   /** Đèn pin (GĐ 4) — cờ trong khối mở rộng. */
   flashlight: boolean;
+  /** Vũ khí đang cầm (GĐ 3b, `weaponCode`) — khối mở rộng "trang bị"; gói thiếu khối thì = dao thường (1). */
+  weapon: number;
 }
 
 export interface WireZombie {
@@ -107,6 +109,14 @@ export const VITAL_FIELDS = [
   'healRate',
   /** đứng yên bao lâu (bộ sơ cứu) */
   'stillFor',
+  /** súng (GĐ 3b): đạn trong băng, đang nạp (mã súng, còn bao lâu, bao nhiêu viên), độ giật, số phát mod 64 */
+  'magPistol',
+  'magRifle',
+  'reloadGun',
+  'reloadLeft',
+  'reloadAmount',
+  'recoil',
+  'shots',
 ] as const;
 export type VitalField = (typeof VITAL_FIELDS)[number];
 export type WireVitals = { slot: number } & Record<VitalField, number>;
@@ -148,7 +158,9 @@ export type WireEvent =
   | { kind: 'bite'; zombie: number; slot: number; x: number; y: number }
   | { kind: 'door'; x: number; y: number; open: boolean }
   | { kind: 'death'; slot: number }
-  | { kind: 'respawn'; slot: number };
+  | { kind: 'respawn'; slot: number }
+  /** GĐ 3b: 1 phát súng (tia đạn), `dist` ô. */
+  | { kind: 'shot'; slot: number; x: number; y: number; angle: number; dist: number; hit: boolean };
 
 export type GameMessage =
   | { type: GameMsg.Input; inputs: PlayerInput[] }
@@ -159,7 +171,7 @@ export type GameMessage =
   | { type: GameMsg.HostClaim; hostedMs: number }
   | { type: GameMsg.MapDelta; tiles: { x: number; y: number; change: number }[] };
 
-const EV = { swing: 1, hit: 2, bite: 3, door: 4, death: 5, respawn: 6 } as const;
+const EV = { swing: 1, hit: 2, bite: 3, door: 4, death: 5, respawn: 6, shot: 7 } as const;
 const TAU = Math.PI * 2;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -277,6 +289,8 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8(i.aim);
         w.u8(i.buttons);
       }
+      // GĐ 3b (nối cuối): tick đang xem của từng input, u32 (0xffffffff = không có) — bù trễ khi bắn
+      for (const i of msg.inputs) w.u32(i.view === undefined ? 0xffffffff : Math.max(0, Math.floor(i.view)));
       break;
     case GameMsg.Snapshot: {
       w.u32(msg.tick);
@@ -373,6 +387,12 @@ export function encodeGame(msg: GameMessage): Uint8Array {
         w.u8(v.slot);
         for (const f of VITAL_FIELDS) w.u16(vitalToU16(v[f]));
       }
+      // khối mở rộng GĐ 3b: trang bị (vũ khí đang cầm) của mọi người
+      w.u8(msg.players.length);
+      for (const p of msg.players) {
+        w.u8(p.slot);
+        w.u8(p.weapon & 0xff);
+      }
       break;
     }
     case GameMsg.Events:
@@ -436,6 +456,14 @@ function writeEvent(w: Writer, e: WireEvent) {
     case 'respawn':
       w.u8(e.slot);
       break;
+    case 'shot':
+      w.u8(e.slot);
+      w.f32(e.x);
+      w.f32(e.y);
+      w.u16(Math.round((((e.angle % TAU) + TAU) % TAU) * (65536 / TAU)) & 0xffff);
+      w.u8(Math.max(0, Math.min(255, Math.round(e.dist * 10))));
+      w.u8(e.hit ? 1 : 0);
+      break;
   }
 }
 
@@ -452,6 +480,11 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
         for (let i = 0; i < n; i++) {
           inputs.push({ seq: r.u32(), moveX: r.i8(), moveY: r.i8(), aim: r.u8(), buttons: r.u8() });
         }
+        if (r.more())
+          for (const i of inputs) {
+            const v = r.u32();
+            if (v !== 0xffffffff) i.view = v;
+          }
         return { type, inputs };
       }
       case GameMsg.Snapshot: {
@@ -489,6 +522,7 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             reviveProgress: 0,
             dragging: false,
             flashlight: false,
+            weapon: 1,
           });
         }
         const zombies: WireZombie[] = [];
@@ -578,6 +612,14 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
             vitals.push(v);
           }
         }
+        if (r.more()) {
+          const bySlot = new Map(players.map((p) => [p.slot, p]));
+          for (let i = 0, n = r.u8(); i < n; i++) {
+            const p = bySlot.get(r.u8());
+            const weapon = r.u8();
+            if (p) p.weapon = weapon;
+          }
+        }
         return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde, vitals };
       }
       case GameMsg.Events: {
@@ -643,6 +685,14 @@ function readEvent(r: Reader): WireEvent | null {
       return { kind: 'death', slot: r.u8() };
     case EV.respawn:
       return { kind: 'respawn', slot: r.u8() };
+    case EV.shot: {
+      const slot = r.u8();
+      const x = r.f32();
+      const y = r.f32();
+      const angle = (r.u16() / 65536) * TAU;
+      const dist = r.u8() / 10;
+      return { kind: 'shot', slot, x, y, angle, dist, hit: r.u8() === 1 };
+    }
     default:
       return null;
   }

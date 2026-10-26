@@ -18,11 +18,16 @@ import { hasLineOfSight } from '@shared/sim/collision';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
 import { isUp, type PlayerState } from '@shared/sim/player';
+import { isWeaponId, weaponCode } from '@shared/sim/guns';
+import { GUNS, type GunId } from '@shared/data/guns';
 import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
 import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
 import type { LootReplicaWire } from '@shared/types/loot';
 import { HostLoot } from './hostLoot';
+import { chestLocations } from '@shared/mapgen/chests';
+import { CHUNK_SIZE, generateChunk } from '@shared/mapgen/world';
+import type { LootRegion } from '@shared/data/loot';
 import type { ItemStack } from '@shared/inventory/inventory';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
@@ -66,6 +71,8 @@ export interface HostServerOptions {
   startTick?: number;
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
+  /** CHỈ bản dev (`?den=police`): người vào trận đứng cạnh rương gần nhất của khu này (thử nhặt súng nhanh). */
+  devSpawnRegion?: LootRegion;
   /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
   loot?: {
     restore?: LootReplicaWire;
@@ -104,6 +111,9 @@ export class HostServer {
   /** Mẩu sao lưu gửi lần tới (xoay vòng 0..BACKUP_PARTS-1). */
   private backupTurn = 0;
   private readonly devKit: boolean;
+  private readonly seed: string;
+  private readonly devRegion: LootRegion | undefined;
+  private devChest: { x: number; y: number } | null | undefined;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
@@ -116,6 +126,8 @@ export class HostServer {
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
     this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
+    this.devRegion = opts.devSpawnRegion;
+    this.seed = opts.seed;
     this.loot = new HostLoot({
       seed: opts.seed,
       ...opts.loot,
@@ -132,6 +144,20 @@ export class HostServer {
         },
         checkUse: (id, item, target) => this.world.checkItemUse(id, item.itemId, target),
         applyUse: (id, item, target) => this.world.applyItemUse(id, item.itemId, item.rarity, target),
+        equip: (id, item) => {
+          if (!isWeaponId(item.itemId)) return 'not_equippable';
+          this.world.equip(id, item.itemId, item.rarity);
+          return null;
+        },
+        reloadNeed: (id) => {
+          const r = this.world.reloadNeed(id);
+          return 'error' in r ? r : { ammo: GUNS[r.gun].ammo, need: r.need };
+        },
+        // đạn của súng lúc yêu cầu (đổi sang súng khác trước khi xác nhận vẫn vào đúng băng)
+        beginReload: (id, ammo, amount) => {
+          const gun = (Object.keys(GUNS) as GunId[]).find((g) => GUNS[g].ammo === ammo);
+          if (gun) this.world.beginReload(id, gun, amount);
+        },
       },
     });
   }
@@ -226,6 +252,11 @@ export class HostServer {
       this.clients.set(id, c);
       const p = this.world.addPlayer(id);
       // CHỈ bản dev (`?kit=1`): vào trận đã đói/khát, bị thương, nhiễm trùng để thử dùng đồ ngay
+      const spot = this.devSpot();
+      if (spot) {
+        p.x = spot.x;
+        p.y = spot.y;
+      }
       if (this.devKit) {
         p.food = Math.min(p.food, 30);
         p.water = Math.min(p.water, 20);
@@ -239,6 +270,24 @@ export class HostServer {
       if (changed.length > 0) this.sendMapDelta(changed, [id]);
     }
     return c;
+  }
+
+  /** Rương gần điểm xuất phát nhất của khu `devRegion` (tìm 1 lần, trong 7×7 chunk). */
+  private devSpot(): { x: number; y: number } | null {
+    if (!this.devRegion) return null;
+    if (this.devChest !== undefined) return this.devChest;
+    const s = this.world.map.spawn;
+    const cx0 = Math.floor(s.x / CHUNK_SIZE);
+    const cy0 = Math.floor(s.y / CHUNK_SIZE);
+    let best: { x: number; y: number } | null = null;
+    for (let cy = cy0 - 3; cy <= cy0 + 3; cy++)
+      for (let cx = cx0 - 3; cx <= cx0 + 3; cx++)
+        for (const c of chestLocations(generateChunk(this.seed, cx, cy))) {
+          if (c.region !== this.devRegion) continue;
+          if (!best || Math.hypot(c.x - s.x, c.y - s.y) < Math.hypot(best.x - s.x, best.y - s.y)) best = c;
+        }
+    this.devChest = best;
+    return best;
   }
 
   /** Danh sách ô tường đã vỡ → người nhận (reliable, không lọc theo vùng quan tâm: map dùng chung). */
@@ -325,8 +374,8 @@ export class HostServer {
       if (!me) continue;
       const mine = wire.filter((e, i) => {
         const src = events[i] as SimEvent;
-        // vết chém của chính mình client đã tự vẽ (dự đoán)
-        if (src.type === 'swing' && src.player === c.id) return false;
+        // vết chém / tia đạn của chính mình client đã tự vẽ (dự đoán)
+        if ((src.type === 'swing' || src.type === 'shot') && src.player === c.id) return false;
         if (!('x' in e)) return true;
         return near(me, e.x, e.y);
       });
@@ -363,12 +412,22 @@ export class HostServer {
         return { kind: 'death', slot: this.slotOf(e.player) };
       case 'respawn':
         return { kind: 'respawn', slot: this.slotOf(e.player) };
+      case 'shot':
+        return {
+          kind: 'shot',
+          slot: this.slotOf(e.player),
+          x: e.x,
+          y: e.y,
+          angle: e.angle,
+          dist: e.dist,
+          hit: e.hit,
+        };
     }
   }
 
   /**
    * Chỉ số sinh tồn gửi cho người nhận `c`: của chính họ (dự đoán + HUD) + 1 đồng đội xoay vòng theo số thứ tự snapshot
-   * (mỗi đồng đội ≤ 0,3 s một lần — đủ để lên host thay mà không mất chỉ số, ~190 B/s mỗi người).
+   * (mỗi đồng đội ≤ 0,6 s một lần — đủ để lên host thay mà không mất chỉ số).
    */
   private vitalsFor(c: Client, round: number): WireVitals[] {
     const out: WireVitals[] = [];
@@ -380,8 +439,10 @@ export class HostServer {
       out.push(v);
     };
     add(c.id, c.slot);
+    // đồng đội: mỗi 2 snapshot 1 người (≤ 0,6 s tuổi với 3 đồng đội) — chỉ dùng khi phải lên host thay
+    if (round % 2 !== 0) return out;
     const others = [...this.clients.values()].filter((o) => o !== c).sort((a, b) => a.slot - b.slot);
-    const o = others[round % Math.max(1, others.length)];
+    const o = others[(round / 2) % Math.max(1, others.length)];
     if (o) add(o.id, o.slot);
     return out;
   }
@@ -506,5 +567,6 @@ function wirePlayer(slot: number, p: PlayerState): WirePlayer {
     reviveProgress: p.reviveProgress,
     dragging: p.dragging,
     flashlight: p.flashlight,
+    weapon: weaponCode(p.weapon, p.weaponRarity),
   };
 }

@@ -33,6 +33,7 @@ const snap: SnapshotMsg = {
       reviveProgress: 1.5,
       dragging: true,
       flashlight: true,
+      weapon: 3 | (2 << 3),
     },
   ],
   zombies: [
@@ -51,6 +52,13 @@ const snap: SnapshotMsg = {
       healLeft: 11.5,
       healRate: 2.5,
       stillFor: 1.75,
+      magPistol: 7,
+      magRifle: 20,
+      reloadGun: 2,
+      reloadLeft: 1.25,
+      reloadAmount: 12,
+      recoil: 6.5,
+      shots: 63,
     },
   ],
   horde: {
@@ -180,14 +188,15 @@ describe('gameCodec', () => {
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
     // khối mở rộng nối cuối gói: GĐ 2c (người chơi), GĐ 4 (vũng), GĐ 5 (đợt tràn), zombie xa (gói này không có con nào)
-    const vitalsExt = 1 + snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length);
+    const gearExt = 1 + snap.players.length * 2;
+    const vitalsExt = 1 + snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length) + gearExt;
     const farExt = 2 + vitalsExt;
     const hordeExt = 1 + 5 + snap.horde!.rows.length * 4 + farExt;
     const poolsExt = 1 + snap.pools.length * 8;
     const ext = 1 + snap.players.length * 10 + poolsExt + hordeExt;
     for (let n = 0; n < full.length; n++) {
       // cắt đúng ranh giới khối mở rộng = gói bản cũ hơn, vẫn hợp lệ
-      const boundary = [ext, poolsExt + hordeExt, hordeExt, farExt, vitalsExt].some(
+      const boundary = [ext, poolsExt + hordeExt, hordeExt, farExt, vitalsExt, gearExt].some(
         (e) => n === full.length - e,
       );
       if (!boundary) expect(decodeGame(full.subarray(0, n))).toBeNull();
@@ -211,7 +220,9 @@ describe('gameCodec', () => {
             4 +
             2 +
             1 +
-            snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length)),
+            snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length) +
+            1 +
+            snap.players.length * 2),
       ),
     ) as SnapshotMsg;
     expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });
