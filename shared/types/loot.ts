@@ -1,3 +1,5 @@
+import type { GameplayProfileWire } from './gameplay';
+
 /** Loot uses reliable transport. 124/125/126 are reserved by A. */
 export const LootMessage = { Request: 110, Reply: 111, Replica: 112, Ack: 113 } as const;
 
@@ -11,6 +13,8 @@ export interface InventoryWire {
   readonly revision: number;
   readonly backpack: 'basic' | 'scout' | 'expedition';
   readonly slots: readonly (LootStackWire | null)[];
+  /** Optional only for legacy saves; gameplay + bag are installed atomically. */
+  readonly gameplay?: GameplayProfileWire;
 }
 export interface ChestWire {
   readonly version: 1;
@@ -50,7 +54,10 @@ export type LootAction =
   | (ChestIntent & { type: 'take'; slot: number; quantity: number })
   | (ChestIntent & { type: 'takeAll' })
   | { type: 'move'; expectedRevision: number; from: number; to: number; quantity: number }
-  | { type: 'sort'; expectedRevision: number };
+  | { type: 'sort'; expectedRevision: number }
+  | { type: 'use' | 'equip'; slot: number; expectedRevision: number }
+  | { type: 'unequip'; target: 'weapon' | 'armor'; expectedRevision: number }
+  | { type: 'reload'; expectedRevision: number };
 
 /** Authority term must change on every host activation, even if the same peer returns. */
 interface LootEnvelope {
