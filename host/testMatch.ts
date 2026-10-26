@@ -87,17 +87,28 @@ export class TestMatch {
    * Một máy vào phòng. `key` = playerKey (cùng khóa = cùng người, vd tải lại trang), hoặc Web Storage giả (NetGame tự
    * đọc/ghi khóa như trên trình duyệt: `local` chung, `session` riêng tab).
    */
-  join(id: PeerId, key: string | { local: KeyStorage; session: KeyStorage }, resume = false): MatchNode {
+  join(
+    id: PeerId,
+    key: string | { local: KeyStorage; session: KeyStorage },
+    resume = false,
+    /** Chưa nối được ai trong bấy nhiêu ms (WebRTC sau khi tải lại nối chậm): không gửi/nhận gì. */
+    connectAfterMs = 0,
+  ): MatchNode {
+    const blindUntil = this.timers.now() + connectAfterMs;
+    const blind = () => this.timers.now() < blindUntil;
     const sched = { setTimeout: this.timers.setTimeout, now: this.timers.now, random: () => this.rng.next() };
     // tab treo (frozen): không gửi được gì (kể cả trả lời gói tới)
     const raw = this.hub.join(id);
     const mutable: Transport = {
       selfId: raw.selfId,
-      peers: () => raw.peers(),
+      peers: () => (blind() ? [] : raw.peers()),
       send: (data, o) => {
-        if (!this.frozen.has(id)) raw.send(data, o);
+        if (!this.frozen.has(id) && !blind()) raw.send(data, o);
       },
-      onMessage: (h) => raw.onMessage(h),
+      onMessage: (h) =>
+        raw.onMessage((data, from) => {
+          if (!blind()) h(data, from);
+        }),
       onPeerJoin: (h) => raw.onPeerJoin(h),
       onPeerLeave: (h) => raw.onPeerLeave(h),
       leave: () => raw.leave(),

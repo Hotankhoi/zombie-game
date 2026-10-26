@@ -160,9 +160,16 @@ export class HudScene extends Phaser.Scene {
 
     if (!me) {
       const full = net?.roomFull;
+      const wait = net?.election.waitingForHostMs() ?? null;
       this.respawnText
         .setVisible(true)
-        .setText(full ? `Phòng đã đủ ${full} người` : 'Đang vào trận…')
+        .setText(
+          full
+            ? `Phòng đã đủ ${full} người`
+            : wait !== null
+              ? `Đang tìm host của phòng… (${Math.ceil(wait / 1000)} s)`
+              : 'Đang vào trận…',
+        )
         .setPosition(width / 2, height / 2 - 60);
       this.subText
         .setVisible(!!full)

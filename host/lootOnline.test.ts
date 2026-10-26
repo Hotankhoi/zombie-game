@@ -229,3 +229,67 @@ describe('loot online — 2 tab cùng trình duyệt không cướp túi nhau (l
     expect(t4.game.loot.ready).toBe(true);
   });
 });
+
+describe('tab vừa tải lại chờ host thật, không tự làm host tạm (lỗi 2A #2)', () => {
+  function room() {
+    const m = new TestMatch(ROOM);
+    const local = new MemStorage();
+    const session = new MemStorage();
+    const h = m.join('h', key('h'));
+    const t1 = m.join('t1', { local, session });
+    m.until(() => h.game.loot.ready && t1.game.loot.ready);
+    m.step(60); // ghi nhớ phòng (mỗi 2 s)
+    return { m, local, session, h, t1 };
+  }
+
+  it('tải lại khi host còn, WebRTC nối chậm 5 s → không bao giờ làm host, không có túi tạm; rồi đúng túi cũ', () => {
+    const { m, local, session, t1 } = room();
+    const owner = t1.game.loot.owner;
+    m.leave('t1');
+    const t1b = m.join('t1b', { local, session }, false, 5000);
+    let hosted = false;
+    let tempBag = false;
+    const n = m.until(() => {
+      if (t1b.game.role === 'host') hosted = true;
+      if (t1b.game.loot.inventory && t1b.game.role !== 'client') tempBag = true;
+      return t1b.game.loot.ready;
+    });
+    expect(n * 50).toBeGreaterThanOrEqual(5000);
+    expect(hosted).toBe(false);
+    expect(tempBag).toBe(false);
+    expect(t1b.game.hostId).toBe('h');
+    expect(t1b.game.loot.owner).toBe(owner);
+  });
+
+  it('trong lúc chờ: HUD có thời gian chờ, thao tác loot bị khóa (not_ready)', async () => {
+    const { m, local, session } = room();
+    m.leave('t1');
+    const t1b = m.join('t1b', { local, session }, false, 6000);
+    m.step(60); // 3 s: đã quá 2 s nghe mặc định
+    expect(t1b.game.role).toBe('waiting');
+    const wait = t1b.game.election.waitingForHostMs();
+    expect(wait).not.toBeNull();
+    expect(wait!).toBeGreaterThan(5000);
+    expect(t1b.game.loot.ready).toBe(false);
+    expect(t1b.game.loot.inventory).toBeNull();
+    expect(await t1b.game.loot.open(chests[0]!.id)).toMatchObject({ ok: false, error: 'not_ready' });
+  });
+
+  it('host thật đã rời hẳn → hết hạn chờ (10 s) thì tự lên host', () => {
+    const { m, local, session, h } = room();
+    m.leave('h');
+    m.leave('t1');
+    const t1b = m.join('t1b', { local, session });
+    const n = m.until(() => t1b.game.role === 'host');
+    expect(n * 50).toBeGreaterThanOrEqual(9900);
+    expect(n * 50).toBeLessThan(11_000);
+    void h;
+  });
+
+  it('vào phòng mới (không có ghi nhớ) vẫn tự làm host sau ~2 s như cũ', () => {
+    const m = new TestMatch(ROOM);
+    const a = m.join('a', { local: new MemStorage(), session: new MemStorage() });
+    const n = m.until(() => a.game.role === 'host');
+    expect(n * 50).toBeLessThan(2500);
+  });
+});
