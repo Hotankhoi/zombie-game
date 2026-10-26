@@ -13,7 +13,8 @@ export interface InventoryWire {
   readonly slots: readonly (LootStackWire | null)[];
 }
 export interface ChestWire {
-  readonly version: 1;
+  /** = LOOT_VERSION của bảng sinh rương (`shared/loot/chest.ts`); 2 = bảng loot GĐ 3b có giáp. */
+  readonly version: 1 | 2;
   readonly id: string;
   readonly region: 'residential' | 'market' | 'hospital' | 'police' | 'military';
   readonly revision: number;
@@ -50,7 +51,20 @@ export type LootAction =
   | (ChestIntent & { type: 'take'; slot: number; quantity: number })
   | (ChestIntent & { type: 'takeAll' })
   | { type: 'move'; expectedRevision: number; from: number; to: number; quantity: number }
-  | { type: 'sort'; expectedRevision: number };
+  | { type: 'sort'; expectedRevision: number }
+  /**
+   * GĐ 3b (A): dùng 1 món ở ô `slot` của túi mình (đồ ăn/uống/y tế; băng gạc có thể dùng cho đồng đội `target`, null =
+   * cho mình). Host trừ đồ + áp hiệu ứng trong CÙNG một giao dịch: hiệu ứng chỉ áp khi revision trừ đồ đã được mọi
+   * người ACK (cùng lúc gửi kết quả 111) → host mới luôn có bản túi đã trừ → không bao giờ được hiệu ứng 2 lần.
+   */
+  | { type: 'use'; expectedRevision: number; slot: number; target: string | null }
+  /** GĐ 3b (A): nạp đạn cho súng đang cầm — host lấy đạn đúng loại trong túi (mọi độ hiếm), áp như `use`. */
+  | { type: 'reload'; expectedRevision: number }
+  /**
+   * GĐ 3b (A): cầm vũ khí / mặc giáp là món `itemId` + `rarity` đang có trong túi. Không đổi túi (món vẫn nằm trong túi,
+   * chiếm ô); host kiểm tra có món đó rồi đổi trạng thái người chơi ngay.
+   */
+  | { type: 'equip'; itemId: string; rarity: LootStackWire['rarity'] };
 
 /** Authority term must change on every host activation, even if the same peer returns. */
 interface LootEnvelope {

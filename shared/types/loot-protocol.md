@@ -39,3 +39,20 @@ trận (PR #23: khác bản → "Bạn đang dùng bản cũ, bấm để tải 
   replica loot đầy đủ ở mẩu 0. Đổi bố cục 125 thì tăng số này, không nhất thiết tăng `PROTOCOL_VERSION`.
 - Số gói dành riêng của A: 124 (phòng đầy), 125 (sao lưu), 126 (điểm host) — giữ nguyên, loot không dùng lại.
 - PR #35 (B, đề xuất tăng lên 4) đã đóng: phần tăng bản đã làm ở #30; ghi chú tương thích của #35 gộp vào mục này.
+
+## GĐ 3b — dùng đồ, nạp đạn, trang bị (A, hợp đồng PR `a/3b-contract`)
+
+Thêm 3 hành động vào `LootAction` (mã 8, 9, 10 trong `net/lootCodec.ts`, thêm cuối danh mục):
+
+| Hành động | Trường                               | Ý nghĩa                                                                                        |
+| --------- | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `use`     | `expectedRevision`, `slot`, `target` | Dùng 1 món ở ô `slot` (ăn/uống/y tế). `target` = PeerId đồng đội (băng gạc) hoặc `null` = mình |
+| `reload`  | `expectedRevision`                   | Nạp đạn súng đang cầm: host lấy đạn đúng loại trong túi (mọi độ hiếm)                          |
+| `equip`   | `itemId`, `rarity`                   | Cầm vũ khí / mặc giáp đang có trong túi (món vẫn ở trong túi, không đổi revision)              |
+
+- **Một giao dịch**: host trừ đồ (revision R) và xếp hiệu ứng chờ; hiệu ứng chỉ áp lên nhân vật khi **mọi người trong trận
+  đã ACK revision R** — cùng lúc gửi kết quả 111. Host rời trước đó → máy khách nhận `host_changed`; host mới chọn replica
+  mới nhất (≥ R nếu đã có người nhận) → có thể mất hiệu ứng nhưng **không bao giờ** được hiệu ứng mà đồ vẫn còn (không nhân đôi).
+- `equip` không sửa túi → áp ngay; host chỉ kiểm tra món có trong túi của người gửi.
+- `ChestWire.version` nhận `1 | 2`: bảng sinh rương mới (giáp) tăng `LOOT_VERSION` lên 2 ở PR giáp.
+- Ở PR hợp đồng host còn trả `invalid_command` cho 3 hành động này; các PR 3b sau mới xử lý (và tăng `PROTOCOL_VERSION`).

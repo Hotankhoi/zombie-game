@@ -87,7 +87,20 @@ const MAX_SEED = 256;
 const MAX_INVENTORY_ID = 255;
 const MAX_QUANTITY = Math.max(...Object.values(ITEMS).map((i) => i.maxStack));
 const MAX_BACKPACK = Math.max(...Object.values(BACKPACKS).map((b) => b.capacity));
-const ACTIONS = ['inventory', 'view', 'open', 'take', 'takeAll', 'move', 'sort', 'claim'] as const;
+/** Thứ tự cố định (mã = chỉ số) — chỉ thêm vào cuối. use/reload/equip: GĐ 3b. */
+const ACTIONS = [
+  'inventory',
+  'view',
+  'open',
+  'take',
+  'takeAll',
+  'move',
+  'sort',
+  'claim',
+  'use',
+  'reload',
+  'equip',
+] as const;
 const FULL = 0;
 const PATCH = 1;
 
@@ -376,6 +389,21 @@ function writeAction(w: Writer, a: LootAction): void {
       writeToken(w, a.key);
       w.u8(a.resume ? 1 : 0);
       return;
+    case 'use':
+      writeVarint(w, a.expectedRevision);
+      if (!Number.isSafeInteger(a.slot) || a.slot < 0 || a.slot >= MAX_BACKPACK)
+        throw new RangeError('ô túi');
+      w.u8(a.slot);
+      w.u8(a.target === null ? 0 : 1);
+      if (a.target !== null) writeToken(w, a.target);
+      return;
+    case 'reload':
+      writeVarint(w, a.expectedRevision);
+      return;
+    case 'equip':
+      w.u8(code(ITEM_CODES, a.itemId as keyof typeof ITEMS));
+      w.u8(code(RARITY_CODES, a.rarity));
+      return;
   }
 }
 function readQuantity(r: Reader): number {
@@ -428,6 +456,18 @@ function readAction(r: Reader): LootAction {
       if (flag > 1) throw new RangeError('cờ claim');
       return { type, key, resume: flag === 1 };
     }
+    case 'use': {
+      const expectedRevision = readRevision(r);
+      const slot = r.u8();
+      if (slot >= MAX_BACKPACK) throw new RangeError('ô túi');
+      const flag = r.u8();
+      if (flag > 1) throw new RangeError('cờ mục tiêu');
+      return { type, expectedRevision, slot, target: flag === 1 ? readToken(r) : null };
+    }
+    case 'reload':
+      return { type, expectedRevision: readRevision(r) };
+    case 'equip':
+      return { type, itemId: lookup(ITEM_CODES, r.u8()), rarity: lookup(RARITY_CODES, r.u8()) };
   }
 }
 
