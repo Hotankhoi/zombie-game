@@ -25,7 +25,7 @@ Host xác thực người gửi và revision; thả/nhặt cập nhật túi + d
 
 ## Bàn giao
 
-Kiểm tra ngày 26/10/2026: `npm run check` đạt (392 test/50 file, typecheck và lint); `npm run build` đạt. PR hợp đồng #48 đã mở. Quyền GitHub đã hoạt động lại; nhánh triển khai được đẩy để A review.
+Kiểm tra ngày 26/10/2026: `npm run check` đạt (393 test/50 file, typecheck và lint); `npm run build` đạt. PR hợp đồng #48 đã mở. Quyền GitHub đã hoạt động lại; PR triển khai #49 đã mở để A review.
 
 Các file chính:
 

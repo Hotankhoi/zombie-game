@@ -391,6 +391,7 @@ export class WorldScene extends Phaser.Scene {
     this.lootUi.items.update(this.me() ?? null, others);
     const seen = this.zombieSeer(others, alpha);
     const me0 = this.me();
+    if (me0) this.lootUi.hotbar.observeWeapon(me0.weapon, me0.weaponRarity);
     const up = me0 && isUp(me0) ? me0 : null;
     this.ground?.update(me0 ?? null, seen);
     this.chests.update(up, seen, this.lootUi.open);

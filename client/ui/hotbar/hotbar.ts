@@ -1,7 +1,7 @@
 import type { ClientLoot } from '@net/clientLoot';
 import { ITEMS, RARITIES } from '@shared/data/items';
 import type { ItemStack } from '@shared/inventory/inventory';
-import { HOTBAR_SIZE, nextSlot, resolveBinding, type Binding } from './model';
+import { HOTBAR_SIZE, nextSlot, resolveBinding, selectedForWeapon, type Binding } from './model';
 import { icon } from '../inventory/inventoryPanel';
 import './hotbar.css';
 
@@ -193,6 +193,14 @@ export class Hotbar {
   cancelAssignment(): void {
     this.assignPending = null;
     this.render();
+  }
+  observeWeapon(weapon: string, rarity: Binding['rarity']): void {
+    if (this.sending || !this.loot.ready) return;
+    const next = selectedForWeapon(this.bindings, this.selected, weapon, rarity);
+    if (next !== this.selected) {
+      this.selected = next;
+      this.render();
+    }
   }
   destroy(): void {
     this.off();
