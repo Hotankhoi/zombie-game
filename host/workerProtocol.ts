@@ -15,6 +15,8 @@ export type ToWorker =
       loot?: { restore?: LootReplicaWire; epoch?: number; recover?: { expected: PeerId[] } };
     }
   | { t: 'in'; from: PeerId; data: Uint8Array }
+  /** Vừa nhận gói bất kỳ của người này (≤ 2 lần/giây) — tab ẩn vẫn còn sống (host/hostLoot.ts LOOT_TAKEOVER_IDLE_TICKS). */
+  | { t: 'seen'; peer: PeerId }
   | { t: 'leave'; peer: PeerId };
 
 export interface HostStats {

@@ -43,6 +43,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'in':
       server?.receive(m.from, m.data);
       break;
+    case 'seen':
+      server?.heard(m.peer);
+      break;
     case 'leave':
       server?.removePeer(m.peer);
       break;

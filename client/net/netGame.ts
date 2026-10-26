@@ -3,7 +3,7 @@ import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { HostElection } from '@net/hostElection';
 import { isLootPacket } from '@net/lootCodec';
-import { loadPlayerKey, replacePlayerKey } from '@net/playerKey';
+import { loadPlayerKey, rememberPlayerKey, replacePlayerKey, type KeyStorage } from '@net/playerKey';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
 import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
@@ -23,8 +23,10 @@ export interface NetGameOptions {
   startTick?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
-  /** playerKey (net/playerKey.ts). Mặc định đọc/ghi localStorage + sessionStorage của trình duyệt. */
+  /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
   playerKey?: { key: string; resume: boolean; onKeyInUse?: () => string };
+  /** Nơi lưu playerKey (test truyền bản giả để thử 2 tab cùng trình duyệt). */
+  storage?: { local: KeyStorage | null; session: KeyStorage | null };
   /** Chỉ cho test (chạy trong Node, không Worker/timer thật): */
   test?: {
     now: () => number;
@@ -40,8 +42,8 @@ export interface HostRunner {
   terminate(): void;
 }
 
-/** playerKey của tab này từ Web Storage (không có storage → khóa tạm). */
-function browserPlayerKey(): { key: string; resume: boolean; onKeyInUse: () => string } {
+/** Web Storage của trình duyệt (không có / bị chặn → null: khóa tạm tới khi đóng trang). */
+function browserStorage(): { local: KeyStorage | null; session: KeyStorage | null } {
   const get = (name: 'localStorage' | 'sessionStorage') => {
     try {
       return globalThis[name] ?? null;
@@ -49,9 +51,24 @@ function browserPlayerKey(): { key: string; resume: boolean; onKeyInUse: () => s
       return null;
     }
   };
-  const { key, resume } = loadPlayerKey(get('localStorage'), get('sessionStorage'));
-  return { key, resume, onKeyInUse: () => replacePlayerKey(get('sessionStorage')) };
+  return { local: get('localStorage'), session: get('sessionStorage') };
 }
+
+/**
+ * playerKey của tab này. Chỉ nhớ vào sessionStorage khi host đã nhận khóa (claim thành công) — xem `loadPlayerKey`.
+ */
+function storedPlayerKey(s: { local: KeyStorage | null; session: KeyStorage | null }) {
+  const { key, resume } = loadPlayerKey(s.local, s.session);
+  return {
+    key,
+    resume,
+    onKeyInUse: () => replacePlayerKey(),
+    onClaimed: (k: string) => rememberPlayerKey(s.session, k),
+  };
+}
+
+/** Báo worker "vẫn nghe người này" tối đa mỗi bấy nhiêu ms mỗi người. */
+const SEEN_EVERY_MS = 500;
 
 /** Điểm làm host = ping trung bình + hệ số × thời gian chạy thử 20 tick mô phỏng (ms). */
 const SIM_MS_WEIGHT = 4;
@@ -83,6 +100,9 @@ export class NetGame {
   private readonly testHooks: NetGameOptions['test'];
   private zombieCount: number | undefined;
   private startTick: number | undefined;
+  private readonly now: () => number;
+  /** Lần cuối báo worker "vẫn nghe" từng người. */
+  private seenAt = new Map<PeerId, number>();
 
   constructor(
     private transport: Transport,
@@ -91,13 +111,14 @@ export class NetGame {
   ) {
     this.seed = worldSeedForRoom(room);
     this.testHooks = opts.test;
+    this.now = opts.test?.now ?? (() => performance.now());
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
     this.loot = new ClientLoot({
       seed: this.seed,
-      ...(opts.playerKey ?? browserPlayerKey()),
+      ...(opts.playerKey ?? storedPlayerKey(opts.storage ?? browserStorage())),
       send: (d) => this.sendLoot(d),
       now: opts.test?.now,
     });
@@ -164,6 +185,7 @@ export class NetGame {
   }
 
   private onMessage(data: Uint8Array, from: PeerId): void {
+    if (this.worker) this.markSeen(from);
     if (isLootPacket(data)) {
       // mình là host: intent/ACK của người khác → worker; còn lại chỉ nghe host hiện tại
       if (this.role === 'host') this.toWorker({ t: 'in', from, data: data.slice() });
@@ -181,6 +203,14 @@ export class NetGame {
         if (from === this.election.hostId) this.sync.receive(data);
         break;
     }
+  }
+
+  /** Mình là host: gói bất kỳ (ping, điểm host…) của người này → báo worker họ còn sống (tab ẩn không gửi input). */
+  private markSeen(from: PeerId): void {
+    const t = this.now();
+    if (t - (this.seenAt.get(from) ?? -Infinity) < SEEN_EVERY_MS) return;
+    this.seenAt.set(from, t);
+    this.toWorker({ t: 'seen', peer: from });
   }
 
   private onHostChanged(host: PeerId | null): void {
@@ -235,6 +265,7 @@ export class NetGame {
   }
 
   private stopHost(): void {
+    this.seenAt.clear();
     this.worker?.terminate();
     this.worker = null;
     this.hostStats = null;

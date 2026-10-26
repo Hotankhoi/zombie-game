@@ -130,6 +130,7 @@ export class HostServer {
   /** Gói từ mạng (hoặc từ chính máy host). Người gửi input lần đầu = vào trận. */
   receive(from: PeerId, data: Uint8Array): void {
     if (isLootPacket(data)) {
+      this.heard(from);
       this.loot.receive(from, data);
       return;
     }
@@ -148,6 +149,12 @@ export class HostServer {
     }
     // máy khách gửi dồn quá nhiều (vd: tab bị treo) → bỏ input cũ nhất; client sẽ được sửa theo host
     while (c.queue.length > MAX_QUEUE) c.ack = (c.queue.shift() as PlayerInput).seq;
+  }
+
+  /** Vừa nghe người này (gói bất kỳ: ping, điểm host…) — còn sống dù tab ẩn không gửi input (loot: chống lấy túi). */
+  heard(id: PeerId): void {
+    const c = this.clients.get(id);
+    if (c) c.heardAt = this.world.tick;
   }
 
   removePeer(id: PeerId): void {

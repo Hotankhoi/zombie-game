@@ -165,6 +165,20 @@ Nhánh `a/loot-ui` (mỗi bước 1 PR từ `main`, CI xanh thì merge commit). 
   AGENTS.md mục 8, ghi chú tương thích của PR #35 (B, đã đóng) gộp vào `shared/types/loot-protocol.md` (bản hiện tại 5,
   sao lưu 125 bản bố cục 6).
 
+## Phiên 2026-10-26: sửa 2 lỗi loot + GĐ 3b (kế hoạch đã duyệt)
+
+Kế hoạch 8 PR (mỗi PR 1 nhánh từ `main`, CI xanh → merge commit): (1) `a/loot-key-fix` lỗi cướp túi · (2) `a/host-wait` tab
+tải lại tự làm host · (3) `a/3b-contract` hợp đồng `shared/types/loot.ts` (use/reload/equip) · (4) `a/3b-survival` đói/khát/
+nhiễm trùng · (5) `a/3b-use-items` dùng đồ (phím 1–4, hiệu ứng áp khi giao dịch đã được mọi người ACK) · (6) `a/3b-weapons`
+gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do host quyết + bù trễ · (7) `a/3b-armor` mũ/áo/quần + bảng loot ·
+(8) `a/3b-report` đo tải + tài liệu. Chi tiết số cân bằng ở từng mục bên dưới khi làm xong.
+
+- PR 1 (`a/loot-key-fix`): `loadPlayerKey` không ghi sessionStorage; `rememberPlayerKey` khi claim thành công
+  (`ClientLoot.onClaimed`); host đếm im lặng theo mọi gói (`HostServer.heard`, worker `seen`), `LOOT_TAKEOVER_IDLE_TICKS`
+  60 → 200; host báo tab cũ (reply `key_in_use` đúng requestId claim cũ) → `claimError = 'key_taken'`, sự kiện `lost`,
+  HUD "Túi đang mở ở tab khác"; `unknown_player` → claim lại không resume. `TestMatch`: `MemStorage`, `hidden`, `frozen`.
+  334 test.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.

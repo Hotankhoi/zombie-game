@@ -22,10 +22,11 @@ export const LOOT_RESEND_TICKS = 40;
 /** Host mới chờ bản replica của mọi người tối đa bấy nhiêu tick (3s) rồi mới nhận ghi. */
 export const LOOT_RECOVER_TICKS = 60;
 /**
- * Khóa đang gắn với một kết nối khác: cho người mới lấy túi nếu kết nối kia im (không gửi gì cho host) ≥ bấy nhiêu tick
- * — tab cũ đã đóng/tải lại nhưng mạng chưa báo rời.
+ * Khóa đang gắn với một kết nối khác: cho người mới lấy túi nếu kết nối kia im (không gửi GÌ cho host — input, loot, ping,
+ * điểm host) ≥ bấy nhiêu tick (10 s) — tab cũ đã đóng/treo nhưng mạng chưa báo rời. Tab ẩn vẫn gửi ping/điểm host theo
+ * setInterval nên không bị coi là im (trước đây chỉ đếm input → tab ẩn 3 s là bị tab khác cùng trình duyệt lấy túi).
  */
-export const LOOT_TAKEOVER_IDLE_TICKS = 60;
+export const LOOT_TAKEOVER_IDLE_TICKS = 200;
 const TICK_HZ = 20;
 
 /** Những gì HostLoot cần biết về trận (HostServer cung cấp). Danh tính người gửi luôn là `from` của Transport. */
@@ -107,6 +108,8 @@ export class HostLoot {
   private _authority: LootAuthority;
   private peers = new Map<PeerId, PeerLoot>();
   private owners = new Map<PeerId, string>();
+  /** requestId của lần claim thành công của từng người — để báo họ khi túi bị giao cho kết nối khác. */
+  private claimIds = new Map<PeerId, string>();
   private pending: PendingReply[] = [];
   private dirtyInventories = new Set<string>();
   private dirtyChests = new Set<string>();
@@ -166,6 +169,7 @@ export class HostLoot {
   removePeer(peer: PeerId): void {
     this.peers.delete(peer);
     this.owners.delete(peer);
+    this.claimIds.delete(peer);
     this.pending = this.pending.filter((p) => p.peer !== peer);
     this.recovery?.waiting.delete(peer);
   }
@@ -318,7 +322,7 @@ export class HostLoot {
   private apply(from: PeerId, req: LootRequest): AuthorityResult {
     if (!this.opts.world.inMatch(from)) return { ok: false, error: 'not_in_match' };
     const a = req.action;
-    if (a.type === 'claim') return this.claim(from, a.key, a.resume);
+    if (a.type === 'claim') return this.claim(from, a.key, a.resume, req.requestId);
     const owner = this.ownerOf(from);
     const at = this.opts.world.position(from);
     if (!owner || !at) return { ok: false, error: 'unknown_player' };
@@ -345,7 +349,7 @@ export class HostLoot {
    * Gắn người gửi với túi của playerKey (ownerId = hash, không lưu key). Khóa đang gắn với kết nối khác: cho lấy nếu
    * `resume` (tab này đã dùng khóa — tải lại trang) hoặc kết nối kia im lâu; không thì `key_in_use` (2 tab chung khóa).
    */
-  private claim(from: PeerId, key: string, resume: boolean): AuthorityResult {
+  private claim(from: PeerId, key: string, resume: boolean, requestId: string): AuthorityResult {
     if (!isPlayerKey(key)) return { ok: false, error: 'invalid_key' };
     const owner = ownerIdOf(key);
     const current = this.owners.get(from);
@@ -356,9 +360,14 @@ export class HostLoot {
       if (!resume && (idle === null || idle < LOOT_TAKEOVER_IDLE_TICKS))
         return { ok: false, error: 'key_in_use' };
       this.owners.delete(peer);
+      // báo kết nối cũ ngay (trả lời lại đúng requestId claim của họ): túi đã sang tab khác → họ thôi hiện túi này
+      const old = this.claimIds.get(peer);
+      this.claimIds.delete(peer);
+      if (old) this.push(peer, this.replyPacket(old, { ok: false, error: 'key_in_use' }, null));
     }
     if (!this._authority.join(owner)) return { ok: false, error: 'inventory_limit' };
     this.owners.set(from, owner);
+    this.claimIds.set(from, requestId);
     return { ok: true, inventory: this._authority.inventory(owner)! };
   }
 

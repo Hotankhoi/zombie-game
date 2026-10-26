@@ -37,37 +37,44 @@ export interface KeyStorage {
 
 /**
  * Khóa của tab này: sessionStorage (riêng từng tab, còn sau khi tải lại) nếu có, không thì localStorage (chung cả
- * trình duyệt, còn sau khi tắt máy), chưa có thì tạo mới và lưu cả hai. Lỗi storage (chế độ riêng tư) → khóa tạm.
+ * trình duyệt, còn sau khi tắt máy), chưa có thì tạo mới (lưu localStorage để lần mở sau dùng lại).
  * `resume` = khóa lấy từ sessionStorage (tab này đã dùng → tải lại trang).
+ * KHÔNG ghi sessionStorage ở đây: chỉ ghi khi host đã nhận khóa (`rememberPlayerKey` sau `claim` thành công). Ghi sớm thì
+ * tab thứ 2 tải lại trước khi host trả `key_in_use` sẽ tưởng mình "tải lại" (resume) và lấy túi của tab 1.
+ * Lỗi storage (chế độ riêng tư) → khóa tạm.
  */
 export function loadPlayerKey(
   local: KeyStorage | null,
   session: KeyStorage | null,
   make = newPlayerKey,
 ): { key: string; resume: boolean } {
-  const read = (s: KeyStorage | null) => {
-    try {
-      const v = s?.getItem(PLAYER_KEY_STORAGE) ?? null;
-      return isPlayerKey(v) ? v : null;
-    } catch {
-      return null;
-    }
-  };
-  const mine = read(session);
-  const key = mine ?? read(local) ?? make();
-  savePlayerKey(session, key);
-  if (!read(local)) savePlayerKey(local, key);
+  const mine = readPlayerKey(session);
+  const shared = readPlayerKey(local);
+  const key = mine ?? shared ?? make();
+  if (!shared) savePlayerKey(local, key);
   return { key, resume: mine !== null };
 }
 
-/**
- * Host báo khóa đang được một tab khác dùng (2 tab cùng trình duyệt chung localStorage): tab này đổi sang khóa mới,
- * chỉ lưu vào sessionStorage của tab (tải lại tab vẫn giữ túi của tab đó).
- */
-export function replacePlayerKey(session: KeyStorage | null, make = newPlayerKey): string {
-  const key = make();
+/** Host đã nhận khóa này cho tab này (claim thành công) → nhớ cho tab (tải lại trang = `resume`). */
+export function rememberPlayerKey(session: KeyStorage | null, key: string): void {
   savePlayerKey(session, key);
-  return key;
+}
+
+/**
+ * Host báo khóa đang được một tab khác dùng (2 tab cùng trình duyệt chung localStorage): tab này đổi sang khóa mới.
+ * Chỉ tạo khóa — `rememberPlayerKey` lưu vào sessionStorage khi host đã nhận nó.
+ */
+export function replacePlayerKey(make = newPlayerKey): string {
+  return make();
+}
+
+function readPlayerKey(s: KeyStorage | null): string | null {
+  try {
+    const v = s?.getItem(PLAYER_KEY_STORAGE) ?? null;
+    return isPlayerKey(v) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function savePlayerKey(s: KeyStorage | null, key: string): void {
