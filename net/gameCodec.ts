@@ -96,13 +96,20 @@ export interface WireHorde {
  * Chỉ số sinh tồn (GĐ 3b) của 1 người — khối mở rộng cuối snapshot. Host gửi của **người nhận** mỗi snapshot (dự đoán +
  * HUD) và của **1 đồng đội xoay vòng** (để lên host thay thì có chỉ số của cả đội, ≤ 0,3 s tuổi). u16 theo 1/VITAL_SCALE.
  */
-export interface WireVitals {
-  slot: number;
-  food: number;
-  water: number;
-  infection: number;
-  maxHp: number;
-}
+/** Các trường số trong khối "chỉ số" (thứ tự trên dây; mỗi trường u16 theo 1/VITAL_SCALE, kẹp 0..109). */
+export const VITAL_FIELDS = [
+  'food',
+  'water',
+  'infection',
+  'maxHp',
+  /** máu còn hồi dần + tốc độ (băng gạc) */
+  'healLeft',
+  'healRate',
+  /** đứng yên bao lâu (bộ sơ cứu) */
+  'stillFor',
+] as const;
+export type VitalField = (typeof VITAL_FIELDS)[number];
+export type WireVitals = { slot: number } & Record<VitalField, number>;
 export const VITAL_SCALE = 600;
 
 export interface SnapshotMsg {
@@ -364,7 +371,7 @@ export function encodeGame(msg: GameMessage): Uint8Array {
       w.u8(vitals.length);
       for (const v of vitals) {
         w.u8(v.slot);
-        for (const n of [v.food, v.water, v.infection, v.maxHp]) w.u16(vitalToU16(n));
+        for (const f of VITAL_FIELDS) w.u16(vitalToU16(v[f]));
       }
       break;
     }
@@ -566,11 +573,9 @@ export function decodeGame(buf: Uint8Array): GameMessage | null {
         const vitals: WireVitals[] = [];
         if (r.more()) {
           for (let i = 0, n = r.u8(); i < n; i++) {
-            const slot = r.u8();
-            const [food, water, infection, maxHp] = [r.u16(), r.u16(), r.u16(), r.u16()].map(
-              (u) => u / VITAL_SCALE,
-            ) as [number, number, number, number];
-            vitals.push({ slot, food, water, infection, maxHp });
+            const v = { slot: r.u8() } as WireVitals;
+            for (const f of VITAL_FIELDS) v[f] = r.u16() / VITAL_SCALE;
+            vitals.push(v);
           }
         }
         return { type, tick, ack, originX, originY, players, zombies, doors, pools, horde, vitals };

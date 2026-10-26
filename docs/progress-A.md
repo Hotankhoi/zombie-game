@@ -198,6 +198,20 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   5.57 · 15.41 · 15.89; tràn + mở rương liên tục 14.68 · 16.94 · 17.24.
   Ghi chú: `npm run loadtest` không in bảng nếu không có `--silent=false` → dùng
   `npx vitest run --config tools/vitest.config.ts tools/scenarios.loadtest.ts --silent=false`.
+  PR #43 đã merge.
+- PR 5 (`a/3b-use-items`): `shared/data/consumables.ts` (vùng B): băng gạc hồi 20 máu dần trong 8 s (tự) / 3 s (cho đồng
+  đội), đồng đội gục → đứng dậy 30 máu; bộ sơ cứu đứng yên 3 s (host chấp nhận ≥ 2.5 s) → +60; kháng sinh −60 nhiễm;
+  nước +45; đồ hộp +40; độ hiếm × 1 · 1.15 · 1.3 · 1.5 · 1.75; tầm băng đồng đội 1.5 ô + nhìn thấy. `shared/sim/items.ts`
+  (`checkUse`/`applyUse`), `SimWorld.checkItemUse/applyItemUse`; `PlayerState` thêm `healLeft`, `healRate`, `stillFor`.
+  Host (`hostLoot.use`): kiểm tra → `authority.update` (vùng B, mới) + `removeFromSlot`/`removeItemUpTo`/`countItem`
+  (`shared/inventory/inventory.ts`, vùng B, mới) → hiệu ứng gắn vào kết quả đang chờ, áp khi mọi người đã ACK.
+  `HostLoot.hostUpdate` (host tự sửa túi). Mã lỗi mới `not_usable`, `not_still`, `no_target`, `not_needed`. Client:
+  `client/loot/quickUse.ts` (1 băng gạc · 2 sơ cứu · 3 kháng sinh · 4 ăn/uống cái thấp hơn), `client/loot/itemUse.ts`
+  (sơ cứu: tiến độ đứng yên, đi/đánh → hủy), panel túi của B có nút "Dùng" (`actionLabel`/`onAction`, vùng B), HUD thanh
+  dùng nhanh góc phải dưới. Chỉ bản dev: `?kit=1` (túi mới có đồ y tế/ăn uống + vào trận đói/khát/45 máu/nhiễm 40).
+  `PROTOCOL_VERSION` 7, bản lưu 125 bố cục 8. 367 test. Browser pane (pane ẩn → đẩy vòng lặp bằng `setInterval`): phím 4
+  nước 20 → 64.6 rồi đồ hộp no 30 → 69.7; phím 3 nhiễm 40 → 0; phím 2 đứng yên 3 s → máu 45 → 100. Loadtest đợt tràn
+  tối đa 18.01 · 20.46 · **20.89**.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

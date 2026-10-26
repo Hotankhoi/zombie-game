@@ -75,6 +75,11 @@ export const LOOT_ERRORS = [
   'inventory_limit',
   'key_in_use',
   'invalid_key',
+  // dùng đồ (GĐ 3b, shared/sim/items.ts) — chỉ thêm vào cuối
+  'not_usable',
+  'not_still',
+  'no_target',
+  'not_needed',
 ] as const;
 export type LootErrorCode = (typeof LOOT_ERRORS)[number];
 

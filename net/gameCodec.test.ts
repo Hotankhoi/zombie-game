@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { GameMsg, POS_SCALE, decodeGame, encodeGame, type GameMessage, type SnapshotMsg } from './gameCodec';
+import {
+  GameMsg,
+  POS_SCALE,
+  VITAL_FIELDS,
+  decodeGame,
+  encodeGame,
+  type GameMessage,
+  type SnapshotMsg,
+} from './gameCodec';
 
 const snap: SnapshotMsg = {
   type: GameMsg.Snapshot,
@@ -33,7 +41,18 @@ const snap: SnapshotMsg = {
   ],
   doors: [{ x: -38, y: 1003 }],
   pools: [{ kind: 'acid', x: -35.5, y: 1002.25, radius: 1.125, arming: true, ttl: 3.2 }],
-  vitals: [{ slot: 2, food: 42.5, water: 7.25, infection: 63, maxHp: 81.5 }],
+  vitals: [
+    {
+      slot: 2,
+      food: 42.5,
+      water: 7.25,
+      infection: 63,
+      maxHp: 81.5,
+      healLeft: 11.5,
+      healRate: 2.5,
+      stillFor: 1.75,
+    },
+  ],
   horde: {
     number: 2,
     active: true,
@@ -161,7 +180,7 @@ describe('gameCodec', () => {
   it('gói hỏng / cụt / lạ → null, không ném lỗi', () => {
     const full = encodeGame(snap);
     // khối mở rộng nối cuối gói: GĐ 2c (người chơi), GĐ 4 (vũng), GĐ 5 (đợt tràn), zombie xa (gói này không có con nào)
-    const vitalsExt = 1 + snap.vitals!.length * 9;
+    const vitalsExt = 1 + snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length);
     const farExt = 2 + vitalsExt;
     const hordeExt = 1 + 5 + snap.horde!.rows.length * 4 + farExt;
     const poolsExt = 1 + snap.pools.length * 8;
@@ -192,7 +211,7 @@ describe('gameCodec', () => {
             4 +
             2 +
             1 +
-            snap.vitals!.length * 9),
+            snap.vitals!.length * (1 + 2 * VITAL_FIELDS.length)),
       ),
     ) as SnapshotMsg;
     expect(old.players[0]).toMatchObject({ slot: 2, downedFor: 0, reviveProgress: 0, dragging: false });

@@ -24,6 +24,10 @@ export const LOOT_ERROR_TEXT: Record<LootClientError, string> = {
   busy: 'Đang chờ host xác nhận thao tác trước.',
   host_changed: 'Vừa đổi host. Kiểm tra lại túi/rương rồi thử lại.',
   timeout: 'Host chưa trả lời. Kiểm tra kết nối rồi thử lại.',
+  not_usable: 'Món này không dùng được.',
+  not_still: 'Phải đứng yên vài giây (không đi, không đánh) mới dùng được bộ sơ cứu.',
+  no_target: 'Đồng đội ở quá xa hoặc bị che. Lại gần hơn rồi thử lại.',
+  not_needed: 'Chưa cần dùng món này lúc này.',
   key_taken:
     'Túi đồ của bạn đang được mở ở tab khác của trình duyệt này. Đóng tab kia rồi tải lại tab này để lấy lại túi.',
 };

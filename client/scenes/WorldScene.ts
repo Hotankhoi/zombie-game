@@ -19,6 +19,7 @@ import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
 import { ChestLayer, preloadChestSprites } from '../loot/chestLayer';
 import { LootUi } from '../loot/lootUi';
 import { canKeepChestOpen } from '../loot/nearChest';
+import type { QuickKey } from '../loot/quickUse';
 
 /** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
 export { TILE_SIZE };
@@ -150,7 +151,11 @@ export class WorldScene extends Phaser.Scene {
     this.gfxDyn = this.add.graphics().setDepth(4);
     this.makeZombieTextures();
     this.chests = new ChestLayer(this, this.net.loot, ZOOM);
-    this.lootUi = new LootUi(document.getElementById('hud') ?? document.body, this.net.loot);
+    this.lootUi = new LootUi(
+      document.getElementById('hud') ?? document.body,
+      this.net.loot,
+      (id) => this.session.peers.get(id)?.name ?? 'đồng đội',
+    );
 
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
@@ -188,6 +193,12 @@ export class WorldScene extends Phaser.Scene {
     kb.addKey('I', false).on('down', () => {
       if (!isTyping()) this.lootUi.toggleInventory();
     });
+    // GĐ 3b: dùng nhanh 1 băng gạc · 2 sơ cứu · 3 kháng sinh · 4 ăn/uống
+    (['ONE', 'TWO', 'THREE', 'FOUR'] as const).forEach((name, i) =>
+      kb.addKey(name, false).on('down', () => {
+        if (!isTyping()) this.lootUi.items.quick((i + 1) as QuickKey);
+      }),
+    );
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -322,6 +333,7 @@ export class WorldScene extends Phaser.Scene {
     this.drawPools();
 
     const { zombies, others } = this.net.sync.sample();
+    this.lootUi.items.update(this.me() ?? null, others);
     const seen = this.zombieSeer(others, alpha);
     const me0 = this.me();
     const up = me0 && isUp(me0) ? me0 : null;

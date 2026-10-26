@@ -113,6 +113,24 @@ export class LootAuthority {
     return { ok: true, chest: clone(result.chest), inventory: clone(result.inventory) };
   }
 
+  /**
+   * Host-only (GĐ 3b, A): apply a pure inventory reducer (use an item, reload ammo, broken armour) to one inventory and
+   * commit it as one revision. The caller has already authenticated the actor and checked game rules.
+   */
+  update(
+    id: string,
+    change: (state: InventoryState) => { ok: boolean; state: InventoryState; error?: string },
+  ) {
+    const inventory = this.inventories.get(id);
+    if (!inventory) return { ok: false, error: 'unknown_player' } as AuthorityResult;
+    if (!this.canAdvance()) return { ok: false, error: 'state_limit' } as AuthorityResult;
+    const result = change(clone(inventory));
+    if (!result.ok) return { ok: false, error: result.error ?? 'invalid_command' } as AuthorityResult;
+    this.inventories.set(id, result.state);
+    this.revision++;
+    return { ok: true, inventory: clone(result.state) } as AuthorityResult;
+  }
+
   /** Store revision (+1 per committed change) — the replication sequence number. */
   currentRevision(): number {
     return this.revision;

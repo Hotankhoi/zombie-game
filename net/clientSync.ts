@@ -20,6 +20,7 @@ import {
   type WirePlayer,
   type WireVitals,
   type WireZombie,
+  VITAL_FIELDS,
 } from './gameCodec';
 import { SURVIVAL } from '@shared/data/survival';
 import { PLAYER } from '@shared/data/player';
@@ -31,6 +32,9 @@ const DEFAULT_VITALS: Vitals = {
   water: SURVIVAL.water.start,
   infection: 0,
   maxHp: PLAYER.maxHp,
+  healLeft: 0,
+  healRate: 0,
+  stillFor: 0,
 };
 
 /** Gửi dư: mỗi gói input kèm bấy nhiêu input gần nhất (AGENTS.md mục 2.9). */
@@ -398,7 +402,10 @@ export class ClientSync {
     }
     for (const v of msg.vitals ?? []) {
       const id = this.slots.get(v.slot);
-      if (id) this.vitals.set(id, { food: v.food, water: v.water, infection: v.infection, maxHp: v.maxHp });
+      if (!id) continue;
+      const known = {} as Vitals;
+      for (const f of VITAL_FIELDS) known[f] = v[f];
+      this.vitals.set(id, known);
     }
     for (const id of this.vitals.keys()) if (!players.has(id)) this.vitals.delete(id);
     const zmap = new Map(msg.zombies.map((z) => [z.id, z]));
@@ -474,10 +481,7 @@ export function toPlayerState(id: PeerId, w: WirePlayer, v: Vitals = DEFAULT_VIT
     dragging: w.dragging,
     flashlight: w.flashlight,
     shield: 0, // máy khách không cần (chỉ host tính sát thương)
-    food: v.food,
-    water: v.water,
-    infection: v.infection,
-    maxHp: v.maxHp,
+    ...v,
   };
 }
 

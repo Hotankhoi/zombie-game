@@ -83,9 +83,23 @@ const startTick =
       Math.round(((hasGio ? gioParam : DAY.startAt) * DAY.lengthSec * 1000) / SIM_TICK_MS)
     : undefined;
 // trận chỉ gồm người cùng phiên bản giao thức (session.game lọc); phòng chờ vẫn thấy mọi người
+// ?kit=1 (chỉ bản dev, `npm run dev`): túi mới có sẵn đồ y tế/đồ ăn để thử dùng đồ (GĐ 3b)
+const starterKit =
+  import.meta.env.DEV && url.searchParams.get('kit') === '1'
+    ? (
+        [
+          { itemId: 'bandage', rarity: 'common', quantity: 3 },
+          { itemId: 'medkit', rarity: 'uncommon', quantity: 1 },
+          { itemId: 'antibiotics', rarity: 'common', quantity: 2 },
+          { itemId: 'water', rarity: 'common', quantity: 2 },
+          { itemId: 'canned_food', rarity: 'common', quantity: 2 },
+        ] as const
+      ).map((s) => ({ ...s }))
+    : undefined;
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
+  starterKit,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 

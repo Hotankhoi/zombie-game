@@ -8,6 +8,7 @@ import {
 } from '@shared/data/items';
 import {
   isInventoryState,
+  type ItemStack,
   type InventoryCommand,
   type InventoryError,
   type InventoryResult,
@@ -64,6 +65,10 @@ export interface InventoryPanelOptions {
   onCommand(command: InventoryCommand): InventoryPanelResult | Promise<InventoryPanelResult>;
   /** Text for error codes outside INVENTORY_MESSAGES (online: host/network codes). */
   describeError?(code: string): string;
+  /** GĐ 3b (A): label of the action button for the selected stack ("Dùng" / "Trang bị"); null = no button. */
+  actionLabel?(stack: ItemStack): string | null;
+  /** GĐ 3b (A): action button pressed. Runs outside the panel (host intent); new state arrives through `update`. */
+  onAction?(slot: number, stack: ItemStack): void;
 }
 
 /** One panel per inventory identity. No global keyboard listeners, optimistic grants or render loop. */
@@ -111,8 +116,11 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
   all.type = 'button';
   const cancel = element('button', 'inv-cancel', 'Bỏ chọn');
   cancel.type = 'button';
+  const action = element('button', 'inv-sort inv-action', '');
+  action.type = 'button';
   quick.append(half, all);
   controls.append(
+    action,
     label,
     quick,
     element('p', 'inv-hint', 'Chọn ô đích để chuyển. Chọn toàn bộ để đổi chỗ với vật phẩm khác.'),
@@ -179,6 +187,10 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
       stackInfo.textContent = `${stack.quantity} đang có · Tối đa ${item.maxStack} mỗi ô`;
       quantity.max = String(stack.quantity);
       half.disabled = busy || stack.quantity < 2;
+      const act = options.actionLabel?.(stack) ?? null;
+      action.hidden = act === null;
+      action.textContent = act ?? '';
+      action.disabled = busy;
     } else {
       detail.style.removeProperty('--rarity');
       artwork.replaceChildren(icon('material'));
@@ -294,6 +306,12 @@ export function mountInventoryPanel(parent: HTMLElement, options: InventoryPanel
     }
   };
   cancel.addEventListener('click', deselect);
+  action.addEventListener('click', () => {
+    const stack = selected === null ? null : state.slots[selected];
+    if (!stack || busy || selected === null) return;
+    options.onAction?.(selected, stack);
+    deselect();
+  });
   root.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();

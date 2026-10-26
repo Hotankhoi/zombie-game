@@ -13,6 +13,7 @@ import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
 import { MapgenSource } from '@shared/sim/mapgenSource';
 import type { PeerId } from '@shared/types';
+import type { ItemStack } from '@shared/inventory/inventory';
 import { measureSimMs } from './benchmark';
 
 export type NetRole = 'host' | 'client' | 'waiting';
@@ -21,6 +22,8 @@ export interface NetGameOptions {
   zombieCount?: number;
   /** Chỉ host dùng: thế giới mới bắt đầu ở tick này (thử ban đêm). */
   startTick?: number;
+  /** CHỈ bản dev (`?kit=1`): mình làm host thì túi mới có sẵn đồ thử. */
+  starterKit?: ItemStack[];
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
   /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
@@ -121,6 +124,7 @@ export class NetGame {
   private readonly testHooks: NetGameOptions['test'];
   private zombieCount: number | undefined;
   private startTick: number | undefined;
+  private starterKit: ItemStack[] | undefined;
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
   private seenAt = new Map<PeerId, number>();
@@ -141,6 +145,7 @@ export class NetGame {
     const storage = opts.storage ?? (opts.playerKey ? null : browserStorage());
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
+    this.starterKit = opts.starterKit;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
     this.loot = new ClientLoot({
@@ -308,7 +313,7 @@ export class NetGame {
       startTick: this.startTick,
       restore,
       // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
-      loot: { recover: { expected: [...keep] } },
+      loot: { recover: { expected: [...keep] }, starterKit: this.starterKit },
     });
   }
 

@@ -1,4 +1,4 @@
-# Hợp đồng loot online (từ v3; hiện tại v6 — xem mục "Tương thích")
+# Hợp đồng loot online (từ v3; hiện tại v7 — xem mục "Tương thích")
 
 PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dùng v2 ở PR #6). Chưa có codec hay kết nối gameplay. Khi tích hợp các PR xếp chồng, giữ phiên bản 3; v1/v2 không được vào cùng phòng v3.
 
@@ -24,15 +24,16 @@ PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dù
 
 ## Tương thích giữa các phiên bản (gộp từ PR #35 của B, sửa theo `main`)
 
-`PROTOCOL_VERSION` hiện là **6** (`shared/types/index.ts`). Session chỉ cho người **cùng** `PROTOCOL_VERSION` vào chung
+`PROTOCOL_VERSION` hiện là **7** (`shared/types/index.ts`). Session chỉ cho người **cùng** `PROTOCOL_VERSION` vào chung
 trận (PR #23: khác bản → "Bạn đang dùng bản cũ, bấm để tải lại").
 
-| Bản | Ai / PR | Thay đổi                                                                                          |
-| --- | ------- | ------------------------------------------------------------------------------------------------- |
-| 3   | B, #15  | Khai báo hợp đồng loot 110–113 (chưa có codec, chưa nối gameplay).                                |
-| 4   | A, #30  | Host xử lý thật gói 110–113 (codec `net/lootCodec.ts`, authority trong `host/hostLoot.ts`).       |
-| 5   | A, #32  | Hành động `claim` (playerKey → `ownerId`), host mới thu replica của mọi người trước khi nhận ghi. |
-| 6   | A, 3b   | Chỉ số sinh tồn trong snapshot (khối mở rộng) + bản lưu 125 bố cục 7.                             |
+| Bản | Ai / PR | Thay đổi                                                                                            |
+| --- | ------- | --------------------------------------------------------------------------------------------------- |
+| 3   | B, #15  | Khai báo hợp đồng loot 110–113 (chưa có codec, chưa nối gameplay).                                  |
+| 4   | A, #30  | Host xử lý thật gói 110–113 (codec `net/lootCodec.ts`, authority trong `host/hostLoot.ts`).         |
+| 5   | A, #32  | Hành động `claim` (playerKey → `ownerId`), host mới thu replica của mọi người trước khi nhận ghi.   |
+| 6   | A, 3b   | Chỉ số sinh tồn trong snapshot (khối mở rộng) + bản lưu 125 bố cục 7.                               |
+| 7   | A, 3b   | Host xử lý `use` (trừ đồ + hiệu ứng khi mọi người đã ACK), lỗi `not_usable`…, bản lưu 125 bố cục 8. |
 
 - Bản 5 yêu cầu xử lý đủ gói 110–113 và **thu hồi bản sao túi/rương trước khi host mới nhận ghi**; bản 3–4 thiếu phần này
   nên không được vào chung phòng bản 5.
