@@ -261,3 +261,22 @@ describe('vũ khí online (GĐ 3b) — cầm và nạp đạn qua host', () => {
     expect(p.magPistol).toBeLessThan(12);
   });
 });
+
+describe('giáp online (GĐ 3b)', () => {
+  it('mặc giáp có trong túi; giáp vỡ → host trừ đúng món đó khỏi túi, máy khách thấy túi mới', async () => {
+    const { host, loot, step, give } = setup(['a']);
+    give('a', 'vest', 1);
+    step(3);
+    const a = loot.get('a')!;
+    expect(await settle(a.equip('helmet', 'common'), step)).toMatchObject({ ok: false, error: 'not_owned' });
+    expect((await settle(a.equip('vest', 'common'), step)).ok).toBe(true);
+    const me = host.world.players.get('a')!;
+    expect(me.armorBody).toBe(1);
+    me.durBody = 0.05;
+    host.world.pools.push({ id: 99, kind: 'acid', x: me.x, y: me.y, radius: 1, ttl: 1, armIn: 0, dps: 14 });
+    step(10);
+    expect(me.armorBody).toBe(0);
+    expect(count(host.loot.authority.inventory(a.owner), 'vest')).toBe(0);
+    expect(count(a.inventory, 'vest')).toBe(0);
+  });
+});

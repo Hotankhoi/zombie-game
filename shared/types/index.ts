@@ -8,10 +8,11 @@
  * 3: hợp đồng loot (B). 4: host gửi gói loot 110–113 thật (codec `net/lootCodec.ts`, A).
  * 5: loot `claim` (playerKey), bản lưu 125 v6 có loot ở mẩu 0, host mới thu replica trước khi nhận ghi (A).
  * 6: GĐ 3b chỉ số sinh tồn (no/nước/nhiễm trùng/máu tối đa) trong snapshot + bản lưu 125 v7 (A).
+ * 9: GĐ 3b giáp — mũ/áo/quần (danh mục vật phẩm thêm 3 món), `LOOT_VERSION` 2, giáp trong khối chỉ số, bản lưu 125 v10.
  * 8: GĐ 3b vũ khí — host xử lý `equip`/`reload`, sự kiện bắn, khối trang bị, input có tick đang xem, bản lưu 125 v9.
  * 7: GĐ 3b dùng đồ — host xử lý `use`, mã lỗi loot mới, khối chỉ số thêm hồi máu dần/đứng yên, bản lưu 125 v8 (A).
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

@@ -306,7 +306,14 @@ function readChest(r: Reader): ChestWire {
   const revision = readRevision(r);
   const flags = r.u8();
   if (flags > 1) throw new RangeError('cờ rương');
-  return { version: 1, id, region, revision, opened: flags === 1, slots: readSlots(r, CHEST_SLOTS) };
+  return {
+    version: LOOT_VERSION,
+    id,
+    region,
+    revision,
+    opened: flags === 1,
+    slots: readSlots(r, CHEST_SLOTS),
+  };
 }
 
 function writeInventoryId(w: Writer, id: string): void {

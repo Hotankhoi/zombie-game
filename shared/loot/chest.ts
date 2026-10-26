@@ -9,7 +9,8 @@ import {
 } from '../inventory/inventory';
 import { Rng } from '../util/rng';
 
-export const LOOT_VERSION = 1;
+/** 2: bảng loot có giáp (GĐ 3b, A). Rương lưu với bản khác bị coi là không hợp lệ (chỉ khác bản build). */
+export const LOOT_VERSION = 2;
 export const CHEST_SLOTS = 6;
 export interface ChestState {
   readonly version: typeof LOOT_VERSION;

@@ -64,6 +64,13 @@ export interface PlayerState {
   recoil: number;
   /** Số phát đã bắn (mod 64) — chọn độ lệch tản tất định. */
   shots: number;
+  /** GĐ 3b — giáp đang mặc ở đầu/thân/chân: 0 = không, 1..5 = độ hiếm; độ bền từng chỗ (shared/sim/armor.ts). */
+  armorHead: number;
+  armorBody: number;
+  armorLegs: number;
+  durHead: number;
+  durBody: number;
+  durLegs: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -101,6 +108,12 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     reloadAmount: 0,
     recoil: 0,
     shots: 0,
+    armorHead: 0,
+    armorBody: 0,
+    armorLegs: 0,
+    durHead: 0,
+    durBody: 0,
+    durLegs: 0,
   };
 }
 

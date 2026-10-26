@@ -229,6 +229,19 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   Browser pane (`?room=GUN000&zombies=10&den=police`, pane ẩn → đẩy vòng lặp + chuột giả trên canvas): mở rương, lấy hết
   (súng lục + 18 đạn), X → gậy → súng lục, Q nạp 12/12 (túi 18 → 6), bắn: zombie −30 máu/phát, giết 2 con, hết đạn tự
   nạp. Loadtest đợt tràn tối đa 18.27 · 20.73 · **21.16** (gửi 0.43 → 0.75 KB/s vì `view`).
+  PR #45 đã merge.
+- PR 7 (`a/3b-armor`): `shared/data/items.ts` (vùng B) thêm cuối danh mục `helmet`/`vest`/`pants` (loại `armor`),
+  `shared/data/armor.ts` (giảm sát thương mũ 8% · áo 15% · quần 7% × độ hiếm 1 · 1.25 · 1.5 · 1.8 · 2.1, trần 70%;
+  nhiễm trùng khi cắn × (1 − 0.8 × mức giảm); bền 100, mòn theo sát thương đỡ, axit ×3), `shared/data/loot.ts` thêm giáp
+  (dân cư 8/108, siêu thị 4/104, đồn cảnh sát 34/134, quân sự 48/148 trọng số; bệnh viện không có), `LOOT_VERSION` 2
+  (`shared/loot/chest.ts`, test ảnh rương của B cập nhật). `shared/sim/armor.ts`; `PlayerState` `armorHead/Body/Legs`
+  (0 = không, 1..5 độ hiếm) + `durHead/Body/Legs`; độ bền thuộc chỗ mặc; cắn/Boss/vũng đi qua `SimWorld.hurt`; giáp vỡ →
+  `armorBreaks` → host `hostUpdate` trừ đúng món. Mặc = intent `equip` (nút "Mặc" ở panel túi). HUD "Mũ — · Áo Thường 100%
+  · Quần Tốt 100%", thông báo "… đã vỡ!". Sửa lỗi codec: rương giải mã ghi cứng `version: 1` → `LOOT_VERSION`.
+  `PROTOCOL_VERSION` 9, bản lưu 125 bố cục 10. 385 test. Browser pane (`?room=ARM009&zombies=60&den=police&kit=1`): lấy
+  hết rương đồn cảnh sát (2 súng lục, đạn, áo, quần), mặc áo + quần, cầm súng, nạp, bắn chết zombie phình (160 máu, 6
+  phát trúng), bị cắn → nhiễm trùng tăng, 4 ăn/uống → no/nước ~99. Ảnh chụp thẳng từ canvas (`renderer.snapshot`) vì cửa
+  sổ Claude ẩn. Loadtest đợt tràn tối đa 18.50 · 20.96 · **21.40**.
 
 ## Việc còn lại của A (sau phiên 2026-10-25)
 

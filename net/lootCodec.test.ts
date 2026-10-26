@@ -61,6 +61,9 @@ describe('codec loot 110–113', () => {
       'water',
       'canned_food',
       'scrap',
+      'helmet',
+      'vest',
+      'pants',
     ]);
     expect(RARITY_CODES).toEqual(['common', 'uncommon', 'rare', 'epic', 'legendary']);
     expect(BACKPACK_CODES).toEqual(['basic', 'scout', 'expedition']);

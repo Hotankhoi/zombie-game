@@ -48,6 +48,7 @@ const ICONS: Record<ItemCategory | 'chest', string> = {
   food: '<path d="M11 4h10v5l3 5v13H8V14l3-5Zm0 5h10M8 17h16m-12 4h8"/>',
   material: '<path d="m6 11 10-6 10 6v14L16 29 6 25Zm0 0 10 6 10-6M16 17v12M11 8l10 6"/>',
   chest: '<path d="M4 14h24v13H4zM4 14V9l4-4h16l4 4v5M9 5v22m14-22v22M4 18h9m6 0h9m-15-3h6v7h-6z"/>',
+  armor: '<path d="M16 4 6 8v8c0 6 4 10 10 12 6-2 10-6 10-12V8Zm0 5v15"/>',
 };
 function icon(kind: keyof typeof ICONS) {
   const el = element('span', 'loot-icon');

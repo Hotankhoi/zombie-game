@@ -4,6 +4,8 @@ import { ITEMS, RARITIES, type ItemId, type Rarity } from '@shared/data/items';
 import type { InventoryState } from '@shared/inventory/inventory';
 import { isGun, magOf, reloading, type WeaponId } from '@shared/sim/guns';
 import { isUp, type PlayerState } from '@shared/sim/player';
+import { ARMOR_SLOTS, SLOT_ITEM, armorAt, durabilityAt } from '@shared/sim/armor';
+import type { ArmorSlot } from '@shared/data/armor';
 import { lootErrorText } from './lootMessages';
 import { countOf } from './quickUse';
 
@@ -35,6 +37,23 @@ export function nextWeapon(
   if (at < 0) return list[0]!;
   const next = list[(at + dir + list.length) % list.length]!;
   return next.itemId === current && next.rarity === currentRarity ? null : next;
+}
+
+/** Chữ HUD cho giáp đang mặc: "Mũ Hiếm 85% · Áo — · Quần Thường 40%". */
+export function armorLabel(me: PlayerState): string {
+  const names: Record<ArmorSlot, string> = { head: 'Mũ', body: 'Áo', legs: 'Quần' };
+  return ARMOR_SLOTS.map((s) => {
+    const r = armorAt(me, s);
+    return r ? `${names[s]} ${RARITIES[r].name} ${Math.ceil(durabilityAt(me, s))}%` : `${names[s]} —`;
+  }).join(' · ');
+}
+
+/** Giáp vừa vỡ (so trạng thái trước/sau): tên các món. */
+export function brokenArmor(before: PlayerState | null, after: PlayerState): string[] {
+  if (!before) return [];
+  return ARMOR_SLOTS.filter(
+    (s) => armorAt(before, s) && !armorAt(after, s) && durabilityAt(after, s) <= 0,
+  ).map((s) => ITEMS[SLOT_ITEM[s]].name);
 }
 
 /** Chữ HUD cho vũ khí đang cầm: "Súng lục (Tốt) 8/12 · túi 24". */
@@ -77,8 +96,9 @@ export class WeaponControl {
     this.pending = true;
     const out = await this.loot.equip(itemId, rarity);
     this.pending = false;
+    const verb = ITEMS[itemId as ItemId].category === 'armor' ? 'Mặc' : 'Cầm';
     if (!out.ok) this.toast(lootErrorText(out.error), true);
-    else this.toast(`Cầm ${ITEMS[itemId as ItemId].name.toLowerCase()}`);
+    else this.toast(`${verb} ${ITEMS[itemId as ItemId].name.toLowerCase()}`);
   }
 
   /** Q. */

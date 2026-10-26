@@ -13,7 +13,7 @@ interface LootRegionDefinition {
   readonly rarities: readonly { rarity: Rarity; weight: number }[];
 }
 
-// Initial balance. Changing these tables changes generated contents: bump LOOT_VERSION
+// Initial balance. Changing these tables changes generated contents: bump LOOT_VERSION (2 = GĐ 3b, giáp — A)
 // and keep saved chest snapshots when adopting a new loot generation version.
 export const LOOT_STACK_COUNT = { min: 3, max: 6 } as const;
 export const LOOT_REGIONS = {
@@ -27,6 +27,9 @@ export const LOOT_REGIONS = {
       { itemId: 'bandage', weight: 15, min: 1, max: 4 },
       { itemId: 'knife', weight: 10, min: 1, max: 1 },
       { itemId: 'bat', weight: 5, min: 1, max: 1 },
+      { itemId: 'helmet', weight: 3, min: 1, max: 1 },
+      { itemId: 'vest', weight: 2, min: 1, max: 1 },
+      { itemId: 'pants', weight: 3, min: 1, max: 1 },
     ],
     rarities: [
       { rarity: 'common', weight: 80 },
@@ -42,6 +45,8 @@ export const LOOT_REGIONS = {
       { itemId: 'canned_food', weight: 40, min: 2, max: 5 },
       { itemId: 'bandage', weight: 10, min: 2, max: 5 },
       { itemId: 'scrap', weight: 10, min: 4, max: 15 },
+      { itemId: 'helmet', weight: 2, min: 1, max: 1 },
+      { itemId: 'pants', weight: 2, min: 1, max: 1 },
     ],
     rarities: [
       { rarity: 'common', weight: 70 },
@@ -75,6 +80,9 @@ export const LOOT_REGIONS = {
       { itemId: 'rifle', weight: 5, min: 1, max: 1 },
       { itemId: 'rifle_ammo', weight: 10, min: 10, max: 24 },
       { itemId: 'bandage', weight: 15, min: 2, max: 6 },
+      { itemId: 'helmet', weight: 12, min: 1, max: 1 },
+      { itemId: 'vest', weight: 12, min: 1, max: 1 },
+      { itemId: 'pants', weight: 10, min: 1, max: 1 },
     ],
     rarities: [
       { rarity: 'common', weight: 40 },
@@ -93,6 +101,9 @@ export const LOOT_REGIONS = {
       { itemId: 'pistol_ammo', weight: 10, min: 24, max: 60 },
       { itemId: 'medkit', weight: 10, min: 1, max: 3 },
       { itemId: 'antibiotics', weight: 5, min: 1, max: 5 },
+      { itemId: 'helmet', weight: 15, min: 1, max: 1 },
+      { itemId: 'vest', weight: 18, min: 1, max: 1 },
+      { itemId: 'pants', weight: 15, min: 1, max: 1 },
     ],
     rarities: [
       { rarity: 'common', weight: 20 },

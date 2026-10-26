@@ -83,7 +83,7 @@ function freeze<T extends { slots: readonly (ItemStack | null)[] }>(state: T): T
 }
 
 describe('deterministic chest generation', () => {
-  it('keeps the version 1 contents stable for a known world and chest', () => {
+  it('keeps the version 2 contents stable for a known world and chest', () => {
     expect(generateChest('world:2026', 'building:7/chest:2', 'military')).toMatchInlineSnapshot(`
       {
         "id": "building:7/chest:2",
@@ -92,37 +92,37 @@ describe('deterministic chest generation', () => {
         "revision": 0,
         "slots": [
           {
-            "itemId": "medkit",
+            "itemId": "pants",
             "quantity": 1,
             "rarity": "epic",
           },
           {
-            "itemId": "rifle_ammo",
-            "quantity": 30,
+            "itemId": "pants",
+            "quantity": 1,
+            "rarity": "uncommon",
+          },
+          {
+            "itemId": "vest",
+            "quantity": 1,
+            "rarity": "common",
+          },
+          {
+            "itemId": "pistol",
+            "quantity": 1,
             "rarity": "rare",
           },
           {
-            "itemId": "rifle_ammo",
-            "quantity": 25,
-            "rarity": "uncommon",
-          },
-          {
             "itemId": "rifle",
             "quantity": 1,
-            "rarity": "uncommon",
+            "rarity": "rare",
           },
           {
-            "itemId": "rifle",
-            "quantity": 1,
-            "rarity": "epic",
-          },
-          {
-            "itemId": "antibiotics",
+            "itemId": "helmet",
             "quantity": 1,
             "rarity": "uncommon",
           },
         ],
-        "version": 1,
+        "version": 2,
       }
     `);
   });

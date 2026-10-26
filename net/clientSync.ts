@@ -43,6 +43,12 @@ const DEFAULT_VITALS: Vitals = {
   reloadAmount: 0,
   recoil: 0,
   shots: 0,
+  armorHead: 0,
+  armorBody: 0,
+  armorLegs: 0,
+  durHead: 0,
+  durBody: 0,
+  durLegs: 0,
 };
 
 /** Gửi dư: mỗi gói input kèm bấy nhiêu input gần nhất (AGENTS.md mục 2.9). */

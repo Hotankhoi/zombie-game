@@ -1,4 +1,4 @@
-/** Initial inventory data. Combat, loot rates and equipment effects are added separately. */
+/** Initial inventory data. Combat, loot rates and equipment effects are added separately (guns.ts, armor.ts…). */
 export const RARITIES = {
   common: { name: 'Thường', color: '#a9b5b1', rank: 0 },
   uncommon: { name: 'Tốt', color: '#7cd69c', rank: 1 },
@@ -7,13 +7,14 @@ export const RARITIES = {
   legendary: { name: 'Huyền thoại', color: '#efc76b', rank: 4 },
 } as const;
 export type Rarity = keyof typeof RARITIES;
-export type ItemCategory = 'weapon' | 'ammo' | 'medical' | 'food' | 'material';
+export type ItemCategory = 'weapon' | 'ammo' | 'medical' | 'food' | 'material' | 'armor';
 export const CATEGORY_NAMES: Record<ItemCategory, string> = {
   weapon: 'Vũ khí',
   ammo: 'Đạn',
   medical: 'Y tế',
   food: 'Nhu yếu phẩm',
   material: 'Vật liệu',
+  armor: 'Giáp',
 };
 interface ItemDefinition {
   name: string;
@@ -93,6 +94,25 @@ export const ITEMS = {
     category: 'material',
     maxStack: 30,
     description: 'Những mảnh kim loại thu gom để chế tạo về sau.',
+  },
+  // GĐ 3b (A): giáp — thêm CUỐI danh mục (mã trên dây = thứ tự). Chỉ số ở shared/data/armor.ts.
+  helmet: {
+    name: 'Mũ bảo hộ',
+    category: 'armor',
+    maxStack: 1,
+    description: 'Che đầu. Giảm sát thương và nguy cơ nhiễm trùng khi bị cắn.',
+  },
+  vest: {
+    name: 'Áo giáp',
+    category: 'armor',
+    maxStack: 1,
+    description: 'Lớp bảo vệ thân người, chịu được nhiều vết cắn nhất.',
+  },
+  pants: {
+    name: 'Quần bảo hộ',
+    category: 'armor',
+    maxStack: 1,
+    description: 'Vải dày chống cắn cho chân.',
   },
 } as const satisfies Record<string, ItemDefinition>;
 export type ItemId = keyof typeof ITEMS;
