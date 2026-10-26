@@ -9,6 +9,7 @@ import {
   type WireHorde,
   type WirePlayer,
   type WireVitals,
+  VITAL_FIELDS,
 } from '@net/gameCodec';
 import { isLootPacket } from '@net/lootCodec';
 import { encodeRoomFull } from '@net/roomFull';
@@ -22,6 +23,7 @@ import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
 import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
 import type { LootReplicaWire } from '@shared/types/loot';
 import { HostLoot } from './hostLoot';
+import type { ItemStack } from '@shared/inventory/inventory';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -71,6 +73,8 @@ export interface HostServerOptions {
     /** Lên thay host cũ: thu bản replica của những người này trước khi nhận ghi (host/hostLoot.ts). */
     recover?: { expected: readonly PeerId[]; timeoutTicks?: number };
     random?: () => string;
+    /** CHỈ bản dev (`?kit=1`): đồ có sẵn trong túi mới. */
+    starterKit?: readonly ItemStack[];
   };
 }
 
@@ -99,6 +103,7 @@ export class HostServer {
   private rosterDirty = false;
   /** Mẩu sao lưu gửi lần tới (xoay vòng 0..BACKUP_PARTS-1). */
   private backupTurn = 0;
+  private readonly devKit: boolean;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
@@ -110,6 +115,7 @@ export class HostServer {
       restore: opts.restore,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
+    this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
     this.loot = new HostLoot({
       seed: opts.seed,
       ...opts.loot,
@@ -124,6 +130,8 @@ export class HostServer {
           const c = this.clients.get(id);
           return c ? this.world.tick - c.heardAt : null;
         },
+        checkUse: (id, item, target) => this.world.checkItemUse(id, item.itemId, target),
+        applyUse: (id, item, target) => this.world.applyItemUse(id, item.itemId, item.rarity, target),
       },
     });
   }
@@ -216,7 +224,14 @@ export class HostServer {
       while (used.has(slot)) slot++;
       c = { id, slot, queue: [], ack: 0, heardAt: this.world.tick };
       this.clients.set(id, c);
-      this.world.addPlayer(id);
+      const p = this.world.addPlayer(id);
+      // CHỈ bản dev (`?kit=1`): vào trận đã đói/khát, bị thương, nhiễm trùng để thử dùng đồ ngay
+      if (this.devKit) {
+        p.food = Math.min(p.food, 30);
+        p.water = Math.min(p.water, 20);
+        p.hp = Math.min(p.hp, 45);
+        p.infection = Math.max(p.infection, 40);
+      }
       this.loot.admit(id);
       this.rosterDirty = true;
       // người mới (hoặc mọi người khi host mới dựng lại thế giới): gửi cả danh sách ô map đã đổi
@@ -359,7 +374,10 @@ export class HostServer {
     const out: WireVitals[] = [];
     const add = (id: PeerId, slot: number) => {
       const p = this.world.players.get(id);
-      if (p) out.push({ slot, food: p.food, water: p.water, infection: p.infection, maxHp: p.maxHp });
+      if (!p) return;
+      const v = { slot } as WireVitals;
+      for (const f of VITAL_FIELDS) v[f] = p[f];
+      out.push(v);
     };
     add(c.id, c.slot);
     const others = [...this.clients.values()].filter((o) => o !== c).sort((a, b) => a.slot - b.slot);

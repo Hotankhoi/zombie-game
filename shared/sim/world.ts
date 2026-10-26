@@ -16,7 +16,9 @@ import { BOSS, HORDE } from './tuning/horde';
 import { DAY, NOISE } from './tuning/night';
 import { PARTY } from './tuning/party';
 import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
+import { applyUse, checkUse, type UseError } from './items';
 import { infectFromBite, respawnSurvival } from './survival';
+import type { ItemId, Rarity } from '@shared/data/items';
 import { countdown } from './timer';
 import { createZombie, hearNoise, radiusOf, stepZombie, type ZombieState } from './zombie';
 
@@ -266,6 +268,27 @@ export class SimWorld {
    */
   emitNoise(x: number, y: number, radius: number): void {
     if (radius > 0) this.noises.push({ x, y, radius });
+  }
+
+  /** Dùng đồ (GĐ 3b): kiểm tra trước khi host trừ đồ. `target` = PeerId đồng đội (băng gạc) hoặc null = mình. */
+  checkItemUse(user: PeerId, itemId: ItemId, target: PeerId | null): UseError | null {
+    const u = this.players.get(user);
+    if (!u) return 'player_not_up';
+    const t = target === null || target === user ? null : (this.players.get(target) ?? null);
+    if (target !== null && target !== user && !t) return 'no_target';
+    return checkUse(u, t, itemId, this.blocked);
+  }
+
+  /** Áp hiệu ứng món đã trừ khỏi túi (host gọi khi giao dịch đã được mọi người xác nhận). */
+  applyItemUse(user: PeerId, itemId: ItemId, rarity: Rarity, target: PeerId | null): void {
+    const u = this.players.get(user);
+    if (!u) return;
+    const t = target === null || target === user ? null : (this.players.get(target) ?? null);
+    if (target !== null && target !== user && !t) return;
+    applyUse(u, t, itemId, rarity, (p, hp) => {
+      this.standUp(p);
+      p.hp = Math.min(p.maxHp, hp);
+    });
   }
 
   addPlayer(id: PeerId): PlayerState {
@@ -659,6 +682,7 @@ export class SimWorld {
     p.downedFor = PARTY.downedSec;
     p.reviveProgress = 0;
     p.sprinting = false;
+    p.healLeft = p.healRate = 0;
   }
 
   /** Xác đủ giờ → zombie đứng dậy tại chỗ, mang id người chơi (GĐ 6). */
@@ -710,7 +734,8 @@ export class SimWorld {
         `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
           `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
           `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)},` +
-          `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)}`,
+          `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)},${f(p.healLeft)},${f(p.healRate)},` +
+          `${f(p.stillFor)}`,
       );
     }
     for (const z of this.zombies) {
@@ -811,6 +836,7 @@ export class SimWorld {
     p.shield = PARTY.respawnShieldSec;
     respawnSurvival(p);
     p.hp = p.maxHp;
+    p.healLeft = p.healRate = 0;
     p.stamina = PLAYER.maxStamina;
     p.exhausted = false;
     p.staminaIdle = 0;

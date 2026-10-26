@@ -2,6 +2,7 @@ import type { ClientLoot } from '@net/clientLoot';
 import type { ChestLocation } from '@shared/mapgen/chests';
 import { mountInventoryPanel } from '../ui/inventory/inventoryPanel';
 import { mountLootPanel } from '../ui/loot/lootPanel';
+import { ItemUse } from './itemUse';
 import { lootErrorText } from './lootMessages';
 import { bagUsage, gainedItems, pickupText, toInventoryResult, toLootResult } from './outcome';
 import './lootUi.css';
@@ -27,11 +28,15 @@ export class LootUi {
   /** Rương đang mở panel (hoặc đang chờ host mở). */
   private _chest: ChestLocation | null = null;
   private opening = false;
+  /** Dùng đồ (GĐ 3b): phím 1–4, nút "Dùng", sơ cứu đứng yên. */
+  readonly items: ItemUse;
 
   constructor(
     parent: HTMLElement,
     private loot: ClientLoot,
+    nameOf: (id: string) => string = () => 'đồng đội',
   ) {
+    this.items = new ItemUse(loot, (t, e) => this.toast(t, e), nameOf);
     this.overlay = document.createElement('div');
     this.overlay.className = 'loot-ui';
     this.overlay.hidden = true;
@@ -157,6 +162,8 @@ export class LootUi {
       onCommand: async (cmd) =>
         toInventoryResult(await this.loot.command(cmd), this.loot.inventory ?? inventory),
       describeError: lootErrorText,
+      actionLabel: (stack) => (ItemUse.usable(stack) ? 'Dùng' : null),
+      onAction: (slot, stack) => this.items.useSlot(slot, stack),
     });
     if (!this.chestPanel) this.focusFirst();
   }

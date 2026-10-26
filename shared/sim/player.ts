@@ -43,6 +43,11 @@ export interface PlayerState {
   infection: number;
   /** Máu tối đa hiện tại (nhiễm trùng nặng làm giảm dần, ≤ PLAYER.maxHp). */
   maxHp: number;
+  /** GĐ 3b — máu còn hồi dần (băng gạc) và tốc độ hồi (máu/giây). */
+  healLeft: number;
+  healRate: number;
+  /** Đã đứng yên (không đi, không đánh) bao lâu (giây) — bộ sơ cứu cần đứng yên. */
+  stillFor: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -68,6 +73,9 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     water: SURVIVAL.water.start,
     infection: 0,
     maxHp: PLAYER.maxHp,
+    healLeft: 0,
+    healRate: 0,
+    stillFor: 0,
   };
 }
 
@@ -90,15 +98,18 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
   p.attackCd = countdown(p.attackCd, dt);
   if (!isAlive(p)) {
     p.sprinting = false;
+    p.stillFor = 0;
     return;
   }
   p.facing = aimToRad(input.aim);
   stepSurvival(p, dt);
+  stepHealing(p, dt);
   if (hasBtn(input, Btn.Flashlight) && (p.prevButtons & Btn.Flashlight) === 0) p.flashlight = !p.flashlight;
 
   let mx = Math.sign(input.moveX);
   let my = Math.sign(input.moveY);
   const moving = mx !== 0 || my !== 0;
+  p.stillFor = moving || hasBtn(input, Btn.Attack) || isDowned(p) ? 0 : p.stillFor + dt;
   if (mx !== 0 && my !== 0) {
     mx *= Math.SQRT1_2;
     my *= Math.SQRT1_2;
@@ -130,6 +141,15 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
       ? PLAYER.walkSpeed * PARTY.dragSpeedFactor
       : PLAYER.walkSpeed;
   if (moving) moveCircle(p, mx * speed * dt, my * speed * dt, PLAYER.radius, blocked);
+}
+
+/** Hồi máu dần (băng gạc, GĐ 3b) khi đứng được; gục thì tạm dừng. */
+function stepHealing(p: PlayerState, dt: number): void {
+  if (p.healLeft <= 0 || isDowned(p)) return;
+  const h = Math.min(p.healLeft, p.healRate * dt);
+  p.hp = Math.min(p.maxHp, p.hp + h);
+  p.healLeft -= h;
+  if (p.healLeft <= 1e-6) p.healLeft = p.healRate = 0;
 }
 
 function regenStamina(p: PlayerState, dt: number): void {

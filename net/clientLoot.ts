@@ -12,6 +12,7 @@ import {
 } from './lootCodec';
 import { ownerIdOf } from './playerKey';
 import { Emitter } from './transport';
+import type { PeerId } from '@shared/types';
 
 /** Chờ kết quả tối đa bấy nhiêu ms (host chờ mọi người ACK nên thường ~1 RTT + 1–2 tick). */
 export const LOOT_TIMEOUT_MS = 15_000;
@@ -68,7 +69,7 @@ interface Pending {
   resolve: (o: LootOutcome) => void;
 }
 
-const MUTATING = new Set<LootAction['type']>(['open', 'take', 'takeAll', 'move', 'sort']);
+const MUTATING = new Set<LootAction['type']>(['open', 'take', 'takeAll', 'move', 'sort', 'use', 'reload']);
 
 /**
  * Loot phía máy khách (phần 2A — lớp dữ liệu, KHÔNG có UI). Gửi intent cho host (tự điền revision mong đợi),
@@ -172,6 +173,13 @@ export class ClientLoot {
   }
   sort(): Promise<LootOutcome> {
     return this.request({ type: 'sort', expectedRevision: this._inventory?.revision ?? 0 });
+  }
+  /**
+   * Dùng 1 món ở ô `slot` (GĐ 3b): ăn/uống/y tế; `target` = PeerId đồng đội (băng gạc), null = cho mình. Host trừ đồ + áp
+   * hiệu ứng khi mọi người đã xác nhận.
+   */
+  use(slot: number, target: PeerId | null = null): Promise<LootOutcome> {
+    return this.request({ type: 'use', slot, target, expectedRevision: this._inventory?.revision ?? 0 });
   }
   /** Lệnh của panel rương (`client/ui/loot`) — dùng nguyên revision trong lệnh. */
   command(cmd: LootCommand | InventoryCommand): Promise<LootOutcome> {

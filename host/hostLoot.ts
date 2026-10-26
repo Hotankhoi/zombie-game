@@ -8,6 +8,7 @@ import {
 } from '@net/lootCodec';
 import { isPlayerKey, ownerIdOf } from '@net/playerKey';
 import { LootAuthority, type AuthorityResult, type LootActor, type LootSave } from '@shared/loot/authority';
+import { addItems, removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
 import type { ChestLocation } from '@shared/mapgen/chests';
 import { LootMessage, type ChestWire, type LootReplicaWire, type LootRequest } from '@shared/types/loot';
 import type { PeerId } from '@shared/types';
@@ -39,6 +40,12 @@ export interface LootWorld {
   sees(from: { x: number; y: number }, chest: ChestLocation): boolean;
   /** Số tick từ gói gần nhất của người này (input…); null nếu không biết. */
   idleTicks(peer: PeerId): number | null;
+  /**
+   * GĐ 3b — dùng 1 món: kiểm tra luật chơi (null = được) lúc nhận yêu cầu, áp hiệu ứng khi giao dịch trừ đồ đã được mọi
+   * người xác nhận. `target` = PeerId đồng đội hoặc null = mình. Không có (test cũ) → không dùng được món nào.
+   */
+  checkUse?(peer: PeerId, item: ItemStack, target: PeerId | null): string | null;
+  applyUse?(peer: PeerId, item: ItemStack, target: PeerId | null): void;
 }
 
 export interface HostLootOptions {
@@ -55,6 +62,8 @@ export interface HostLootOptions {
   recover?: { expected: readonly PeerId[]; timeoutTicks?: number };
   /** 8 byte ngẫu nhiên dạng hex cho term (test truyền cố định). */
   random?: () => string;
+  /** CHỈ bản dev (`?kit=1`): túi vừa tạo được thêm sẵn những món này để thử dùng đồ. */
+  starterKit?: readonly ItemStack[];
 }
 
 /** Term = `<epoch>.<ngẫu nhiên>`: khác nhau mỗi lần lên host (kể cả cùng máy), so được lần nào mới hơn. */
@@ -88,6 +97,11 @@ interface PendingReply {
   /** Gửi khi mọi người trong trận đã ACK revision này. */
   revision: number;
   data: Uint8Array;
+  /**
+   * Hiệu ứng của giao dịch (dùng đồ, GĐ 3b): áp ĐÚNG lúc gửi kết quả = khi mọi người đã có bản túi đã trừ đồ → host mới
+   * (chọn replica mới nhất) không bao giờ còn món đó mà nhân vật đã được hiệu ứng.
+   */
+  effect?: () => void;
 }
 
 /**
@@ -117,6 +131,8 @@ export class HostLoot {
   private broadcast = 0;
   private out: { to: PeerId; data: Uint8Array }[] = [];
   private tick = 0;
+  /** Hiệu ứng mà `apply` vừa chuẩn bị (dùng đồ) — `request` gắn vào kết quả đang chờ xác nhận. */
+  private effect: (() => void) | null = null;
   /** Đang thu bản replica (lên thay host cũ): ai đã gửi, bản tốt nhất, hạn chót. */
   private recovery: {
     waiting: Set<PeerId>;
@@ -243,6 +259,17 @@ export class HostLoot {
     return min;
   }
 
+  /**
+   * Sửa túi do host tự quyết (không có yêu cầu của người chơi): giáp vỡ, đồ thử của bản dev… Phát cho mọi người như
+   * giao dịch thường. Đang thu bản replica (chưa nhận ghi) → không làm.
+   */
+  hostUpdate(owner: string, change: Parameters<LootAuthority['update']>[1]): AuthorityResult {
+    if (this.recovery) return { ok: false, error: 'recovering' };
+    const result = this._authority.update(owner, change);
+    if (result.ok) this.dirtyInventories.add(owner);
+    return result;
+  }
+
   /** Bản đầy đủ hiện tại. */
   replica(): LootReplicaWire {
     return this._authority.snapshot() as LootReplicaWire;
@@ -293,7 +320,10 @@ export class HostLoot {
     }
     me.tokens--;
     const before = this._authority.currentRevision();
+    this.effect = null;
     const result = this.apply(from, req);
+    const effect = result.ok ? (this.effect ?? undefined) : undefined;
+    this.effect = null;
     if (result.ok) this.stats.ok++;
     else this.stats.rejected++;
     const chestId = 'chestId' in req.action ? req.action.chestId : null;
@@ -315,6 +345,7 @@ export class HostLoot {
       requestId: req.requestId,
       revision: this._authority.currentRevision(),
       data,
+      effect,
     });
     this.sendConfirmed();
   }
@@ -343,11 +374,43 @@ export class HostLoot {
       case 'sort':
         return this._authority.move(actor, a);
       case 'use':
+        return this.use(from, owner, actor, a);
       case 'reload':
       case 'equip':
-        // GĐ 3b: hợp đồng đã có, host xử lý ở các PR sau
+        // GĐ 3b: hợp đồng đã có, host xử lý ở PR vũ khí/giáp
         return { ok: false, error: 'invalid_command' };
     }
+  }
+
+  /**
+   * Dùng 1 món (GĐ 3b): kiểm tra luật (món dùng được, đứng được, đứng yên, mục tiêu…), trừ 1 món khỏi ô (revision mới), rồi
+   * chuẩn bị hiệu ứng — áp khi mọi người đã ACK revision này (xem `PendingReply.effect`).
+   */
+  private use(
+    from: PeerId,
+    owner: string,
+    actor: LootActor,
+    a: Extract<LootRequest['action'], { type: 'use' }>,
+  ): AuthorityResult {
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    const w = this.opts.world;
+    if (!w.checkUse || !w.applyUse) return { ok: false, error: 'not_usable' };
+    const inventory = this._authority.inventory(owner);
+    if (!inventory) return { ok: false, error: 'unknown_player' };
+    if (inventory.revision !== a.expectedRevision) return { ok: false, error: 'stale_revision' };
+    const stack = inventory.slots[a.slot];
+    if (!stack) return { ok: false, error: 'empty_slot' };
+    const target = a.target === from ? null : a.target;
+    if (target !== null && !w.inMatch(target)) return { ok: false, error: 'no_target' };
+    const err = w.checkUse(from, stack, target);
+    if (err) return { ok: false, error: err };
+    const result = this._authority.update(owner, (s) => removeFromSlot(s, a.slot, 1, a.expectedRevision));
+    if (result.ok) {
+      const item = { ...stack, quantity: 1 };
+      const apply = w.applyUse.bind(w);
+      this.effect = () => apply(from, item, target);
+    }
+    return result;
   }
 
   /**
@@ -370,7 +433,11 @@ export class HostLoot {
       this.claimIds.delete(peer);
       if (old) this.push(peer, this.replyPacket(old, { ok: false, error: 'key_in_use' }, null));
     }
+    const fresh = this._authority.inventory(owner) === null;
     if (!this._authority.join(owner)) return { ok: false, error: 'inventory_limit' };
+    if (fresh)
+      for (const item of this.opts.starterKit ?? [])
+        this._authority.update(owner, (s) => addItems(s, item, s.revision));
     this.owners.set(from, owner);
     this.claimIds.set(from, requestId);
     return { ok: true, inventory: this._authority.inventory(owner)! };
@@ -410,6 +477,7 @@ export class HostLoot {
       }
       const me = this.peers.get(p.peer);
       if (!me) continue;
+      p.effect?.();
       if (me.replies.has(p.requestId)) me.replies.set(p.requestId, p.data);
       this.push(p.peer, p.data);
     }

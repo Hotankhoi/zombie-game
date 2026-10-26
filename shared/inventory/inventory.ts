@@ -139,6 +139,65 @@ export function addItems(state: InventoryState, item: ItemStack, expectedRevisio
   return finish(state, slots);
 }
 
+/**
+ * Host-only consume (GĐ 3b, A): remove `quantity` from one slot (using an item). All-or-nothing.
+ */
+export function removeFromSlot(
+  state: InventoryState,
+  slot: number,
+  quantity: number,
+  expectedRevision: number,
+): InventoryResult {
+  const error = check(state, expectedRevision);
+  if (error) return fail(state, error);
+  if (!integer(slot) || slot < 0 || slot >= state.slots.length) return fail(state, 'invalid_slot');
+  const stack = state.slots[slot];
+  if (!stack) return fail(state, 'empty_slot');
+  if (!integer(quantity) || quantity <= 0 || quantity > stack.quantity)
+    return fail(state, 'invalid_quantity');
+  const slots = [...state.slots];
+  slots[slot] = quantity === stack.quantity ? null : { ...stack, quantity: stack.quantity - quantity };
+  return finish(state, slots);
+}
+
+/** How many of `itemId` (any rarity) the inventory holds. */
+export function countItem(state: InventoryState, itemId: ItemId): number {
+  return state.slots.reduce((n, s) => n + (s?.itemId === itemId ? s.quantity : 0), 0);
+}
+
+/**
+ * Host-only consume (GĐ 3b, A): remove up to `max` of `itemId` of any rarity (ammo for reloading), lowest rarity and
+ * smallest stack first, slot order on ties. Fails with `invalid_quantity` when none is held.
+ */
+export function removeItemUpTo(
+  state: InventoryState,
+  itemId: ItemId,
+  max: number,
+  expectedRevision: number,
+): InventoryResult & { removed?: number } {
+  const error = check(state, expectedRevision);
+  if (error) return fail(state, error);
+  if (!known(ITEMS, itemId)) return fail(state, 'invalid_item');
+  if (!integer(max) || max <= 0) return fail(state, 'invalid_quantity');
+  const order = state.slots
+    .map((s, i) => ({ s, i }))
+    .filter((e): e is { s: ItemStack; i: number } => e.s?.itemId === itemId)
+    .sort(
+      (a, b) =>
+        RARITIES[a.s.rarity].rank - RARITIES[b.s.rarity].rank || a.s.quantity - b.s.quantity || a.i - b.i,
+    );
+  if (order.length === 0) return fail(state, 'invalid_quantity');
+  const slots = [...state.slots];
+  let removed = 0;
+  for (const { s, i } of order) {
+    if (removed >= max) break;
+    const take = Math.min(s.quantity, max - removed);
+    slots[i] = take === s.quantity ? null : { ...s, quantity: s.quantity - take };
+    removed += take;
+  }
+  return { ...finish(state, slots), removed };
+}
+
 /** Host-only equipment operation. Shrinking compacts slots but never drops an item. */
 export function changeBackpack(
   state: InventoryState,

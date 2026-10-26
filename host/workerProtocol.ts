@@ -1,6 +1,7 @@
 import type { WorldState } from '@shared/sim/world';
 import type { Channel, PeerId } from '@shared/types';
 import type { LootReplicaWire } from '@shared/types/loot';
+import type { ItemStack } from '@shared/inventory/inventory';
 
 /** Tin nhắn luồng chính → Web Worker host. */
 export type ToWorker =
@@ -12,7 +13,13 @@ export type ToWorker =
       startTick?: number;
       restore?: WorldState;
       /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
-      loot?: { restore?: LootReplicaWire; epoch?: number; recover?: { expected: PeerId[] } };
+      loot?: {
+        restore?: LootReplicaWire;
+        epoch?: number;
+        recover?: { expected: PeerId[] };
+        /** CHỈ bản dev (`?kit=1`). */
+        starterKit?: ItemStack[];
+      };
     }
   | { t: 'in'; from: PeerId; data: Uint8Array }
   /** Vừa nhận gói bất kỳ của người này (≤ 2 lần/giây) — tab ẩn vẫn còn sống (host/hostLoot.ts LOOT_TAKEOVER_IDLE_TICKS). */
