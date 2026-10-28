@@ -24,6 +24,7 @@ import { infectFromBite, respawnSurvival } from './survival';
 import type { ItemId, Rarity } from '@shared/data/items';
 import { countdown } from './timer';
 import { createZombie, hearNoise, radiusOf, stepZombie, type ZombieState } from './zombie';
+import { rollZombieDrop, type ZombieDrop } from './zombieDrops';
 
 /** Vũng nguy hiểm (GĐ 4): độc của zombie phình nổ, axit của zombie phun. Người đứng trong mất máu. */
 export interface Pool {
@@ -137,6 +138,8 @@ export interface SimWorldOptions {
   zombieCount?: number;
   /** Dựng tiếp từ trạng thái có sẵn thay vì thế giới mới (seed khi đó không dùng cho RNG). */
   restore?: WorldState;
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
+  dropChanceScale?: number;
 }
 
 /** Bắn súng: lùi vị trí zombie tối đa bấy nhiêu tick (500 ms) về lúc người bắn nhìn thấy (bù trễ). */
@@ -177,6 +180,9 @@ export class SimWorld {
   mapChanges: Vec2[] = [];
   /** Giáp vừa vỡ trong tick (GĐ 3b) — host trừ 1 món đó khỏi túi người chơi. */
   armorBreaks: { player: PeerId; item: ItemId; rarity: Rarity }[] = [];
+  /** Zombie chết trong tick rơi đồ (host đặt xuống đất — hệ thả/nhặt của B). */
+  zombieDrops: ZombieDrop[] = [];
+  private dropChanceScale: number;
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
@@ -213,6 +219,7 @@ export class SimWorld {
   constructor(opts: SimWorldOptions) {
     this.map = opts.map;
     this.zombieCount = opts.zombieCount ?? Z.population;
+    this.dropChanceScale = opts.dropChanceScale ?? 1;
     const s = opts.restore;
     if (!s) {
       this.rng = new Rng(opts.seed);
@@ -324,6 +331,7 @@ export class SimWorld {
     this.events = [];
     this.mapChanges = [];
     this.armorBreaks = [];
+    this.zombieDrops = [];
     const players = this.sortedPlayers();
 
     for (const p of players) {
@@ -393,8 +401,12 @@ export class SimWorld {
   /** Bỏ zombie đã chết; zombie phình chết thì nổ vũng độc + tiếng nổ. */
   private reapZombies(): void {
     if (!this.zombies.some((z) => z.hp <= 0)) return;
+    const night = dayClock(this.tick).night;
     for (const z of this.zombies) {
-      if (z.hp > 0 || z.kind !== 'bloater') continue;
+      if (z.hp > 0) continue;
+      const items = rollZombieDrop(z, this.tick, night, this.dropChanceScale);
+      if (items.length > 0) this.zombieDrops.push({ x: z.x, y: z.y, items });
+      if (z.kind !== 'bloater') continue;
       const b = SPECIAL.bloaterPool;
       this.addPool('poison', z.x, z.y, b.radius, b.ttlSec, 0, b.dps);
       this.emitNoise(z.x, z.y, NOISE.bloaterBurst);

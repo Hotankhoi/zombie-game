@@ -74,6 +74,8 @@ export interface HostServerOptions {
   restore?: WorldState;
   /** CHỈ bản dev (`?den=police`): người vào trận đứng cạnh rương gần nhất của khu này (thử nhặt súng nhanh). */
   devSpawnRegion?: LootRegion;
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
+  devDropScale?: number;
   /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
   loot?: {
     restore?: LootReplicaWire;
@@ -126,6 +128,7 @@ export class HostServer {
       map: opts.map,
       zombieCount: opts.zombieCount,
       restore: opts.restore,
+      dropChanceScale: opts.devDropScale,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
     this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
@@ -296,6 +299,7 @@ export class HostServer {
     this.sendEvents(this.world.events);
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
     this.breakArmor();
+    this.placeZombieDrops();
     // loot trước sao lưu: mẩu 0 mang đúng bản vừa phát cho mọi người
     this.loot.flush(this.world.tick);
     for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
@@ -357,6 +361,24 @@ export class HostServer {
         return slot < 0
           ? { ok: false, state: s, error: 'empty_slot' }
           : removeFromSlot(s, slot, 1, s.revision);
+      });
+    }
+  }
+
+  /**
+   * Zombie chết rơi đồ: đặt xuống đất (gộp với đống cùng loại gần đó). Món thứ 2+ rải quanh chỗ chết (0.4 ô) nếu ô đó
+   * đi được. Hết chỗ (đủ 128 đống) → bỏ món đó, không đẩy đồ người chơi thả.
+   */
+  private placeZombieDrops(): void {
+    for (const d of this.world.zombieDrops) {
+      d.items.forEach((item, i) => {
+        let at = { x: d.x, y: d.y };
+        if (i > 0) {
+          const a = (i * Math.PI * 2) / d.items.length;
+          const p = { x: d.x + Math.cos(a) * 0.4, y: d.y + Math.sin(a) * 0.4 };
+          if (!this.world.blocked(Math.floor(p.x), Math.floor(p.y))) at = p;
+        }
+        this.loot.spawnGround(item, at);
       });
     }
   }

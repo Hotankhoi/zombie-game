@@ -15,6 +15,8 @@ export type ToWorker =
       restore?: WorldState;
       /** CHỈ bản dev (`?den=`). */
       devSpawnRegion?: LootRegion;
+      /** CHỈ bản dev (`?roido=`). */
+      devDropScale?: number;
       /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
       loot?: {
         restore?: LootReplicaWire;
