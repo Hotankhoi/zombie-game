@@ -311,6 +311,11 @@ savedLoad`. Vùng B: `client/ui/lobbyPanel.ts` (+ tùy chọn `extra`, 2 dòng).
   máu 45, túi, 2 đồ trên đất còn nguyên, "Đã nạp thế giới đã lưu"; nhập file hỏng → "Seed thế giới không khớp mã phòng";
   xóa IndexedDB, nhập file đúng ở phòng khác → tự mở SAV101 và nạp. Chưa bấm thử "Xuất file save" (tải file).
 
+- Việc 4: PR #52 đã merge. Việc 5: PR #53 đã merge. **GĐ 5 phần A xong** (đợt tràn, thùng thưởng, lưu IndexedDB +
+  xuất/nhập). Loadtest cuối (toàn bộ thay đổi): đợt tràn tối đa + 128 đồ trên đất 18.72 · 21.35 · 21.78 KB/s. Báo cáo:
+  `docs/bao-cao-save-drops.md` (PR `a/report-save-drops`). Việc tiếp (cần B): hành động 2 người, 2b', căn cứ/chế tạo
+  (phần `base` trong file save); người dùng tự thử 2–4 máy thật + bấm "Xuất file save".
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.
