@@ -282,6 +282,18 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   ban đêm 11 s → 3 đống đồ rơi đúng chỗ zombie chết, nút "V · Nhặt Phế liệu ×2". Loadtest: không đổi đáng kể (đợt tràn
   tối đa + bắn súng 18.87 · 21.11 · 21.59; bot giết ~90 con/90 s → ~7 đống).
 
+- Việc 3: PR #51 đã merge.
+- Việc 4 (`a/horde-reward`): hợp đồng giao thức 12 — `LootReplicaWire.rewards` (`RewardCrateWire`: id `r<đợt>`, vị trí,
+  phần riêng theo ownerId), intent `reward`, lỗi `no_reward`. `shared/data/reward.ts` (vùng B, mới): mỗi phần = 1 món
+  Huyền thoại (súng trường 25 / súng lục 15 / áo 25 / mũ 20 / quần 15) + 40 đạn hợp súng + 2 sơ cứu Sử thi + 2 kháng
+  sinh Hiếm, quay theo (seed, đợt, ownerId). `shared/loot/reward.ts` + `LootAuthority.addReward/takeReward` (vùng B,
+  tối thiểu): chỉ lấy phần mình, món không vừa túi ở lại, thùng mất khi mọi phần rỗng. Host: `horde.survived === true`
+  → `SimWorld.safeSpot()` (luật chỗ hồi sinh an toàn) → 1 thùng, mỗi người đã nhận túi 1 phần; host mới không đặt lại
+  đợt đã xong. Client `client/loot/rewardLayer.ts`: thùng vàng, "F: nhận thưởng", HUD "Thùng thưởng đợt X · 12 ô →",
+  thông báo khi thùng xuất hiện + "+1 Mũ bảo hộ (Huyền thoại)". Bản dev `?tran=3` (đợt tràn 3 zombie, không Boss).
+  409 test. Browser pane (`?room=RWD002&ngay=15&gio=0.799&tran=3&zombies=0`): sống qua đêm tới sáng → thắng, thùng ở
+  12 ô, đi tới, F → túi nhận 4 món, thùng biến mất, không lỗi console.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.
