@@ -32,6 +32,8 @@ export interface NetGameOptions {
   groundExpireSec?: number;
   /** CHỈ bản dev (`?roido=10`): mình làm host thì zombie rơi đồ nhiều gấp bấy nhiêu lần (thử nhanh). */
   devDropScale?: number;
+  /** CHỈ bản dev (`?tran=5`): mình làm host thì đợt tràn chỉ bấy nhiêu zombie, không Boss (thử thắng nhanh). */
+  devHordeQuota?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
   /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
@@ -140,6 +142,7 @@ export class NetGame {
   private starterKit: ItemStack[] | undefined;
   private groundExpireSec: number | undefined;
   private devDropScale: number | undefined;
+  private devHordeQuota: number | undefined;
   private devSpawnRegion: LootRegion | undefined;
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
@@ -164,6 +167,7 @@ export class NetGame {
     this.starterKit = opts.starterKit;
     this.groundExpireSec = opts.groundExpireSec;
     this.devDropScale = opts.devDropScale;
+    this.devHordeQuota = opts.devHordeQuota;
     this.devSpawnRegion = opts.devSpawnRegion;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
@@ -333,6 +337,7 @@ export class NetGame {
       restore,
       devSpawnRegion: this.devSpawnRegion,
       devDropScale: this.devDropScale,
+      devHordeQuota: this.devHordeQuota,
       // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
       loot: {
         recover: { expected: [...keep] },

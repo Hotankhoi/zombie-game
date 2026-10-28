@@ -1,4 +1,5 @@
 import { GroundLayer } from '../loot/groundLayer';
+import { RewardLayer } from '../loot/rewardLayer';
 import Phaser from 'phaser';
 import { KNIFE } from '@shared/data/melee';
 import { PLAYER } from '@shared/data/player';
@@ -77,6 +78,7 @@ export class WorldScene extends Phaser.Scene {
   private mapRenderer!: MapRenderer;
   /** Rương (phần 2B loot): thùng trong nhà, gợi ý F khi tới gần. */
   ground!: GroundLayer;
+  rewards!: RewardLayer;
   chests!: ChestLayer;
   /** Panel túi (I) / rương (F); mở thì khóa điều khiển nhân vật. */
   lootUi!: LootUi;
@@ -191,6 +193,9 @@ export class WorldScene extends Phaser.Scene {
       if (this.lootUi.chest) {
         this.fForChest = true;
         this.lootUi.closeChest();
+      } else if (!this.lootUi.open && me && isUp(me) && this.rewards?.take()) {
+        // thùng thưởng đợt tràn trong tầm với: F = nhận phần mình (không bật đèn pin)
+        this.fForChest = true;
       } else if (this.chests.nearest && me && isUp(me)) {
         this.fForChest = true;
         void this.lootUi.openChest(this.chests.nearest);
@@ -225,11 +230,13 @@ export class WorldScene extends Phaser.Scene {
       () => this.lootUi.open,
       (s) => this.lootUi.toast(s),
     );
+    this.rewards = new RewardLayer(this, this.net.loot, ZOOM, (t, e, c) => this.lootUi.toast(t, e, c));
     kb.addKey('V', false).on('down', () => {
       if (!isTyping()) void this.ground.pickup();
     });
     this.events.once('shutdown', () => {
       this.ground.destroy();
+      this.rewards.destroy();
       this.lootUi.hotbar.destroy();
     });
     this.input.mouse?.disableContextMenu();
@@ -394,6 +401,7 @@ export class WorldScene extends Phaser.Scene {
     if (me0) this.lootUi.hotbar.observeWeapon(me0.weapon, me0.weaponRarity);
     const up = me0 && isUp(me0) ? me0 : null;
     this.ground?.update(me0 ?? null, seen);
+    this.rewards?.update(me0 ?? null, seen);
     this.chests.update(up, seen, this.lootUi.open);
     this.autoCloseLoot(up, seen);
     let shown = 0;

@@ -34,6 +34,7 @@ export const LOOT_ERROR_TEXT: Record<LootClientError, string> = {
   mag_full: 'Băng đạn đã đầy.',
   no_ammo: 'Hết đạn loại này trong túi.',
   reloading: 'Đang nạp đạn…',
+  no_reward: 'Bạn đã nhận hết phần thưởng của mình (hoặc thùng không có phần của bạn).',
   key_taken:
     'Túi đồ của bạn đang được mở ở tab khác của trình duyệt này. Đóng tab kia rồi tải lại tab này để lấy lại túi.',
 };

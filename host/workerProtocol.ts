@@ -17,6 +17,8 @@ export type ToWorker =
       devSpawnRegion?: LootRegion;
       /** CHỈ bản dev (`?roido=`). */
       devDropScale?: number;
+      /** CHỈ bản dev (`?tran=`). */
+      devHordeQuota?: number;
       /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
       loot?: {
         restore?: LootReplicaWire;

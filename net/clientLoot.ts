@@ -78,6 +78,7 @@ interface Pending {
 const MUTATING = new Set<LootAction['type']>([
   'drop',
   'pickup',
+  'reward',
   'unequip',
   'open',
   'take',

@@ -36,6 +36,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         restore: m.restore,
         devSpawnRegion: m.devSpawnRegion,
         devDropScale: m.devDropScale,
+        devHordeQuota: m.devHordeQuota,
         loot: m.loot,
       });
       nextAt = statAt = performance.now();

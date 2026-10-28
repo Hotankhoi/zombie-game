@@ -74,3 +74,22 @@
     animation: none;
   }
 }
+
+/* Thùng thưởng đợt tràn (giao thức 12): dòng chỉ hướng phía trên thanh nhanh */
+.reward-hud {
+  position: fixed;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 5px 12px;
+  border: 1px solid #b8922f;
+  border-radius: 8px;
+  background: rgb(26 20 6 / 0.88);
+  color: #ffd76a;
+  font: 600 13px system-ui;
+  pointer-events: none;
+}
+.reward-hud[hidden] {
+  display: none;
+}
