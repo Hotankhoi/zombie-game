@@ -34,6 +34,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         zombieCount: m.zombieCount,
         startTick: m.startTick,
         restore: m.restore,
+        devSpawnRegion: m.devSpawnRegion,
+        devDropScale: m.devDropScale,
+        loot: m.loot,
       });
       nextAt = statAt = performance.now();
       loop();
@@ -41,6 +44,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     }
     case 'in':
       server?.receive(m.from, m.data);
+      break;
+    case 'seen':
+      server?.heard(m.peer);
       break;
     case 'leave':
       server?.removePeer(m.peer);

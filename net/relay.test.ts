@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { RelayTransport, type WebSocketLike } from './relay';
 import {
+  RELAY_KEY,
   RELAY_PING,
+  admitPeer,
   decodeClientBatch,
   encodeJoin,
   encodeLeave,
@@ -14,14 +16,25 @@ import { FakeTimers } from './testTimers';
 
 /** Relay giả trong bộ nhớ, cùng logic với relay/src/index.ts (routeBatch, freeSlot). */
 class FakeRelay {
-  members = new Map<FakeSocket, { id: string; slot: number }>();
+  members = new Map<FakeSocket, { id: string; slot: number; key: string }>();
+  rejected = 0;
   framesIn = 0;
   pings = 0;
 
   connect(url: string): FakeSocket {
     const ws = new FakeSocket(this);
     const id = new URL(url).searchParams.get('peer')!;
+    const key = new URL(url).searchParams.get('k')!;
     queueOpen(() => {
+      // giống relay/src/index.ts: cùng id khác mã → từ chối; cùng mã → thay kết nối cũ
+      const admit = admitPeer(this.members.values(), id, key);
+      if (admit === 'reject') {
+        this.rejected++;
+        ws.readyState = 3;
+        ws.onclose?.({});
+        return;
+      }
+      for (const [old, m] of [...this.members]) if (m.id === id) this.drop(old);
       const slot = freeSlot([...this.members.values()].map((m) => m.slot));
       ws.readyState = 1;
       ws.onopen?.({});
@@ -30,7 +43,7 @@ class FakeRelay {
         ws.deliver(encodeJoin(m.slot, m.id));
         other.deliver(encodeJoin(slot, id));
       }
-      this.members.set(ws, { id, slot });
+      this.members.set(ws, { id, slot, key });
     });
     return ws;
   }
@@ -159,6 +172,70 @@ describe('RelayTransport', () => {
     b!.t.send(Uint8Array.of(9));
     timers.advance(0);
     expect(a!.got).toEqual(['p1:9']);
+  });
+
+  it('kết nối thay thế cùng peer id: đúng mã của chính máy đó → thay; người lạ (mã khác) → bị từ chối, không đá ai', () => {
+    const { relay, timers, peers } = setup(2);
+    const [a, b] = peers;
+    const left: string[] = [];
+    a!.t.onPeerLeave((p) => left.push(p));
+    const connectTo = (u: string) => relay.connect(u);
+    // kẻ lạ biết id 'p1' (cả phòng đều thấy) nhưng không có mã của p1
+    const stranger = new RelayTransport('https://relay.test', 'ROOM1', 'p1', {
+      timers,
+      createSocket: connectTo,
+    });
+    flushOpens();
+    expect(relay.rejected).toBe(1);
+    expect(stranger.connected).toBe(false);
+    expect(left).toEqual([]);
+    expect(b!.t.connected).toBe(true);
+    b!.t.send(Uint8Array.of(5));
+    timers.advance(0);
+    expect(a!.got).toEqual(['p1:5']);
+    void stranger.leave();
+
+    // chính máy đó nối lại (cùng mã) khi relay chưa kịp thấy kết nối cũ đứt → thay kết nối cũ
+    const key = 'K'.repeat(22);
+    const c1 = new RelayTransport('https://relay.test', 'ROOM1', 'p9', {
+      timers,
+      key,
+      createSocket: connectTo,
+    });
+    flushOpens();
+    const c2 = new RelayTransport('https://relay.test', 'ROOM1', 'p9', {
+      timers,
+      key,
+      createSocket: connectTo,
+    });
+    flushOpens();
+    expect(c2.connected).toBe(true);
+    expect(c2.peers().sort()).toEqual(['p0', 'p1']);
+    expect([...relay.members.values()].filter((m) => m.id === 'p9')).toHaveLength(1);
+    void c1.leave();
+  });
+
+  it('mỗi trang 1 mã ngẫu nhiên, nối lại dùng lại đúng mã đó', () => {
+    const urls: string[] = [];
+    const { relay, timers, sockets } = setup(0);
+    const t = new RelayTransport('https://relay.test', 'ROOM1', 'p5', {
+      timers,
+      createSocket: (u) => {
+        urls.push(u);
+        const ws = relay.connect(u);
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    flushOpens();
+    relay.drop(sockets.at(-1)!);
+    timers.advance(1000);
+    flushOpens();
+    expect(urls).toHaveLength(2);
+    const k = urls.map((u) => new URL(u).searchParams.get('k'));
+    expect(k[0]).toMatch(RELAY_KEY);
+    expect(k[1]).toBe(k[0]);
+    expect(t.connected).toBe(true);
   });
 
   it('rảnh thì 30s ping 1 lần; đang gửi đều thì không ping', () => {

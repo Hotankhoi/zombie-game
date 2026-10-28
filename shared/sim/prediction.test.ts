@@ -85,7 +85,7 @@ describe('Predictor', () => {
     const p = host.addPlayer('me');
     const pred = new Predictor(host.blocked);
     pred.reconcile({ ...p, downedFor: 20 }, 0);
-    expect(pred.step({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack })).toBe(false);
+    expect(pred.step({ seq: 1, moveX: 0, moveY: 0, aim: 0, buttons: Btn.Attack })).toBeNull();
     expect(pred.state!.attackCd).toBe(0);
   });
 

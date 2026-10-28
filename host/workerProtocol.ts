@@ -1,11 +1,36 @@
 import type { WorldState } from '@shared/sim/world';
 import type { Channel, PeerId } from '@shared/types';
+import type { LootReplicaWire } from '@shared/types/loot';
+import type { ItemStack } from '@shared/inventory/inventory';
+import type { LootRegion } from '@shared/data/loot';
 
 /** Tin nhắn luồng chính → Web Worker host. */
 export type ToWorker =
   /** seed = seed thế giới (worldSeedForRoom(mã phòng)), dùng cho cả map lẫn mô phỏng. */
-  | { t: 'init'; seed: string; zombieCount?: number; startTick?: number; restore?: WorldState }
+  | {
+      t: 'init';
+      seed: string;
+      zombieCount?: number;
+      startTick?: number;
+      restore?: WorldState;
+      /** CHỈ bản dev (`?den=`). */
+      devSpawnRegion?: LootRegion;
+      /** CHỈ bản dev (`?roido=`). */
+      devDropScale?: number;
+      /** Loot của host trước (replica đã kiểm tra) + số thứ tự lần lên host. */
+      loot?: {
+        restore?: LootReplicaWire;
+        epoch?: number;
+        recover?: { expected: PeerId[] };
+        /** CHỈ bản dev (`?kit=1`). */
+        starterKit?: ItemStack[];
+        /** CHỈ bản dev (`?dondat=`). */
+        groundExpireTicks?: number;
+      };
+    }
   | { t: 'in'; from: PeerId; data: Uint8Array }
+  /** Vừa nhận gói bất kỳ của người này (≤ 2 lần/giây) — tab ẩn vẫn còn sống (host/hostLoot.ts LOOT_TAKEOVER_IDLE_TICKS). */
+  | { t: 'seen'; peer: PeerId }
   | { t: 'leave'; peer: PeerId };
 
 export interface HostStats {

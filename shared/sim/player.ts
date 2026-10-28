@@ -1,7 +1,11 @@
 import { PLAYER } from '@shared/data/player';
+import { SURVIVAL } from '@shared/data/survival';
 import type { PeerId, Vec2 } from '@shared/types';
 import { moveCircle, type BlockedFn } from './collision';
 import { Btn, aimToRad, hasBtn, type PlayerInput } from './input';
+import type { Rarity } from '@shared/data/items';
+import { stepGun, type WeaponId } from './guns';
+import { staminaRegenFactor, stepSurvival } from './survival';
 import { countdown, reached } from './timer';
 import { PARTY } from './tuning/party';
 
@@ -35,6 +39,38 @@ export interface PlayerState {
   flashlight: boolean;
   /** > 0 = vừa hồi sinh, còn bất tử bấy nhiêu giây (không mất máu vì cắn/vũng/Boss). */
   shield: number;
+  /** GĐ 3b — no bụng 0..100 (100 = no), nước 0..100, nhiễm trùng 0..100 (0 = sạch). Xem shared/sim/survival.ts. */
+  food: number;
+  water: number;
+  infection: number;
+  /** Máu tối đa hiện tại (nhiễm trùng nặng làm giảm dần, ≤ PLAYER.maxHp). */
+  maxHp: number;
+  /** GĐ 3b — máu còn hồi dần (băng gạc) và tốc độ hồi (máu/giây). */
+  healLeft: number;
+  healRate: number;
+  /** Đã đứng yên (không đi, không đánh) bao lâu (giây) — bộ sơ cứu cần đứng yên. */
+  stillFor: number;
+  /** GĐ 3b — vũ khí đang cầm (món + độ hiếm trong túi, host kiểm tra khi `equip`). Xem shared/sim/guns.ts. */
+  weapon: WeaponId;
+  weaponRarity: Rarity;
+  /** Đạn đang trong băng của súng lục / súng trường (theo người, không theo món). */
+  magPistol: number;
+  magRifle: number;
+  /** Đang nạp: mã súng (GUN_CODE, 0 = không), còn bao lâu (giây), bao nhiêu viên sẽ vào băng. */
+  reloadGun: number;
+  reloadLeft: number;
+  reloadAmount: number;
+  /** Độ giật hiện tại (độ tản cộng thêm), hồi dần. */
+  recoil: number;
+  /** Số phát đã bắn (mod 64) — chọn độ lệch tản tất định. */
+  shots: number;
+  /** GĐ 3b — giáp đang mặc ở đầu/thân/chân: 0 = không, 1..5 = độ hiếm; độ bền từng chỗ (shared/sim/armor.ts). */
+  armorHead: number;
+  armorBody: number;
+  armorLegs: number;
+  durHead: number;
+  durBody: number;
+  durLegs: number;
 }
 
 export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
@@ -56,6 +92,28 @@ export function createPlayer(id: PeerId, spawn: Vec2): PlayerState {
     dragging: false,
     flashlight: false,
     shield: 0,
+    food: SURVIVAL.food.start,
+    water: SURVIVAL.water.start,
+    infection: 0,
+    maxHp: PLAYER.maxHp,
+    healLeft: 0,
+    healRate: 0,
+    stillFor: 0,
+    weapon: 'knife',
+    weaponRarity: 'common',
+    magPistol: 0,
+    magRifle: 0,
+    reloadGun: 0,
+    reloadLeft: 0,
+    reloadAmount: 0,
+    recoil: 0,
+    shots: 0,
+    armorHead: 0,
+    armorBody: 0,
+    armorLegs: 0,
+    durHead: 0,
+    durBody: 0,
+    durLegs: 0,
   };
 }
 
@@ -78,14 +136,19 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
   p.attackCd = countdown(p.attackCd, dt);
   if (!isAlive(p)) {
     p.sprinting = false;
+    p.stillFor = 0;
     return;
   }
   p.facing = aimToRad(input.aim);
+  stepSurvival(p, dt);
+  stepHealing(p, dt);
+  stepGun(p, dt);
   if (hasBtn(input, Btn.Flashlight) && (p.prevButtons & Btn.Flashlight) === 0) p.flashlight = !p.flashlight;
 
   let mx = Math.sign(input.moveX);
   let my = Math.sign(input.moveY);
   const moving = mx !== 0 || my !== 0;
+  p.stillFor = moving || hasBtn(input, Btn.Attack) || isDowned(p) ? 0 : p.stillFor + dt;
   if (mx !== 0 && my !== 0) {
     mx *= Math.SQRT1_2;
     my *= Math.SQRT1_2;
@@ -119,10 +182,22 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, dt: number, block
   if (moving) moveCircle(p, mx * speed * dt, my * speed * dt, PLAYER.radius, blocked);
 }
 
+/** Hồi máu dần (băng gạc, GĐ 3b) khi đứng được; gục thì tạm dừng. */
+function stepHealing(p: PlayerState, dt: number): void {
+  if (p.healLeft <= 0 || isDowned(p)) return;
+  const h = Math.min(p.healLeft, p.healRate * dt);
+  p.hp = Math.min(p.maxHp, p.hp + h);
+  p.healLeft -= h;
+  if (p.healLeft <= 1e-6) p.healLeft = p.healRate = 0;
+}
+
 function regenStamina(p: PlayerState, dt: number): void {
   p.staminaIdle += dt;
   if (reached(p.staminaIdle, PLAYER.staminaRegenDelaySec)) {
-    p.stamina = Math.min(PLAYER.maxStamina, p.stamina + PLAYER.staminaRegenPerSec * dt);
+    p.stamina = Math.min(
+      PLAYER.maxStamina,
+      p.stamina + PLAYER.staminaRegenPerSec * staminaRegenFactor(p) * dt,
+    );
   }
   if (p.exhausted && p.stamina >= PLAYER.maxStamina * PLAYER.sprintResumeFraction) {
     p.exhausted = false;

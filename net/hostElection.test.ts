@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { HostElection, decodeScore, encodeScore, pickBest, type ElectionOptions } from './hostElection';
+import {
+  HostElection,
+  decodeFollowing,
+  decodeScore,
+  encodeScore,
+  pickBest,
+  type ElectionOptions,
+} from './hostElection';
+import type { Transport } from './transport';
 import { LoopbackHub, type LoopbackTransport } from './loopback';
 
 function room() {
@@ -87,8 +95,8 @@ describe('HostElection', () => {
     const r = room();
     const m = r.join('m');
     r.advance(10000);
-    // a không chờ nghe (listenMs = 0) nên tự nhận host ngay ở tick đầu
-    const a = r.join('a', { listenMs: 0 });
+    // a không chờ nghe (listenMs = 0) và không chờ host mà người khác báo (waitHostMs = 0) → tự nhận host ngay
+    const a = r.join('a', { listenMs: 0, waitHostMs: 0 });
     const seen: (string | null)[] = [];
     a.changed.on((h) => seen.push(h));
     r.advance(1100);
@@ -180,5 +188,85 @@ describe('pickBest', () => {
         { id: 'c', score: 300 },
       ]),
     ).toBe('c');
+  });
+});
+
+describe('HostElection — chờ host thật (tab vừa tải lại, lỗi 2A #2)', () => {
+  /** Máy `a` chưa nghe được `m` (host) trong `blindMs` đầu (WebRTC nối chậm) nhưng nghe được những người khác. */
+  function slowLink(blindMs: number, opts: ElectionOptions) {
+    let t = 0;
+    const hub = new LoopbackHub();
+    const els: HostElection[] = [];
+    const add = (tr: Transport, o?: ElectionOptions) => {
+      const el = new HostElection(tr, () => t, o);
+      els.push(el);
+      return el;
+    };
+    const m = add(hub.join('m'));
+    const z = add(hub.join('z'));
+    const advance = (ms: number) => {
+      for (let i = 0; i < ms; i += 100) {
+        t += 100;
+        for (const e of els) e.tick();
+      }
+    };
+    advance(4000);
+    const raw = hub.join('a');
+    const start = t;
+    const deaf: Transport = {
+      selfId: raw.selfId,
+      peers: () => raw.peers(),
+      send: (d, o) => raw.send(d, o),
+      onMessage: (h) =>
+        raw.onMessage((d, from) => {
+          if (from !== 'm' || t - start >= blindMs) h(d, from);
+        }),
+      onPeerJoin: (h) => raw.onPeerJoin(h),
+      onPeerLeave: (h) => raw.onPeerLeave(h),
+      leave: () => raw.leave(),
+    };
+    const a = add(deaf, { ...opts });
+    return { m, z, a, advance, now: () => t };
+  }
+
+  it('người đã nối (z) báo "đang theo host" → a chờ, không tự nhận; nghe được m thì theo m', () => {
+    const { a, m, advance } = slowLink(5000, {});
+    advance(4500);
+    expect(a.hostId).toBeNull();
+    expect(a.waitingForHostMs()).not.toBeNull();
+    advance(1500);
+    expect(a.hostId).toBe('m');
+    expect(m.isHost).toBe(true);
+  });
+
+  it('ghi nhớ "có host" (expectHostUntil) mà chưa nối được ai → chờ tới hạn rồi mới tự nhận', () => {
+    let t = 0;
+    const hub = new LoopbackHub();
+    const a = new HostElection(hub.join('a'), () => t, { expectHostUntil: 10_000 });
+    for (; t < 9_900; t += 100) a.tick();
+    expect(a.hostId).toBeNull();
+    expect(a.waitingForHostMs()!).toBeLessThanOrEqual(200);
+    for (; t < 10_200; t += 100) a.tick();
+    expect(a.isHost).toBe(true);
+  });
+
+  it('mọi người đã nối đều báo "không có host" → thôi chờ, bầu host như thường', () => {
+    let t = 0;
+    const hub = new LoopbackHub();
+    const a = new HostElection(hub.join('a'), () => t, { expectHostUntil: 10_000 });
+    const b = new HostElection(hub.join('b'), () => t);
+    for (; t < 4_500; t += 100) {
+      a.tick();
+      b.tick();
+    }
+    expect(a.isHost).toBe(true);
+    expect(b.hostId).toBe('a');
+  });
+
+  it('gói điểm bản cũ (3 byte) vẫn đọc được điểm; cờ mới ở byte 4', () => {
+    expect(decodeScore(new Uint8Array([126, 0, 42]))).toBe(42);
+    expect(decodeFollowing(new Uint8Array([126, 0, 42]))).toBeNull();
+    expect(decodeFollowing(encodeScore(7, true))).toBe(true);
+    expect(decodeScore(encodeScore(7, true))).toBe(7);
   });
 });

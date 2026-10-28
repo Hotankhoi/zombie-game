@@ -3,7 +3,8 @@ import { Doors } from '@shared/sim/doors';
 import type { MapSource } from '@shared/sim/grid';
 import { aimToRad, type PlayerInput } from '@shared/sim/input';
 import type { PlayerState } from '@shared/sim/player';
-import { Predictor } from '@shared/sim/prediction';
+import { Predictor, type AttackFx } from '@shared/sim/prediction';
+import { decodeWeapon, type WeaponId } from '@shared/sim/guns';
 import { keyTile, tileKey, type Corpse, type SimEvent, type WorldState } from '@shared/sim/world';
 import { PARTY } from '@shared/sim/tuning/party';
 import type { ZombieKind } from '@shared/sim/tuning/zombieKinds';
@@ -18,8 +19,37 @@ import {
   type SnapshotMsg,
   type WireEvent,
   type WirePlayer,
+  type WireVitals,
   type WireZombie,
+  VITAL_FIELDS,
 } from './gameCodec';
+import { SURVIVAL } from '@shared/data/survival';
+import { PLAYER } from '@shared/data/player';
+
+/** Chỉ số sinh tồn đã biết của 1 người (GĐ 3b). */
+export type Vitals = Omit<WireVitals, 'slot'>;
+const DEFAULT_VITALS: Vitals = {
+  food: SURVIVAL.food.start,
+  water: SURVIVAL.water.start,
+  infection: 0,
+  maxHp: PLAYER.maxHp,
+  healLeft: 0,
+  healRate: 0,
+  stillFor: 0,
+  magPistol: 0,
+  magRifle: 0,
+  reloadGun: 0,
+  reloadLeft: 0,
+  reloadAmount: 0,
+  recoil: 0,
+  shots: 0,
+  armorHead: 0,
+  armorBody: 0,
+  armorLegs: 0,
+  durHead: 0,
+  durBody: 0,
+  durLegs: 0,
+};
 
 /** Gửi dư: mỗi gói input kèm bấy nhiêu input gần nhất (AGENTS.md mục 2.9). */
 export const INPUT_REDUNDANCY = 3;
@@ -31,7 +61,7 @@ const MAX_INTERP_MS = 400;
  * Đợt tràn lớn: host chỉ gửi một phần zombie mỗi snapshot (ngân sách, xem host/hostServer.ts). Zombie vắng
  * mặt mà mới thấy cách đây ≤ bấy nhiêu tick (và không bị giết) thì giữ vị trí cũ thay vì cho biến mất.
  */
-const KEEP_MISSING_TICKS = 24;
+const KEEP_MISSING_TICKS = 40;
 /** Snapshot tới muộn: ngoại suy theo vận tốc tối đa bấy nhiêu tick (150ms) rồi đứng chờ, không đoán xa hơn. */
 const MAX_EXTRAP_TICKS = 3;
 const TICKS_PER_SEC = 1000 / SIM_TICK_MS;
@@ -58,6 +88,8 @@ export interface RemotePlayerView {
   reviveProgress: number;
   /** Đèn pin đang bật (GĐ 4) — đèn của đồng đội cũng soi sáng cho mình. */
   flashlight: boolean;
+  /** Vũ khí đang cầm (GĐ 3b) — vẽ súng trên tay. */
+  weapon: WeaponId;
 }
 
 export interface ZombieView {
@@ -108,6 +140,8 @@ export class ClientSync {
   /** Xác đồng đội chưa thành zombie (sự kiện death + vị trí cuối) — chuyển host không làm mất xác. */
   private corpses: { player: PeerId; x: number; y: number; tick: number }[] = [];
   private recent: PlayerInput[] = [];
+  /** Chỉ số sinh tồn mới nhất đã nghe của từng người (snapshot chỉ mang mình + 1 đồng đội xoay vòng). */
+  private vitals = new Map<PeerId, Vitals>();
   /** Ước lượng (giờ máy mình) − (tick host × 50ms). */
   private clockOffset: number | null = null;
   private lastRecv: { at: number; tick: number } | null = null;
@@ -132,11 +166,14 @@ export class ClientSync {
   }
 
   /** Một tick 20Hz của client: dự đoán + trả gói Input để gửi host. */
-  tick(input: PlayerInput): { packet: Uint8Array; swung: boolean } {
-    const swung = this.predictor.step(input);
+  tick(input: PlayerInput): { packet: Uint8Array; fx: AttackFx | null } {
+    // tick thế giới mình đang vẽ zombie (đã lùi nội suy) → host bù trễ khi mình bắn
+    const view = this.viewTick();
+    if (view !== null && input.view === undefined) input = { ...input, view };
+    const fx = this.predictor.step(input);
     this.recent.unshift(input);
     if (this.recent.length > INPUT_REDUNDANCY) this.recent.length = INPUT_REDUNDANCY;
-    return { packet: encodeGame({ type: GameMsg.Input, inputs: this.recent }), swung };
+    return { packet: encodeGame({ type: GameMsg.Input, inputs: this.recent }), fx };
   }
 
   /** Gói từ host. Trả về false nếu không phải gói trong trận. */
@@ -217,6 +254,12 @@ export class ClientSync {
     return Math.max(0, (this.now() - this.clockOffset) / SIM_TICK_MS);
   }
 
+  /** Tick (làm tròn xuống) của trạng thái zombie đang vẽ = lúc `sample()` lấy mẫu; null khi chưa có snapshot. */
+  viewTick(): number | null {
+    if (this.clockOffset === null) return null;
+    return Math.max(0, Math.floor((this.now() - this.clockOffset - this.interpDelayMs) / SIM_TICK_MS));
+  }
+
   get zombieCount(): number {
     return this.snaps[this.snaps.length - 1]?.zombies.size ?? 0;
   }
@@ -281,6 +324,7 @@ export class ClientSync {
         downedFor: pb.respawnIn <= 0 ? pb.downedFor : 0,
         reviveProgress: pb.reviveProgress,
         flashlight: pb.flashlight,
+        weapon: decodeWeapon(pb.weapon).weapon,
       });
     }
     return { zombies, others };
@@ -296,7 +340,7 @@ export class ClientSync {
     const players: PlayerState[] = [];
     for (const wp of s.players) {
       const id = this.slots.get(wp.slot);
-      if (id && keep.has(id)) players.push(toPlayerState(id, wp));
+      if (id && keep.has(id)) players.push(toPlayerState(id, wp, this.vitals.get(id)));
     }
     const alive = players.filter((p) => p.respawnIn <= 0);
     let maxId = 0;
@@ -382,6 +426,14 @@ export class ClientSync {
       const id = this.slots.get(p.slot);
       if (id) players.set(id, p);
     }
+    for (const v of msg.vitals ?? []) {
+      const id = this.slots.get(v.slot);
+      if (!id) continue;
+      const known = {} as Vitals;
+      for (const f of VITAL_FIELDS) known[f] = v[f];
+      this.vitals.set(id, known);
+    }
+    for (const id of this.vitals.keys()) if (!players.has(id)) this.vitals.delete(id);
     const zmap = new Map(msg.zombies.map((z) => [z.id, z]));
     for (const z of msg.zombies) this.zombieSeen.set(z.id, msg.tick);
     const prev = this.snaps[this.snaps.length - 1];
@@ -401,7 +453,8 @@ export class ClientSync {
     this.doors = doors;
 
     const mine = players.get(this.selfId);
-    if (mine) this.predictor.reconcile(toPlayerState(this.selfId, mine), msg.ack);
+    if (mine)
+      this.predictor.reconcile(toPlayerState(this.selfId, mine, this.vitals.get(this.selfId)), msg.ack);
   }
 
   private fromWire(e: WireEvent): SimEvent | null {
@@ -431,11 +484,15 @@ export class ClientSync {
         return who ? { type: 'death', player: who } : null;
       case 'respawn':
         return who ? { type: 'respawn', player: who } : null;
+      case 'shot':
+        return who
+          ? { type: 'shot', player: who, x: e.x, y: e.y, angle: e.angle, dist: e.dist, hit: e.hit }
+          : null;
     }
   }
 }
 
-export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
+export function toPlayerState(id: PeerId, w: WirePlayer, v: Vitals = DEFAULT_VITALS): PlayerState {
   return {
     id,
     x: w.x,
@@ -454,6 +511,9 @@ export function toPlayerState(id: PeerId, w: WirePlayer): PlayerState {
     dragging: w.dragging,
     flashlight: w.flashlight,
     shield: 0, // máy khách không cần (chỉ host tính sát thương)
+    ...v,
+    weapon: decodeWeapon(w.weapon).weapon,
+    weaponRarity: decodeWeapon(w.weapon).rarity,
   };
 }
 

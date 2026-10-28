@@ -1,7 +1,11 @@
-import { KNIFE } from '@shared/data/melee';
 import { SIM_TICK_MS } from '@shared/types';
 import type { BlockedFn } from './collision';
 import { meleeAttack } from './combat';
+import { fireGun, isGun, meleeOf } from './guns';
+
+/** Hiệu ứng tự vẽ ngay khi dự đoán (không chờ host): vết chém hoặc tia đạn (tới tường, không biết trúng ai). */
+export type AttackFx =
+  { kind: 'swing' } | { kind: 'shot'; x: number; y: number; angle: number; dist: number };
 import { Btn, hasBtn, type PlayerInput } from './input';
 import { isUp, stepPlayer, type PlayerState } from './player';
 
@@ -33,11 +37,11 @@ export class Predictor {
 
   constructor(private blocked: BlockedFn) {}
 
-  /** Chạy 1 tick với input mới của mình. Trả về true nếu tick này chém (để vẽ vết chém ngay). */
-  step(input: PlayerInput): boolean {
+  /** Chạy 1 tick với input mới của mình. Trả về vết chém / tia đạn của tick này (để vẽ ngay), null nếu không đánh. */
+  step(input: PlayerInput): AttackFx | null {
     this.pending.push(input);
     if (this.pending.length > MAX_PENDING) this.pending.shift();
-    if (!this.state) return false;
+    if (!this.state) return null;
     this.prevX = this.state.x;
     this.prevY = this.state.y;
     return this.simulate(this.state, input);
@@ -82,12 +86,18 @@ export class Predictor {
     return this.pending.length;
   }
 
-  private simulate(p: PlayerState, input: PlayerInput): boolean {
+  private simulate(p: PlayerState, input: PlayerInput): AttackFx | null {
     stepPlayer(p, input, DT, this.blocked);
-    let swung = false;
-    // chém: chỉ đoán hồi chiêu + stamina; trúng zombie nào là do host quyết (GĐ 2b chuyển sang client)
-    if (isUp(p) && hasBtn(input, Btn.Attack)) swung = meleeAttack(p, KNIFE, [], this.blocked) !== null;
+    let fx: AttackFx | null = null;
+    // chém/bắn: chỉ đoán hồi chiêu + stamina + đạn + giật; trúng zombie nào là do host quyết
+    if (isUp(p) && hasBtn(input, Btn.Attack)) {
+      if (isGun(p.weapon)) {
+        const pressed = (p.prevButtons & Btn.Attack) === 0;
+        const s = fireGun(p, p.weapon, p.weaponRarity, [], this.blocked, pressed);
+        if (s) fx = { kind: 'shot', x: s.x, y: s.y, angle: s.angle, dist: s.dist };
+      } else if (meleeAttack(p, meleeOf(p.weapon, p.weaponRarity), [], this.blocked)) fx = { kind: 'swing' };
+    }
     p.prevButtons = input.buttons;
-    return swung;
+    return fx;
   }
 }

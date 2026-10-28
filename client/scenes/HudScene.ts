@@ -1,14 +1,18 @@
 import Phaser from 'phaser';
 import { PLAYER } from '@shared/data/player';
+import { SURVIVAL } from '@shared/data/survival';
 import { MAX_PLAYERS, type PeerId } from '@shared/types';
 import { dayClock } from '@shared/sim/dayNight';
-import { isAlive, isDowned } from '@shared/sim/player';
+import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
 import type { WireHorde } from '@net/gameCodec';
 import { HORDE } from '@shared/sim/tuning/horde';
 import { DAY, VISION } from '@shared/sim/tuning/night';
 import { PARTY } from '@shared/sim/tuning/party';
 import { visionPolygon, visionShapes } from '@shared/sim/vision';
 import type { WorldScene } from './WorldScene';
+import { QUICK_KEYS, QUICK_LABELS, countOf, quickItem } from '../loot/quickUse';
+import { armorLabel, weaponLabel } from '../loot/weaponControl';
+import { isGun, magOf, reloading } from '@shared/sim/guns';
 
 const FONT = 'Segoe UI, system-ui, sans-serif';
 /** Mũi tên đồng đội cách mép màn hình (px). */
@@ -28,6 +32,16 @@ export class HudScene extends Phaser.Scene {
   private subText!: Phaser.GameObjects.Text;
   private hintText!: Phaser.GameObjects.Text;
   private barText!: Phaser.GameObjects.Text;
+  /** Chữ cạnh 3 thanh no / nước / nhiễm trùng (GĐ 3b). */
+  private vitalText!: Phaser.GameObjects.Text;
+  /** Thanh dùng nhanh 1–4 (GĐ 3b). */
+  private quickText!: Phaser.GameObjects.Text;
+  /** Vũ khí đang cầm + đạn (GĐ 3b). */
+  private weaponText!: Phaser.GameObjects.Text;
+  /** Giáp đang mặc + độ bền (GĐ 3b). */
+  private armorText!: Phaser.GameObjects.Text;
+  /** Số ô túi đã dùng (phần 2B loot). */
+  private bagText!: Phaser.GameObjects.Text;
   /** Chữ dùng lại cho mũi tên và khung đội (tối đa MAX_PLAYERS - 1 đồng đội). */
   private arrowTexts: Phaser.GameObjects.Text[] = [];
   private teamTexts: Phaser.GameObjects.Text[] = [];
@@ -77,10 +91,21 @@ export class HudScene extends Phaser.Scene {
     const style = { fontFamily: FONT, fontSize: '13px', color: '#e6ebe7' };
     this.fpsText = this.add.text(0, 0, '', { ...style, fontFamily: 'Consolas, monospace' }).setOrigin(1, 0);
     this.barText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
+    this.bagText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
+    this.vitalText = this.add.text(0, 0, '', { ...style, fontSize: '11px', color: '#8d9891' });
+    this.weaponText = this.add
+      .text(0, 0, '', { ...style, fontSize: '13px', fontStyle: 'bold', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(1, 1);
+    this.armorText = this.add
+      .text(0, 0, '', { ...style, fontSize: '11px', color: '#c9d1cc', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(1, 1);
+    this.quickText = this.add
+      .text(0, 0, '', { ...style, fontSize: '11px', color: '#c9d1cc', stroke: '#000', strokeThickness: 3 })
+      .setOrigin(1, 1);
     this.hintText = this.add.text(
       0,
       0,
-      'WASD đi · Shift chạy · Chuột trái chém · E mở/đóng cửa · F đèn pin · R cứu · G kéo người gục · F3 mạng',
+      'WASD đi · Shift chạy · Chuột trái chém/bắn · X đổi vũ khí · cuộn chuột chọn ô · Q nạp đạn · E cửa · F đèn pin/mở rương · I túi · 1–5 thanh nhanh · V nhặt · Esc đóng · R cứu · G kéo · F3 mạng',
       { ...style, fontSize: '12px', color: '#8d9891' },
     );
     this.respawnText = this.add
@@ -157,9 +182,16 @@ export class HudScene extends Phaser.Scene {
 
     if (!me) {
       const full = net?.roomFull;
+      const wait = net?.election.waitingForHostMs() ?? null;
       this.respawnText
         .setVisible(true)
-        .setText(full ? `Phòng đã đủ ${full} người` : 'Đang vào trận…')
+        .setText(
+          full
+            ? `Phòng đã đủ ${full} người`
+            : wait !== null
+              ? `Đang tìm host của phòng… (${Math.ceil(wait / 1000)} s)`
+              : 'Đang vào trận…',
+        )
         .setPosition(width / 2, height / 2 - 60);
       this.subText
         .setVisible(!!full)
@@ -169,12 +201,29 @@ export class HudScene extends Phaser.Scene {
     }
     const x = 16;
     const w = Math.min(220, width - 32);
-    const yHp = height - 44;
-    const yStam = height - 28;
+    const yHp = height - 54;
+    const yStam = height - 38;
+    const yVital = height - 22;
     this.bar(g, x, yHp, w, 10, me.hp / PLAYER.maxHp, 0xe53935);
+    // máu tối đa bị nhiễm trùng ăn mất: phần xám cuối thanh
+    if (me.maxHp < PLAYER.maxHp - 0.5) {
+      const from = (w * me.maxHp) / PLAYER.maxHp;
+      g.fillStyle(0x4a4a4a, 0.9).fillRect(x + from, yHp, w - from, 10);
+    }
     this.bar(g, x, yStam, w, 6, me.stamina / PLAYER.maxStamina, me.exhausted ? 0x6d6d6d : 0xfdd835);
-    this.barText.setText(`Máu ${Math.ceil(me.hp)}`).setPosition(x + w + 8, yHp - 3);
-    this.hintText.setPosition(x, height - 66);
+    this.barText
+      .setText(`Máu ${Math.ceil(me.hp)}${me.maxHp < PLAYER.maxHp - 0.5 ? `/${Math.floor(me.maxHp)}` : ''}`)
+      .setPosition(x + w + 8, yHp - 3);
+    this.drawVitals(g, me, x, yVital, w, time);
+    this.drawQuickBar(g, me, width, height);
+    const bag = this.world.lootUi.bag;
+    const taken = net?.loot.claimError === 'key_taken';
+    this.bagText
+      .setVisible(bag !== null || taken)
+      .setText(bag ? `Túi ${bag.used}/${bag.size} ô` : taken ? 'Túi đang mở ở tab khác' : '')
+      .setColor(taken || (bag && bag.used >= bag.size) ? '#ffb74d' : '#8d9891')
+      .setPosition(x + w + 8, yStam - 4);
+    this.hintText.setPosition(x, height - 76);
 
     this.subText.setVisible(false);
     if (!isAlive(me)) {
@@ -394,6 +443,67 @@ export class HudScene extends Phaser.Scene {
         Phaser.Math.Clamp(ay - Math.sin(ang) * 16, hh, height - hh),
       );
     }
+  }
+
+  /**
+   * 3 thanh nhỏ (GĐ 3b): no bụng (cam), nước (xanh), nhiễm trùng (xanh bệnh — đầy = nặng). No/nước thấp hoặc nhiễm nặng
+   * thì nhấp nháy đỏ.
+   */
+  private drawVitals(
+    g: Phaser.GameObjects.Graphics,
+    me: PlayerState,
+    x: number,
+    y: number,
+    w: number,
+    time: number,
+  ) {
+    const gap = 6;
+    const bw = (w - gap * 2) / 3;
+    const blink = Math.sin(time / 180) > 0;
+    const rows: [number, number, boolean][] = [
+      [me.food / 100, 0xffa726, me.food < SURVIVAL.food.lowAt],
+      [me.water / 100, 0x29b6f6, me.water < SURVIVAL.water.lowAt],
+      [me.infection / 100, 0x9ccc65, me.infection >= SURVIVAL.infection.maxHpLossAt],
+    ];
+    rows.forEach(([frac, color, warn], i) => {
+      this.bar(g, x + i * (bw + gap), y, bw, 5, frac, warn && blink ? 0xef5350 : color);
+    });
+    const warn = rows.some((r) => r[2]);
+    this.vitalText
+      .setText(`No ${Math.round(me.food)} · Nước ${Math.round(me.water)} · Nhiễm ${Math.round(me.infection)}`)
+      .setColor(warn ? '#ffb74d' : '#8d9891')
+      .setPosition(x + w + 8, y - 4)
+      .setVisible(true);
+  }
+
+  /** Thanh dùng nhanh 1–4 (số món còn) góc phải dưới + tiến độ sơ cứu (đứng yên) dưới nhân vật. */
+  private drawQuickBar(g: Phaser.GameObjects.Graphics, me: PlayerState, width: number, height: number) {
+    const ui = this.world.lootUi;
+    const inv = this.world.net.loot.inventory;
+    const parts = QUICK_KEYS.map((k) => {
+      const item = quickItem(k, me, inv);
+      const n = k === 4 ? countOf(inv, 'water') + countOf(inv, 'canned_food') : countOf(inv, item);
+      return `${QUICK_LABELS[k]} ×${n}`;
+    });
+    this.quickText
+      .setText(parts.join('   '))
+      .setPosition(width - 16, height - 10)
+      .setVisible(inv !== null);
+    const empty = isGun(me.weapon) && magOf(me, me.weapon) === 0 && !reloading(me, me.weapon);
+    this.weaponText
+      .setText(weaponLabel(me, inv))
+      .setColor(empty ? '#ffb74d' : '#e6ebe7')
+      .setPosition(width - 16, height - 26)
+      .setVisible(true);
+    this.armorText
+      .setText(armorLabel(me))
+      .setPosition(width - 16, height - 44)
+      .setVisible(true);
+    const p = ui.items.progress;
+    if (p === null) return;
+    // tiến độ sơ cứu: ngay dưới nhân vật (giữa màn hình)
+    const w = 60;
+    this.bar(g, width / 2 - w / 2, height / 2 + 26, w, 5, p, 0x66bb6a);
   }
 
   private bar(

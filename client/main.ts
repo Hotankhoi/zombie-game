@@ -13,7 +13,8 @@ import { Session } from '@net/session';
 import { TrysteroTransport } from '@net/trystero';
 import type { Transport } from '@net/transport';
 import { selfId as trysteroSelfId } from '@trystero-p2p/nostr';
-import { NetGame } from './net/netGame';
+import { NetGame, isLootRegion } from './net/netGame';
+import { mountVersionNotice } from './net/versionNotice';
 import { HudScene } from './scenes/HudScene';
 import { WorldScene } from './scenes/WorldScene';
 import { mountDebugPanel } from './ui/debugPanel';
@@ -62,7 +63,14 @@ const base: Transport = auto ?? trystero!;
 const conditioned = new ConditionedTransport(base);
 const net = new CountingTransport(conditioned);
 const color = PLAYER_COLORS[hashString(net.selfId) % PLAYER_COLORS.length] ?? 0xffffff;
-const session = new Session(net, { name, color });
+// ?v=N (chỉ bản dev): giả làm bản game giao thức N để thử chặn khác phiên bản
+const fakeVersion =
+  import.meta.env.DEV && url.searchParams.has('v') ? Number(url.searchParams.get('v')) : NaN;
+const session = new Session(net, {
+  name,
+  color,
+  ...(Number.isInteger(fakeVersion) ? { version: fakeVersion } : {}),
+});
 // ---- Thử ngày/đêm/đợt tràn (chỉ máy host dùng): ?ngay=15&gio=0.79 → trận bắt đầu ngày 15 lúc 0.79 của ngày
 // (đợt tràn 1 bắt đầu sau ~7 giây); ?gio=0.9 → đêm ngày 1 ----
 const ngayParam = Math.floor(Number(url.searchParams.get('ngay')));
@@ -74,9 +82,36 @@ const startTick =
     ? tickOfDay(hasNgay ? ngayParam : 1) +
       Math.round(((hasGio ? gioParam : DAY.startAt) * DAY.lengthSec * 1000) / SIM_TICK_MS)
     : undefined;
-const game = new NetGame(net, room, {
+// trận chỉ gồm người cùng phiên bản giao thức (session.game lọc); phòng chờ vẫn thấy mọi người
+// ?kit=1 (chỉ bản dev, `npm run dev`): túi mới có sẵn đồ y tế/đồ ăn để thử dùng đồ (GĐ 3b)
+const starterKit =
+  import.meta.env.DEV && url.searchParams.get('kit') === '1'
+    ? (
+        [
+          { itemId: 'bandage', rarity: 'common', quantity: 3 },
+          { itemId: 'medkit', rarity: 'uncommon', quantity: 1 },
+          { itemId: 'antibiotics', rarity: 'common', quantity: 2 },
+          { itemId: 'water', rarity: 'common', quantity: 2 },
+          { itemId: 'canned_food', rarity: 'common', quantity: 2 },
+        ] as const
+      ).map((s) => ({ ...s }))
+    : undefined;
+// ?den=police (chỉ bản dev): vào trận cạnh rương đồn cảnh sát gần nhất (residential/market/hospital/police/military)
+const denParam = url.searchParams.get('den');
+const devSpawnRegion = import.meta.env.DEV && denParam && isLootRegion(denParam) ? denParam : undefined;
+// ?dondat=15 (chỉ bản dev): đồ trên đất hết hạn sau 15 giây thay vì 5 phút (thử tự dọn)
+const dondat = Number(url.searchParams.get('dondat'));
+const groundExpireSec = import.meta.env.DEV && dondat >= 1 ? Math.floor(dondat) : undefined;
+// ?roido=10 (chỉ bản dev): zombie rơi đồ nhiều gấp 10 lần (thử nhanh)
+const roido = Number(url.searchParams.get('roido'));
+const devDropScale = import.meta.env.DEV && roido > 0 ? roido : undefined;
+const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
+  starterKit,
+  devSpawnRegion,
+  groundExpireSec,
+  devDropScale,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 
@@ -110,9 +145,11 @@ const lobby = mountLobbyPanel(hud, {
   },
 });
 const debug = mountDebugPanel(hud, conditioned);
+const versionNotice = mountVersionNotice(document.body);
 
 function render() {
   lobby.update(session, netError);
+  versionNotice.update(session.updateNotice);
   net.update();
   debug.setStats(netStatsText());
 }
@@ -134,7 +171,7 @@ function netStatsText(): string[] {
     `Điểm host: mình ${game.election.scoreOf(net.selfId) ?? '—'}` +
       (hostId && hostId !== net.selfId ? ` · host ${game.election.scoreOf(hostId) ?? '—'}` : '') +
       ` · chạy thử ${game.simBenchMs.toFixed(1)} ms` +
-      (game.backup ? ` · có bản lưu tick ${game.backup.tick}` : ''),
+      (game.backup.have > 0 ? ` · bản lưu ${game.backup.have}/${game.backup.total} mẩu` : ''),
     `Nhận: ${sync.zombieCount} zombie · snapshot ${sync.received} (muộn ${sync.stale})`,
     `Nội suy ${Math.round(sync.interpDelayMs)} ms · giật ${sync.jitterMs.toFixed(0)} ms`,
     `Dự đoán: lệch ${sync.predictor.lastError.toFixed(3)} ô · chờ ack ${sync.predictor.pendingCount}`,

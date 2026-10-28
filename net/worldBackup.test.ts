@@ -4,7 +4,15 @@ import { testZombie } from '@shared/sim/testMaps';
 import { Btn } from '@shared/sim/input';
 import { SimWorld, type WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
-import { decodeBackup, encodeBackup, mergeBackup, WORLD_BACKUP_MSG } from './worldBackup';
+import {
+  BackupParts,
+  decodeBackup,
+  decodeBackupPart,
+  encodeBackup,
+  encodeBackupPart,
+  mergeBackup,
+  WORLD_BACKUP_MSG,
+} from './worldBackup';
 
 function played(ticks = 120): SimWorld {
   const w = new SimWorld({ seed: 'bk', map: arenaMap(), zombieCount: 30 });
@@ -19,7 +27,7 @@ const zombie = (id: number, x: number, y: number, extra: Partial<ZombieState> = 
   testZombie(id, x, y, extra);
 
 describe('worldBackup', () => {
-  it('mã hóa/giải mã giữ đủ trạng thái (vị trí zombie float32), gói hỏng → null', () => {
+  it('mã hóa/giải mã giữ đủ trạng thái (vị trí zombie sai ≤ 1/64 ô), gói hỏng → null', () => {
     const s = played().state();
     const buf = encodeBackup(s);
     expect(buf[0]).toBe(WORLD_BACKUP_MSG);
@@ -27,26 +35,90 @@ describe('worldBackup', () => {
     expect(d.tick).toBe(s.tick);
     expect(d.rngState).toBe(s.rngState);
     expect(d.nextZombieId).toBe(s.nextZombieId);
-    expect(d.players).toEqual(
-      s.players.map((p) => ({
-        ...p,
-        facing: Math.fround(p.facing),
-        hp: Math.fround(p.hp),
-        stamina: Math.fround(p.stamina),
-        staminaIdle: Math.fround(p.staminaIdle),
-        attackCd: Math.fround(p.attackCd),
-        respawnIn: Math.fround(p.respawnIn),
-      })),
-    );
+    // mọi số của người chơi ghi f32, trừ vị trí (f64)
+    const f32 = (p: (typeof s.players)[number]) =>
+      Object.fromEntries(
+        Object.entries(p).map(([k, v]) => [
+          k,
+          typeof v === 'number' && k !== 'x' && k !== 'y' ? Math.fround(v) : v,
+        ]),
+      );
+    expect(d.players).toEqual(s.players.map(f32));
     expect(d.zombies.map((z) => z.id)).toEqual(s.zombies.map((z) => z.id));
     for (let i = 0; i < s.zombies.length; i++) {
-      expect(d.zombies[i]!.x).toBeCloseTo(s.zombies[i]!.x, 4);
+      expect(Math.abs(d.zombies[i]!.x - s.zombies[i]!.x)).toBeLessThanOrEqual(1 / 64 + 1e-9);
+      expect(Math.abs(d.zombies[i]!.hp - s.zombies[i]!.hp)).toBeLessThanOrEqual(0.05 + 1e-9);
       expect(d.zombies[i]!.mode).toBe(s.zombies[i]!.mode);
       expect(d.zombies[i]!.target).toBe(s.zombies[i]!.target);
     }
     expect(d.openDoors).toEqual(s.openDoors);
     expect(d.flowTargets).toEqual(s.flowTargets);
     for (let n = 1; n < buf.length; n++) expect(decodeBackup(buf.subarray(0, n))).toBeNull();
+  });
+
+  it('chia mẩu: ghép đủ mẩu = y hệt cả gói; mỗi zombie đúng 1 mẩu; phần chung chỉ ở mẩu 0', () => {
+    const s = played().state();
+    s.openDoors = [{ x: 3, y: 4 }];
+    s.brokenWalls = [{ x: 9, y: 9 }];
+    const N = 7;
+    const bufs = Array.from({ length: N }, (_, k) => encodeBackupPart(s, k, N));
+    const whole = decodeBackup(encodeBackup(s))!;
+    const store = new BackupParts();
+    // nhận lộn thứ tự
+    for (const k of [3, 6, 0, 1, 5, 2, 4]) expect(store.receive(bufs[k]!)).toBe(true);
+    expect(store.have).toBe(N);
+    expect(store.assemble()).toEqual(whole);
+    for (let k = 1; k < N; k++) {
+      const p = decodeBackupPart(bufs[k]!)!;
+      expect(p.part).toBe(k);
+      expect(p.state.openDoors).toEqual([]);
+      expect(p.state.brokenWalls).toEqual([]);
+      expect(p.state.zombies.every((z) => z.id % N === k)).toBe(true);
+      expect(p.state.players).toHaveLength(s.players.length);
+    }
+  });
+
+  it('chưa có mẩu 0 → chưa có bản lưu; thiếu mẩu khác → ghép phần đang có; mẩu mới thay mẩu cũ', () => {
+    const s = played().state();
+    const N = 4;
+    const store = new BackupParts();
+    store.receive(encodeBackupPart(s, 1, N));
+    expect(store.assemble()).toBeNull();
+    store.receive(encodeBackupPart(s, 0, N));
+    const got = store.assemble()!;
+    expect(got.zombies.map((z) => z.id)).toEqual(s.zombies.filter((z) => z.id % N <= 1).map((z) => z.id));
+    // mẩu 1 mới hơn (zombie đã chết hết) thay mẩu cũ
+    store.receive(encodeBackupPart({ ...s, zombies: s.zombies.filter((z) => z.id % N !== 1) }, 1, N));
+    expect(store.assemble()!.zombies.every((z) => z.id % N === 0)).toBe(true);
+    // gói dư rác cuối = hỏng
+    const buf = encodeBackupPart(s, 2, N);
+    expect(decodeBackupPart(Uint8Array.from([...buf, 0]))).toBeNull();
+    expect(decodeBackupPart(buf)).not.toBeNull();
+  });
+
+  it('zombie gọn: dự phòng đúng khi rất xa gốc (f32), máu lớn, id lớn, đích riêng, xác đồng đội', () => {
+    const s = played(1).state();
+    const base = s.players[0]!;
+    s.zombies = [
+      zombie(3, base.x + 5.3, base.y - 2.2, { goalX: base.x + 9.1, goalY: base.y, hp: 2.34 }),
+      zombie(4_000_000_000, base.x + 5000.125, base.y + 1, {
+        hp: 99_999.5,
+        turnedFrom: 'a',
+        mode: 'chase',
+        target: 'b',
+      }),
+    ];
+    const d = decodeBackup(encodeBackup(s))!;
+    const [a, b] = d.zombies;
+    expect(a!.id).toBe(3);
+    expect(Math.abs(a!.goalX - (base.x + 9.1))).toBeLessThanOrEqual(1 / 64);
+    expect(a!.hp).toBeCloseTo(2.3, 5);
+    expect(b!.id).toBe(4_000_000_000);
+    expect(b!.x).toBe(Math.fround(base.x + 5000.125));
+    expect(b!.hp).toBe(99_999.5);
+    expect(b!.turnedFrom).toBe('a');
+    expect([b!.mode, b!.target]).toEqual(['chase', 'b']);
+    expect(a!.turnedFrom).toBeNull();
   });
 
   it('200 zombie ≈ 6 KB mỗi 10 giây (~0.6 KB/s)', () => {

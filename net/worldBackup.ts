@@ -1,4 +1,5 @@
 import type { PlayerState } from '@shared/sim/player';
+import { decodeWeapon, weaponCode } from '@shared/sim/guns';
 import { ZOMBIE_KINDS } from '@shared/sim/tuning/zombieKinds';
 import type { Corpse, HordeState, Noise, Pool, WorldState } from '@shared/sim/world';
 import type { ZombieState } from '@shared/sim/zombie';
@@ -8,14 +9,22 @@ import { Reader, Writer } from './gameCodec';
 /**
  * Sao lưu toàn bộ thế giới (AGENTS.md mục 2.1: host gửi snapshot thế giới cho mọi peer ~10s một lần
  * để chuyển host không mất trạng thái). Loại gói riêng (125), cố ý không nằm trong danh sách gói chung
- * của gameCodec (chỗ B thêm gói loot). Chưa gồm rương/túi đồ — B thêm khi ghép loot online.
+ * của gameCodec. Phiên bản 6: cuối mẩu 0 có khối loot (túi + rương = gói 112 đầy đủ của host, `HostLoot.backupBlock`).
  */
 export const WORLD_BACKUP_MSG = 125;
 /**
  * Phiên bản bố cục gói (byte thứ 2). Đổi bố cục thì TĂNG số này: máy bản khác nhận được sẽ bỏ qua bản lưu
  * (chuyển host chỉ dựa vào snapshot) thay vì đọc lệch byte ra trạng thái hỏng.
  */
-export const WORLD_BACKUP_VERSION = 4;
+export const WORLD_BACKUP_VERSION = 10;
+/** Khối loot (gói 112 đầy đủ, net/lootCodec.ts) ở cuối mẩu 0 lớn nhất bấy nhiêu byte (≈ 4096 rương). */
+export const MAX_BACKUP_LOOT = 256 * 1024;
+/**
+ * Bản sao lưu được chia thành bấy nhiêu mẩu, host gửi 1 mẩu/giây cho mọi người (thay vì cả thế giới ~23 KB dồn 1 lần
+ * mỗi 10s → đỉnh băng thông). Mẩu k = zombie có id % N === k + danh sách người chơi; phần chung (cửa, vũng, tường, đợt
+ * tràn…) chỉ nằm ở mẩu 0. Máy nhận ghép lại bằng BackupParts — mỗi zombie vẫn cũ tối đa 10s như khi gửi cả gói.
+ */
+export const BACKUP_PARTS = 10;
 
 const MODES = ['wander', 'investigate', 'chase'] as const;
 /** Các đồng hồ đếm ngược của zombie, theo thứ tự bit trong mặt nạ. */
@@ -29,6 +38,26 @@ const TIMER_NAMES = [
   'roarCd',
 ] as const;
 const TAU = Math.PI * 2;
+/** Vị trí zombie trong bản lưu: i16 theo 1/ZPOS ô so với gốc của gói (±1024 ô). */
+const ZPOS = 32;
+
+/** Số nguyên không âm, 7 bit mỗi byte (bit cao = còn byte sau). */
+function writeVarint(w: Writer, v: number): void {
+  while (v >= 0x80) {
+    w.u8((v & 0x7f) | 0x80);
+    v = Math.floor(v / 128);
+  }
+  w.u8(v);
+}
+function readVarint(r: Reader): number {
+  let v = 0;
+  for (let shift = 1; ; shift *= 128) {
+    const b = r.u8();
+    v += (b & 0x7f) * shift;
+    if (b < 0x80) return v;
+    if (shift > 2 ** 28) throw new RangeError('varint dài');
+  }
+}
 const angleToByte = (a: number) => Math.round((((a % TAU) + TAU) % TAU) * (256 / TAU)) & 255;
 const byteToAngle = (b: number) => (b / 256) * TAU;
 
@@ -38,10 +67,48 @@ function zombieTimers(z: ZombieState): number[] {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+/** Phần chung rỗng — mẩu khác mẩu 0 ghi cái này. */
+const NO_GLOBALS: Pick<
+  WorldState,
+  | 'openDoors'
+  | 'flowTargets'
+  | 'pools'
+  | 'brokenDoors'
+  | 'noises'
+  | 'horde'
+  | 'brokenWalls'
+  | 'wallDamage'
+  | 'corpses'
+> = {
+  openDoors: [],
+  flowTargets: [],
+  pools: [],
+  brokenDoors: [],
+  noises: [],
+  horde: null,
+  brokenWalls: [],
+  wallDamage: [],
+  corpses: [],
+};
+
+/** Cả thế giới trong 1 gói (1 mẩu duy nhất). */
 export function encodeBackup(s: WorldState): Uint8Array {
+  return encodeBackupPart(s, 0, 1);
+}
+
+/** Mẩu `part` trong `parts` mẩu (xem BACKUP_PARTS). */
+export function encodeBackupPart(
+  s: WorldState,
+  part: number,
+  parts: number,
+  loot: Uint8Array | null = null,
+): Uint8Array {
+  const main = part === 0;
   const w = new Writer();
   w.u8(WORLD_BACKUP_MSG);
   w.u8(WORLD_BACKUP_VERSION);
+  w.u8(part);
+  w.u8(parts);
   w.u32(s.tick);
   w.u32(s.rngState);
   w.u32(s.nextZombieId);
@@ -65,26 +132,73 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(p.downedFor);
     w.f32(p.reviveProgress);
     w.f32(p.shield);
+    // bản 7 (GĐ 3b): chỉ số sinh tồn
+    w.f32(p.food);
+    w.f32(p.water);
+    w.f32(p.infection);
+    w.f32(p.maxHp);
+    // bản 8: hồi máu dần + đứng yên (dùng đồ)
+    w.f32(p.healLeft);
+    w.f32(p.healRate);
+    w.f32(p.stillFor);
+    // bản 9: vũ khí + súng
+    w.u8(weaponCode(p.weapon, p.weaponRarity));
+    w.u8(p.magPistol);
+    w.u8(p.magRifle);
+    w.u8(p.reloadGun);
+    w.f32(p.reloadLeft);
+    w.u8(p.reloadAmount);
+    w.f32(p.recoil);
+    w.u8(p.shots);
+    // bản 10: giáp
+    for (const v of [p.armorHead, p.armorBody, p.armorLegs]) w.u8(v);
+    for (const v of [p.durHead, p.durBody, p.durLegs]) w.f32(v);
   }
-  // zombie gọn (~25 byte/con thay vì 61): hướng 1 byte, đồng hồ đếm ngược 1/100 giây và chỉ ghi cái khác 0,
-  // đích đi tới bỏ qua nếu trùng vị trí — đợt tràn 650 con vẫn giữ được ≤ 25 KB/s khi mỗi người nhận 10s/lần
-  w.u16(s.zombies.length);
-  for (const z of s.zombies) {
-    w.u32(z.id);
-    w.u8(Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)));
-    w.f32(z.x);
-    w.f32(z.y);
-    w.u8(angleToByte(z.facing));
-    w.f32(z.hp);
+  // zombie gọn (~18 byte/con, bản 4 là ~32): id ghi chênh lệch (varint), vị trí/đích i16 theo 1/ZPOS ô so với gốc của
+  // gói (xa quá ±1024 ô thì f32), máu u16 theo 0.1, hướng 1 byte, đồng hồ 1/100 giây chỉ ghi cái khác 0, đích bỏ qua
+  // nếu trùng vị trí, mục tiêu/xác đồng đội chỉ ghi khi có. Chỉ dùng khi chuyển host nên sai số 1/64 ô không đáng kể.
+  const zombies = (parts > 1 ? s.zombies.filter((z) => z.id % parts === part) : [...s.zombies]).sort(
+    (a, b) => a.id - b.id,
+  );
+  const ox = Math.floor(s.players[0]?.x ?? 0);
+  const oy = Math.floor(s.players[0]?.y ?? 0);
+  w.i32(ox);
+  w.i32(oy);
+  w.u16(zombies.length);
+  let prevId = 0;
+  for (const z of zombies) {
+    writeVarint(w, z.id - prevId);
+    prevId = z.id;
     const sameGoal = z.goalX === z.x && z.goalY === z.y;
-    w.u8(
-      Math.max(0, MODES.indexOf(z.mode)) |
-        (z.wanderMoving ? 4 : 0) |
-        (z.hidden ? 8 : 0) |
-        (z.horde ? 16 : 0) |
-        (sameGoal ? 32 : 0),
+    const q = [z.x - ox, z.y - oy, ...(sameGoal ? [] : [z.goalX - ox, z.goalY - oy])].map((v) =>
+      Math.round(v * ZPOS),
     );
-    w.u8(z.target === null ? 255 : (slot.get(z.target) ?? 255));
+    const near = q.every((v) => v >= -32768 && v <= 32767);
+    const targetSlot = z.target === null ? undefined : slot.get(z.target);
+    const hpQ = Math.round(z.hp * 10);
+    const hpShort = hpQ >= 0 && hpQ <= 0xffff;
+    const turned = enc.encode(z.turnedFrom ?? '').subarray(0, 255);
+    w.u8(
+      (Math.max(0, ZOMBIE_KINDS.indexOf(z.kind)) & 7) |
+        (Math.max(0, MODES.indexOf(z.mode)) << 3) |
+        (z.wanderMoving ? 32 : 0) |
+        (z.hidden ? 64 : 0) |
+        (z.horde ? 128 : 0),
+    );
+    w.u8(
+      (sameGoal ? 1 : 0) |
+        (targetSlot !== undefined ? 2 : 0) |
+        (near ? 0 : 4) |
+        (turned.length > 0 ? 8 : 0) |
+        (hpShort ? 0 : 16),
+    );
+    const pos = (exact: number, i: number) => (near ? w.i16(q[i]!) : w.f32(exact));
+    pos(z.x, 0);
+    pos(z.y, 1);
+    w.u8(angleToByte(z.facing));
+    if (hpShort) w.u16(hpQ);
+    else w.f32(z.hp);
+    if (targetSlot !== undefined) w.u8(targetSlot);
     const timers = zombieTimers(z);
     let mask = 0;
     timers.forEach((t, i) => {
@@ -93,24 +207,27 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.u8(mask);
     for (const t of timers) if (t > 0) w.u16(Math.min(0xffff, Math.ceil(t * 100)));
     if (!sameGoal) {
-      w.f32(z.goalX);
-      w.f32(z.goalY);
+      pos(z.goalX, 2);
+      pos(z.goalY, 3);
     }
-    const turned = enc.encode(z.turnedFrom ?? '').subarray(0, 255);
-    w.u8(turned.length);
-    w.bytes(turned);
+    if (turned.length > 0) {
+      w.u8(turned.length);
+      w.bytes(turned);
+    }
   }
-  w.u16(s.openDoors.length);
-  for (const d of s.openDoors) {
+  // phần chung của thế giới: chỉ ở mẩu 0 (mẩu khác ghi danh sách rỗng)
+  const g = main ? s : NO_GLOBALS;
+  w.u16(g.openDoors.length);
+  for (const d of g.openDoors) {
     w.i32(d.x);
     w.i32(d.y);
   }
-  w.u8(s.flowTargets.length);
-  for (const t of s.flowTargets) {
+  w.u8(g.flowTargets.length);
+  for (const t of g.flowTargets) {
     w.f64(t.x);
     w.f64(t.y);
   }
-  const pools = s.pools ?? [];
+  const pools = g.pools ?? [];
   w.u32(s.nextPoolId ?? 1);
   w.u16(pools.length);
   for (const p of pools) {
@@ -123,13 +240,13 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(p.armIn);
     w.f32(p.dps);
   }
-  const broken = s.brokenDoors ?? [];
+  const broken = g.brokenDoors ?? [];
   w.u16(broken.length);
   for (const d of broken) {
     w.i32(d.x);
     w.i32(d.y);
   }
-  const noises = s.noises ?? [];
+  const noises = g.noises ?? [];
   w.u16(noises.length);
   for (const n of noises) {
     w.f32(n.x);
@@ -137,23 +254,23 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f32(n.radius);
   }
   // đợt tràn: ít khi có, gửi dạng JSON cho gọn code
-  const horde = enc.encode(s.horde ? JSON.stringify(s.horde) : '');
+  const horde = enc.encode(g.horde ? JSON.stringify(g.horde) : '');
   w.u32(horde.length);
   w.bytes(horde);
-  const walls = s.brokenWalls ?? [];
+  const walls = g.brokenWalls ?? [];
   w.u32(walls.length);
   for (const t of walls) {
     w.i32(t.x);
     w.i32(t.y);
   }
-  const damaged = s.wallDamage ?? [];
+  const damaged = g.wallDamage ?? [];
   w.u16(Math.min(0xffff, damaged.length));
   for (const t of damaged.slice(0, 0xffff)) {
     w.i32(t.x);
     w.i32(t.y);
     w.f32(t.hp);
   }
-  const corpses = s.corpses ?? [];
+  const corpses = g.corpses ?? [];
   w.u8(Math.min(255, corpses.length));
   for (const c of corpses.slice(0, 255)) {
     const id = enc.encode(c.player).subarray(0, 255);
@@ -163,16 +280,30 @@ export function encodeBackup(s: WorldState): Uint8Array {
     w.f64(c.y);
     w.f32(c.turnIn);
   }
+  // khối loot: chỉ mẩu 0 (u32 độ dài, 0 = không có)
+  const block = main && loot && loot.length <= MAX_BACKUP_LOOT ? loot : null;
+  w.u32(block?.length ?? 0);
+  if (block) w.bytes(block);
   return w.done();
 }
 
-/** Giải mã. Gói hỏng → null (dữ liệu từ mạng, không ném lỗi). */
+/** Giải mã 1 gói thành trạng thái (với mẩu ≠ 0: chỉ có người chơi + zombie của mẩu đó). Gói hỏng → null. */
 export function decodeBackup(buf: Uint8Array): WorldState | null {
+  return decodeBackupPart(buf)?.state ?? null;
+}
+
+/** Giải mã kèm số mẩu. Gói hỏng/khác phiên bản → null (dữ liệu từ mạng, không ném lỗi). */
+export function decodeBackupPart(
+  buf: Uint8Array,
+): { part: number; parts: number; state: WorldState; loot: Uint8Array | null } | null {
   if (buf[0] !== WORLD_BACKUP_MSG || buf[1] !== WORLD_BACKUP_VERSION) return null;
   try {
     const r = new Reader(buf);
     r.u8();
     r.u8();
+    const part = r.u8();
+    const parts = r.u8();
+    if (parts < 1 || part >= parts) return null;
     const tick = r.u32();
     const rngState = r.u32();
     const nextZombieId = r.u32();
@@ -193,6 +324,23 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       const downedFor = r.f32();
       const reviveProgress = r.f32();
       const shield = r.f32();
+      const food = r.f32();
+      const water = r.f32();
+      const infection = r.f32();
+      const maxHp = r.f32();
+      const healLeft = r.f32();
+      const healRate = r.f32();
+      const stillFor = r.f32();
+      const { weapon, rarity: weaponRarity } = decodeWeapon(r.u8());
+      const magPistol = r.u8();
+      const magRifle = r.u8();
+      const reloadGun = r.u8();
+      const reloadLeft = r.f32();
+      const reloadAmount = r.u8();
+      const recoil = r.f32();
+      const shots = r.u8();
+      const [armorHead, armorBody, armorLegs] = [r.u8(), r.u8(), r.u8()] as [number, number, number];
+      const [durHead, durBody, durLegs] = [r.f32(), r.f32(), r.f32()] as [number, number, number];
       players.push({
         id,
         x,
@@ -211,27 +359,57 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         dragging: (flags & 4) !== 0,
         flashlight: (flags & 8) !== 0,
         shield,
+        food,
+        water,
+        infection,
+        maxHp,
+        healLeft,
+        healRate,
+        stillFor,
+        weapon,
+        weaponRarity,
+        magPistol,
+        magRifle,
+        reloadGun,
+        reloadLeft,
+        reloadAmount,
+        recoil,
+        shots,
+        armorHead,
+        armorBody,
+        armorLegs,
+        durHead,
+        durBody,
+        durLegs,
       });
     }
     const zombies: ZombieState[] = [];
+    const ox = r.i32();
+    const oy = r.i32();
+    let prevId = 0;
     for (let i = 0, n = r.u16(); i < n; i++) {
-      const id = r.u32();
-      const kind = ZOMBIE_KINDS[r.u8()] ?? 'normal';
-      const x = r.f32();
-      const y = r.f32();
-      const facing = byteToAngle(r.u8());
-      const hp = r.f32();
+      const id = prevId + readVarint(r);
+      prevId = id;
       const flags = r.u8();
-      const mode = MODES[flags & 3] ?? 'wander';
-      const t = r.u8();
+      const more = r.u8();
+      const kind = ZOMBIE_KINDS[flags & 7] ?? 'normal';
+      const mode = MODES[(flags >> 3) & 3] ?? 'wander';
+      const far = (more & 4) !== 0;
+      const posX = () => (far ? r.f32() : ox + r.i16() / ZPOS);
+      const posY = () => (far ? r.f32() : oy + r.i16() / ZPOS);
+      const x = posX();
+      const y = posY();
+      const facing = byteToAngle(r.u8());
+      const hp = more & 16 ? r.f32() : r.u16() / 10;
+      const t = more & 2 ? r.u8() : 255;
       const mask = r.u8();
       const [wanderIn, biteCd, investigateFor, burstFor, spitCd, slamCd, roarCd] = TIMER_NAMES.map((_, i) =>
         mask & (1 << i) ? r.u16() / 100 : 0,
       ) as [number, number, number, number, number, number, number];
-      const sameGoal = (flags & 32) !== 0;
-      const goalX = sameGoal ? x : r.f32();
-      const goalY = sameGoal ? y : r.f32();
-      const turnedFrom = dec.decode(r.bytes(r.u8())) || null;
+      const sameGoal = (more & 1) !== 0;
+      const goalX = sameGoal ? x : posX();
+      const goalY = sameGoal ? y : posY();
+      const turnedFrom = more & 8 ? dec.decode(r.bytes(r.u8())) || null : null;
       const target = mode === 'chase' ? (players[t]?.id ?? null) : null;
       zombies.push({
         id,
@@ -243,15 +421,15 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
         mode: mode === 'chase' && !target ? 'wander' : mode,
         target,
         wanderIn,
-        wanderMoving: (flags & 4) !== 0,
+        wanderMoving: (flags & 32) !== 0,
         biteCd,
         goalX,
         goalY,
         investigateFor,
-        hidden: (flags & 8) !== 0,
+        hidden: (flags & 64) !== 0,
         burstFor,
         spitCd,
-        horde: (flags & 16) !== 0,
+        horde: (flags & 128) !== 0,
         slamCd,
         roarCd,
         turnedFrom,
@@ -292,26 +470,95 @@ export function decodeBackup(buf: Uint8Array): WorldState | null {
       const player = dec.decode(r.bytes(r.u8()));
       corpses.push({ player, x: r.f64(), y: r.f64(), turnIn: r.f32() });
     }
+    const lootLen = r.u32();
+    if (lootLen > MAX_BACKUP_LOOT || (lootLen > 0 && part !== 0)) return null;
+    const loot = lootLen > 0 ? r.bytes(lootLen).slice() : null;
+    // gói phải hết đúng chỗ (gói cụt hay dư rác đều là hỏng)
+    if (r.more()) return null;
     return {
-      tick,
-      rngState,
-      nextZombieId,
-      players,
-      zombies,
-      openDoors,
-      flowTargets,
-      flowDirty,
-      pools,
-      nextPoolId,
-      brokenDoors,
-      noises,
-      horde,
-      corpses,
-      brokenWalls,
-      wallDamage,
+      part,
+      parts,
+      loot,
+      state: {
+        tick,
+        rngState,
+        nextZombieId,
+        players,
+        zombies,
+        openDoors,
+        flowTargets,
+        flowDirty,
+        pools,
+        nextPoolId,
+        brokenDoors,
+        noises,
+        horde,
+        corpses,
+        brokenWalls,
+        wallDamage,
+      },
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Máy nhận ghép các mẩu sao lưu (xem BACKUP_PARTS). Mỗi mẩu mới thay mẩu cùng số; host đổi số mẩu thì làm lại từ đầu.
+ * assemble(): phần chung + người chơi + tick theo mẩu 0, zombie gộp từ mọi mẩu đang có. Chưa có mẩu 0 → null.
+ * Thiếu mẩu khác (mới vào < 10s) → thiếu zombie của mẩu đó, giống như trước đây chưa nhận được bản lưu.
+ */
+export class BackupParts {
+  private parts: (WorldState | null)[] = [];
+  private loot: Uint8Array | null = null;
+
+  /** Khối loot của mẩu 0 vừa nhận (gói 112 đầy đủ) — lấy 1 lần rồi xóa. */
+  takeLoot(): Uint8Array | null {
+    const l = this.loot;
+    this.loot = null;
+    return l;
+  }
+
+  /** Nhận 1 gói 125. Trả về false nếu gói hỏng/khác phiên bản. */
+  receive(buf: Uint8Array): boolean {
+    const d = decodeBackupPart(buf);
+    if (!d) return false;
+    if (d.loot) this.loot = d.loot;
+    if (this.parts.length !== d.parts) this.parts = new Array<WorldState | null>(d.parts).fill(null);
+    this.parts[d.part] = d.state;
+    return true;
+  }
+
+  /** Số mẩu đang có / tổng số mẩu (bảng F3). */
+  get have(): number {
+    return this.parts.filter((p) => p !== null).length;
+  }
+  get total(): number {
+    return this.parts.length;
+  }
+
+  clear(): void {
+    this.parts = [];
+    this.loot = null;
+  }
+
+  assemble(): WorldState | null {
+    const base = this.parts[0];
+    if (!base) return null;
+    const seen = new Set<number>();
+    const zombies: ZombieState[] = [];
+    let nextZombieId = base.nextZombieId;
+    for (const p of this.parts) {
+      if (!p) continue;
+      nextZombieId = Math.max(nextZombieId, p.nextZombieId);
+      for (const z of p.zombies) {
+        if (seen.has(z.id)) continue;
+        seen.add(z.id);
+        zombies.push(z);
+      }
+    }
+    zombies.sort((a, b) => a.id - b.id);
+    return { ...base, zombies, nextZombieId };
   }
 }
 

@@ -1,3 +1,4 @@
+import { GroundLayer } from '../loot/groundLayer';
 import Phaser from 'phaser';
 import { KNIFE } from '@shared/data/melee';
 import { PLAYER } from '@shared/data/player';
@@ -5,7 +6,8 @@ import { ZOMBIE_NORMAL } from '@shared/data/zombies';
 import { CHUNK_SIZE, TILE_SIZE, WorldMap, type Chunk } from '@shared/mapgen/world';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
 import { Btn, radToAim, type PlayerInput } from '@shared/sim/input';
-import { isAlive, isDowned, type PlayerState } from '@shared/sim/player';
+import { isAlive, isDowned, isUp, type PlayerState } from '@shared/sim/player';
+import { meleeOf, type WeaponId } from '@shared/sim/guns';
 import { hasLineOfSight } from '@shared/sim/collision';
 import { dayClock } from '@shared/sim/dayNight';
 import { PARTY } from '@shared/sim/tuning/party';
@@ -16,6 +18,9 @@ import type { Session } from '@net/session';
 import type { RemotePlayerView } from '@net/clientSync';
 import type { NetGame } from '../net/netGame';
 import { MapRenderer, preloadMapTiles } from '../render/mapRenderer';
+import { ChestLayer, preloadChestSprites } from '../loot/chestLayer';
+import { LootUi } from '../loot/lootUi';
+import { canKeepChestOpen } from '../loot/nearChest';
 
 /** 1 ô mô phỏng = 16 px = 1 tile Kenney (TILE_SIZE của map B). Tọa độ sim tính theo ô. */
 export { TILE_SIZE };
@@ -46,12 +51,15 @@ export interface WorldSceneData {
 
 /** Hiệu ứng tạm thời vẽ bằng code (thay bằng sprite/particle sau). */
 interface Fx {
-  kind: 'swing' | 'hit' | 'blood';
+  kind: 'swing' | 'hit' | 'blood' | 'tracer' | 'muzzle';
   x: number;
   y: number;
   facing: number;
   born: number;
   life: number;
+  /** tia đạn: dài bao nhiêu ô; vết chém: tầm + nửa góc quạt (theo vũ khí). */
+  dist?: number;
+  arc?: number;
 }
 
 /**
@@ -67,6 +75,11 @@ export class WorldScene extends Phaser.Scene {
 
   private worldMap!: WorldMap;
   private mapRenderer!: MapRenderer;
+  /** Rương (phần 2B loot): thùng trong nhà, gợi ý F khi tới gần. */
+  ground!: GroundLayer;
+  chests!: ChestLayer;
+  /** Panel túi (I) / rương (F); mở thì khóa điều khiển nhân vật. */
+  lootUi!: LootUi;
   /** Vùng chunk đang vẽ "x0,y0,x1,y1" — chỉ sync renderer khi đổi. */
   private chunkRange = '';
   private acc = 0;
@@ -90,14 +103,20 @@ export class WorldScene extends Phaser.Scene {
   >;
   /** R cứu, G kéo người gục (GĐ 2c) — đăng ký riêng, không đụng phím E. */
   private partyKeys!: Record<'R' | 'G', Phaser.Input.Keyboard.Key>;
-  /** F bật/tắt đèn pin (GĐ 4). */
+  /** F bật/tắt đèn pin (GĐ 4); đứng cạnh rương thì F mở rương thay vì đèn pin. */
   private lightKey!: Phaser.Input.Keyboard.Key;
+  /** Lần nhấn F này đã dùng để mở/đóng rương → không tính là bật đèn pin tới khi nhả phím. */
+  private fForChest = false;
   /** Vũng độc/axit (vẽ lại mỗi frame). */
   private gfxPools!: Phaser.GameObjects.Graphics;
   /** Bấm nhanh giữa 2 tick vẫn được tính. */
   private attackQueued = false;
+  /** Chuột đang giữ từ lúc panel túi/rương còn mở (vd bấm nền để đóng) → không tính là chém tới khi nhả. */
+  private mouseHeldFromPanel = false;
   private interactQueued = false;
   private myAim = 0;
+  /** Lần đổi vũ khí bằng lăn chuột gần nhất (ms) — 1 nấc lăn có thể bắn nhiều sự kiện. */
+  private wheelAt = -Infinity;
 
   constructor() {
     super('world');
@@ -112,6 +131,7 @@ export class WorldScene extends Phaser.Scene {
 
   preload() {
     preloadMapTiles(this);
+    preloadChestSprites(this);
   }
 
   setMe(name: string, color: number) {
@@ -137,6 +157,12 @@ export class WorldScene extends Phaser.Scene {
     this.gfxPools = this.add.graphics().setDepth(2.5);
     this.gfxDyn = this.add.graphics().setDepth(4);
     this.makeZombieTextures();
+    this.chests = new ChestLayer(this, this.net.loot, ZOOM);
+    this.lootUi = new LootUi(
+      document.getElementById('hud') ?? document.body,
+      this.net.loot,
+      (id) => this.session.peers.get(id)?.name ?? 'đồng đội',
+    );
 
     const cam = this.cameras.main;
     cam.setZoom(ZOOM);
@@ -159,6 +185,53 @@ export class WorldScene extends Phaser.Scene {
     });
     this.partyKeys = kb.addKeys('R,G', false) as typeof this.partyKeys;
     this.lightKey = kb.addKey('F', false);
+    this.lightKey.on('down', () => {
+      if (isTyping()) return;
+      const me = this.me();
+      if (this.lootUi.chest) {
+        this.fForChest = true;
+        this.lootUi.closeChest();
+      } else if (this.chests.nearest && me && isUp(me)) {
+        this.fForChest = true;
+        void this.lootUi.openChest(this.chests.nearest);
+      }
+    });
+    this.lightKey.on('up', () => (this.fForChest = false));
+    kb.addKey('I', false).on('down', () => {
+      if (!isTyping()) this.lootUi.toggleInventory();
+    });
+    // GĐ 3b: X / lăn chuột đổi vũ khí, Q nạp đạn (R đã là cứu người)
+    kb.addKey('X', false).on('down', () => {
+      if (!isTyping() && !this.lootUi.open) this.lootUi.weapons.cycle(this.me() ?? null, 1);
+    });
+    kb.addKey('Q', false).on('down', () => {
+      if (!isTyping()) this.lootUi.weapons.reload(this.me() ?? null);
+    });
+    this.input.on('wheel', (_p: unknown, _o: unknown, _dx: number, dy: number) => {
+      const now = this.time.now;
+      if (this.lootUi.open || dy === 0 || now - this.wheelAt < 200) return;
+      this.wheelAt = now;
+      if (!isTyping()) this.lootUi.hotbar.cycle(dy > 0 ? 1 : -1);
+    });
+    // GĐ 3b: dùng nhanh 1 băng gạc · 2 sơ cứu · 3 kháng sinh · 4 ăn/uống
+    (['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE'] as const).forEach((name, i) =>
+      kb.addKey(name, false).on('down', () => {
+        if (!isTyping() && !this.lootUi.open) void this.lootUi.hotbar.select(i);
+      }),
+    );
+    this.ground = new GroundLayer(
+      this,
+      this.net.loot,
+      () => this.lootUi.open,
+      (s) => this.lootUi.toast(s),
+    );
+    kb.addKey('V', false).on('down', () => {
+      if (!isTyping()) void this.ground.pickup();
+    });
+    this.events.once('shutdown', () => {
+      this.ground.destroy();
+      this.lootUi.hotbar.destroy();
+    });
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonDown()) this.attackQueued = true;
@@ -191,12 +264,30 @@ export class WorldScene extends Phaser.Scene {
 
   private stepSim() {
     const input = this.readInput();
-    // vết chém của mình vẽ ngay (dự đoán), không chờ host
-    if (this.net.tick(input)) {
-      const me = this.me();
-      if (me)
-        this.fx.push({ kind: 'swing', x: me.x, y: me.y, facing: me.facing, born: this.time.now, life: 140 });
-    }
+    if (input.buttons & Btn.Attack) this.lootUi.weapons.onFire(this.me() ?? null, this.time.now);
+    // vết chém / tia đạn của mình vẽ ngay (dự đoán), không chờ host
+    const fx = this.net.tick(input);
+    const me = this.me();
+    if (fx?.kind === 'swing' && me) {
+      const w = meleeOf(me.weapon, me.weaponRarity);
+      this.fx.push({
+        kind: 'swing',
+        x: me.x,
+        y: me.y,
+        facing: me.facing,
+        born: this.time.now,
+        life: 140,
+        dist: w.range,
+        arc: w.arcDeg,
+      });
+    } else if (fx?.kind === 'shot') this.pushShot(fx.x, fx.y, fx.angle, fx.dist);
+  }
+
+  /** Tia đạn vàng mờ dần + chớp nòng (GĐ 3b, vẽ tạm bằng code). */
+  private pushShot(x: number, y: number, angle: number, dist: number) {
+    const now = this.time.now;
+    this.fx.push({ kind: 'tracer', x, y, facing: angle, born: now, life: 120, dist });
+    this.fx.push({ kind: 'muzzle', x, y, facing: angle, born: now, life: 60 });
   }
 
   /** Vẽ các chunk quanh camera (thêm 1 vòng chunk dự phòng để đi nhanh không thấy mép trống). */
@@ -215,11 +306,16 @@ export class WorldScene extends Phaser.Scene {
       for (let cx = x0; cx <= x1; cx++) chunks.push(this.worldMap.getChunk(cx, cy));
     }
     this.mapRenderer.sync(chunks);
+    this.chests.sync(chunks);
   }
 
   private readInput(): PlayerInput {
     const k = this.keys;
-    const typing = isTyping();
+    // đang gõ chữ hoặc đang mở panel túi/rương: nhân vật đứng yên, không chém/mở cửa (thế giới vẫn chạy)
+    const typing = isTyping() || this.lootUi.open;
+    const mouseDown = this.input.activePointer.leftButtonDown();
+    if (this.lootUi.open) this.mouseHeldFromPanel = mouseDown;
+    else if (!mouseDown) this.mouseHeldFromPanel = false;
     let mx = 0;
     let my = 0;
     let buttons = 0;
@@ -228,12 +324,12 @@ export class WorldScene extends Phaser.Scene {
       my = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
       if (k.SHIFT.isDown) buttons |= Btn.Sprint;
       if (k.E.isDown || this.interactQueued) buttons |= Btn.Interact;
-      if (this.input.activePointer.leftButtonDown() || this.attackQueued) buttons |= Btn.Attack;
+      if ((mouseDown && !this.mouseHeldFromPanel) || this.attackQueued) buttons |= Btn.Attack;
     }
     if (!typing) {
       if (this.partyKeys.R.isDown) buttons |= Btn.Revive;
       if (this.partyKeys.G.isDown) buttons |= Btn.Drag;
-      if (this.lightKey.isDown) buttons |= Btn.Flashlight;
+      if (this.lightKey.isDown && !this.fForChest) buttons |= Btn.Flashlight;
     }
     this.attackQueued = false;
     this.interactQueued = false;
@@ -241,7 +337,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateAim() {
-    if (!this.me()) return;
+    if (!this.me() || this.lootUi.open) return;
     const pos = this.myDrawPos(this.acc / SIM_TICK_MS);
     const ptr = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
     this.myAim = radToAim(Math.atan2(ptr.y - pos.y * TILE_SIZE, ptr.x - pos.x * TILE_SIZE));
@@ -271,6 +367,10 @@ export class WorldScene extends Phaser.Scene {
       case 'respawn':
         this.shieldUntil.set(e.player, now + PARTY.respawnShieldSec * 1000);
         break;
+      case 'shot':
+        // tia đạn của đồng đội (của mình đã vẽ lúc dự đoán)
+        if (e.player !== self) this.pushShot(e.x, e.y, e.angle, e.dist);
+        break;
       case 'door':
         break;
     }
@@ -288,7 +388,14 @@ export class WorldScene extends Phaser.Scene {
     this.drawPools();
 
     const { zombies, others } = this.net.sync.sample();
+    this.lootUi.items.update(this.me() ?? null, others);
     const seen = this.zombieSeer(others, alpha);
+    const me0 = this.me();
+    if (me0) this.lootUi.hotbar.observeWeapon(me0.weapon, me0.weaponRarity);
+    const up = me0 && isUp(me0) ? me0 : null;
+    this.ground?.update(me0 ?? null, seen);
+    this.chests.update(up, seen, this.lootUi.open);
+    this.autoCloseLoot(up, seen);
     let shown = 0;
     for (const z of zombies) {
       if (!seen(z)) continue; // sau tường/cửa đóng: không vẽ (lớp tối không che được hết lúc ban ngày)
@@ -314,14 +421,14 @@ export class WorldScene extends Phaser.Scene {
     for (const p of others) {
       if (!p.alive) continue;
       if (p.downedFor > 0) this.drawDowned(g, p.x * T, p.y * T, this.colorOf(p.id), p.reviveProgress);
-      else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id));
+      else this.drawPlayer(g, p.x * T, p.y * T, p.facing, this.colorOf(p.id), p.weapon);
       this.drawShield(g, p.x * T, p.y * T, p.id, now);
     }
     const me = this.me();
     const pos = this.myDrawPos(alpha);
     if (me && isDowned(me)) this.drawDowned(g, pos.x * T, pos.y * T, this.myColor, me.reviveProgress);
     else if (me && isAlive(me))
-      this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor);
+      this.drawPlayer(g, pos.x * T, pos.y * T, (this.myAim / 256) * Math.PI * 2, this.myColor, me.weapon);
     if (me && isAlive(me)) this.drawShield(g, pos.x * T, pos.y * T, this.session.selfId, now);
 
     this.fx = this.fx.filter((f) => now - f.born < f.life);
@@ -355,6 +462,17 @@ export class WorldScene extends Phaser.Scene {
       z.y * T > view.bottom + T ||
       hasLineOfSight(eye, z, blocked) ||
       torches.some((t) => seesPoint(t, t.facing, t.halfAngle, t.range, z, blocked));
+  }
+
+  /** Gục/chết → đóng mọi panel; đi xa rương (> tầm với) hoặc bị tường/cửa đóng che → đóng panel rương. */
+  private autoCloseLoot(me: Vec2 | null, seen: (p: Vec2) => boolean) {
+    if (!this.lootUi.open) return;
+    if (!me) {
+      if (this.me()) this.lootUi.closeAll();
+      return;
+    }
+    const c = this.lootUi.chest;
+    if (c && !canKeepChestOpen(c, me, seen)) this.lootUi.closeChest();
   }
 
   /** Chỗ vẽ nhân vật mình: nội suy giữa 2 tick dự đoán + độ lệch làm mượt sau khi host sửa. */
@@ -487,7 +605,14 @@ export class WorldScene extends Phaser.Scene {
     g.lineStyle(1.5, 0x80d8ff, 0.4 + 0.5 * pulse).strokeCircle(x, y, TILE_SIZE * 0.6);
   }
 
-  private drawPlayer(g: Phaser.GameObjects.Graphics, x: number, y: number, facing: number, color: number) {
+  private drawPlayer(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    facing: number,
+    color: number,
+    weapon: WeaponId = 'knife',
+  ) {
     const r = PLAYER.radius * TILE_SIZE;
     g.fillStyle(color).fillCircle(x, y, r);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(
@@ -496,15 +621,39 @@ export class WorldScene extends Phaser.Scene {
       x + Math.cos(facing) * (r + 4),
       y + Math.sin(facing) * (r + 4),
     );
+    // vũ khí trên tay (TẠM vẽ bằng code): súng = nòng đen dài, gậy = thanh nâu
+    if (weapon === 'fists' || weapon === 'knife') return;
+    const len = weapon === 'rifle' ? 9 : weapon === 'pistol' ? 6 : 7;
+    const col = weapon === 'bat' ? 0x8d6e63 : 0x212121;
+    const sx = x + Math.cos(facing + 0.6) * r * 0.6;
+    const sy = y + Math.sin(facing + 0.6) * r * 0.6;
+    g.lineStyle(weapon === 'bat' ? 2 : 1.6, col, 1).lineBetween(
+      sx,
+      sy,
+      sx + Math.cos(facing) * len,
+      sy + Math.sin(facing) * len,
+    );
   }
 
   private drawFx(g: Phaser.GameObjects.Graphics, f: Fx, t: number) {
     const T = TILE_SIZE;
     const x = f.x * T;
     const y = f.y * T;
-    if (f.kind === 'swing') {
-      const half = ((KNIFE.arcDeg / 2) * Math.PI) / 180;
-      const reach = (PLAYER.radius + KNIFE.range) * T;
+    if (f.kind === 'tracer') {
+      const d = (f.dist ?? 0) * T;
+      g.lineStyle(1, 0xffe082, 0.9 * (1 - t)).lineBetween(
+        x,
+        y,
+        x + Math.cos(f.facing) * d,
+        y + Math.sin(f.facing) * d,
+      );
+    } else if (f.kind === 'muzzle') {
+      const mx = x + Math.cos(f.facing) * (PLAYER.radius * T + 8);
+      const my = y + Math.sin(f.facing) * (PLAYER.radius * T + 8);
+      g.fillStyle(0xfff59d, 0.9 * (1 - t)).fillCircle(mx, my, 2.5 + 1.5 * (1 - t));
+    } else if (f.kind === 'swing') {
+      const half = (((f.arc ?? KNIFE.arcDeg) / 2) * Math.PI) / 180;
+      const reach = (PLAYER.radius + (f.dist ?? KNIFE.range)) * T;
       g.lineStyle(2, 0xffffff, 0.7 * (1 - t));
       g.beginPath();
       g.arc(x, y, reach * (0.7 + 0.3 * t), f.facing - half, f.facing + half);

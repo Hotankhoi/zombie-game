@@ -1,4 +1,4 @@
-import { KNIFE } from '@shared/data/melee';
+import { GUNS } from '@shared/data/guns';
 import { PLAYER } from '@shared/data/player';
 import { ZOMBIE_NORMAL as Z } from '@shared/data/zombies';
 import { SIM_TICK_MS, type PeerId, type Vec2 } from '@shared/types';
@@ -16,8 +16,15 @@ import { BOSS, HORDE } from './tuning/horde';
 import { DAY, NOISE } from './tuning/night';
 import { PARTY } from './tuning/party';
 import { KIND, SPECIAL, ZOMBIE_KINDS, breaksDoors, type ZombieKind } from './tuning/zombieKinds';
+import { applyUse, checkUse, type UseError } from './items';
+import { fireGun, isGun, magOf, meleeOf, startReload, type WeaponId } from './guns';
+import { absorb, infectionFactor, wearArmor } from './armor';
+import type { GunId } from '@shared/data/guns';
+import { infectFromBite, respawnSurvival } from './survival';
+import type { ItemId, Rarity } from '@shared/data/items';
 import { countdown } from './timer';
 import { createZombie, hearNoise, radiusOf, stepZombie, type ZombieState } from './zombie';
+import { rollZombieDrop, type ZombieDrop } from './zombieDrops';
 
 /** Vũng nguy hiểm (GĐ 4): độc của zombie phình nổ, axit của zombie phun. Người đứng trong mất máu. */
 export interface Pool {
@@ -91,6 +98,8 @@ export type SimEvent =
     }
   | { type: 'bite'; zombie: number; player: PeerId; x: number; y: number }
   | { type: 'door'; x: number; y: number; open: boolean }
+  /** Bắn 1 phát (GĐ 3b): tia từ (x, y) theo `angle`, dài `dist` ô; `hit` = trúng zombie. */
+  | { type: 'shot'; player: PeerId; x: number; y: number; angle: number; dist: number; hit: boolean }
   | { type: 'death'; player: PeerId }
   | { type: 'respawn'; player: PeerId };
 
@@ -129,8 +138,12 @@ export interface SimWorldOptions {
   zombieCount?: number;
   /** Dựng tiếp từ trạng thái có sẵn thay vì thế giới mới (seed khi đó không dùng cho RNG). */
   restore?: WorldState;
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
+  dropChanceScale?: number;
 }
 
+/** Bắn súng: lùi vị trí zombie tối đa bấy nhiêu tick (500 ms) về lúc người bắn nhìn thấy (bù trễ). */
+export const SHOT_REWIND_TICKS = 10;
 /** Tính lại flow field mỗi bao nhiêu tick (10 tick = 0.5s). */
 const FLOW_EVERY = 10;
 /** Số lần thử tìm chỗ sinh zombie cho mỗi con còn thiếu, trong một tick. */
@@ -165,6 +178,11 @@ export class SimWorld {
   private wallHp = new Map<number, number>();
   /** Ô map vừa đổi trong tick (tường vỡ) — host gửi cho mọi người dạng danh sách ô (GameMsg.MapDelta). */
   mapChanges: Vec2[] = [];
+  /** Giáp vừa vỡ trong tick (GĐ 3b) — host trừ 1 món đó khỏi túi người chơi. */
+  armorBreaks: { player: PeerId; item: ItemId; rarity: Rarity }[] = [];
+  /** Zombie chết trong tick rơi đồ (host đặt xuống đất — hệ thả/nhặt của B). */
+  zombieDrops: ZombieDrop[] = [];
+  private dropChanceScale: number;
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
@@ -201,6 +219,7 @@ export class SimWorld {
   constructor(opts: SimWorldOptions) {
     this.map = opts.map;
     this.zombieCount = opts.zombieCount ?? Z.population;
+    this.dropChanceScale = opts.dropChanceScale ?? 1;
     const s = opts.restore;
     if (!s) {
       this.rng = new Rng(opts.seed);
@@ -267,6 +286,27 @@ export class SimWorld {
     if (radius > 0) this.noises.push({ x, y, radius });
   }
 
+  /** Dùng đồ (GĐ 3b): kiểm tra trước khi host trừ đồ. `target` = PeerId đồng đội (băng gạc) hoặc null = mình. */
+  checkItemUse(user: PeerId, itemId: ItemId, target: PeerId | null): UseError | null {
+    const u = this.players.get(user);
+    if (!u) return 'player_not_up';
+    const t = target === null || target === user ? null : (this.players.get(target) ?? null);
+    if (target !== null && target !== user && !t) return 'no_target';
+    return checkUse(u, t, itemId, this.blocked);
+  }
+
+  /** Áp hiệu ứng món đã trừ khỏi túi (host gọi khi giao dịch đã được mọi người xác nhận). */
+  applyItemUse(user: PeerId, itemId: ItemId, rarity: Rarity, target: PeerId | null): void {
+    const u = this.players.get(user);
+    if (!u) return;
+    const t = target === null || target === user ? null : (this.players.get(target) ?? null);
+    if (target !== null && target !== user && !t) return;
+    applyUse(u, t, itemId, rarity, (p, hp) => {
+      this.standUp(p);
+      p.hp = Math.min(p.maxHp, hp);
+    });
+  }
+
   addPlayer(id: PeerId): PlayerState {
     let p = this.players.get(id);
     if (!p) {
@@ -290,6 +330,8 @@ export class SimWorld {
   step(inputs: ReadonlyMap<PeerId, PlayerInput>): void {
     this.events = [];
     this.mapChanges = [];
+    this.armorBreaks = [];
+    this.zombieDrops = [];
     const players = this.sortedPlayers();
 
     for (const p of players) {
@@ -339,6 +381,7 @@ export class SimWorld {
     this.separate(alive);
     this.directHorde(alive);
     this.refillZombies();
+    this.recordHistory();
     this.tick++;
   }
 
@@ -358,8 +401,12 @@ export class SimWorld {
   /** Bỏ zombie đã chết; zombie phình chết thì nổ vũng độc + tiếng nổ. */
   private reapZombies(): void {
     if (!this.zombies.some((z) => z.hp <= 0)) return;
+    const night = dayClock(this.tick).night;
     for (const z of this.zombies) {
-      if (z.hp > 0 || z.kind !== 'bloater') continue;
+      if (z.hp > 0) continue;
+      const items = rollZombieDrop(z, this.tick, night, this.dropChanceScale);
+      if (items.length > 0) this.zombieDrops.push({ x: z.x, y: z.y, items });
+      if (z.kind !== 'bloater') continue;
       const b = SPECIAL.bloaterPool;
       this.addPool('poison', z.x, z.y, b.radius, b.ttlSec, 0, b.dps);
       this.emitNoise(z.x, z.y, NOISE.bloaterBurst);
@@ -394,7 +441,7 @@ export class SimWorld {
       if (pool.armIn > 0) continue;
       for (const p of players) {
         if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - pool.x, p.y - pool.y) > pool.radius) continue;
-        p.hp = Math.max(0, p.hp - pool.dps * DT);
+        p.hp = Math.max(0, p.hp - this.hurt(p, pool.dps * DT, pool.kind === 'acid'));
         if (p.hp === 0) this.down(p);
       }
     }
@@ -406,7 +453,7 @@ export class SimWorld {
     const reach = radiusOf(z) + BOSS.slamRange;
     for (const p of this.sortedPlayers()) {
       if (!isUp(p) || p.shield > 0 || Math.hypot(p.x - z.x, p.y - z.y) > reach) continue;
-      p.hp = Math.max(0, p.hp - BOSS.slamDamage);
+      p.hp = Math.max(0, p.hp - this.hurt(p, BOSS.slamDamage));
       this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
       if (p.hp === 0) this.down(p);
     }
@@ -580,10 +627,12 @@ export class SimWorld {
   /** Phần "theo input" của người chơi: đi/chạy, mở cửa, chém. Giống hệt Predictor phía client. */
   private applyInput(p: PlayerState, input: PlayerInput): void {
     stepPlayer(p, input, DT, this.blocked);
+    // đói/khát cạn làm hết máu → gục như bị cắn
+    if (isUp(p) && p.hp <= 0) this.down(p);
     if (isAlive(p)) {
-      if (hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
+      if (isUp(p) && hasBtn(input, Btn.Interact) && (p.prevButtons & Btn.Interact) === 0) this.toggleDoor(p);
       // gục thì không chém được (luồng E ở trên giữ nguyên — B đang nối loot vào đó)
-      if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p);
+      if (hasBtn(input, Btn.Attack) && isUp(p)) this.attack(p, input);
     }
     p.prevButtons = input.buttons;
   }
@@ -641,7 +690,7 @@ export class SimWorld {
   private standUp(p: PlayerState): void {
     p.downedFor = 0;
     p.reviveProgress = 0;
-    p.hp = PARTY.reviveHp;
+    p.hp = Math.min(PARTY.reviveHp, p.maxHp);
   }
 
   /** Hết máu: còn đồng đội đứng được thì gục (chờ cứu), không thì chết hẳn. */
@@ -656,6 +705,7 @@ export class SimWorld {
     p.downedFor = PARTY.downedSec;
     p.reviveProgress = 0;
     p.sprinting = false;
+    p.healLeft = p.healRate = 0;
   }
 
   /** Xác đủ giờ → zombie đứng dậy tại chỗ, mang id người chơi (GĐ 6). */
@@ -706,7 +756,11 @@ export class SimWorld {
       parts.push(
         `p${p.id}:${f(p.x)},${f(p.y)},${f(p.facing)},${f(p.hp)},${f(p.stamina)},${b(p.exhausted)},` +
           `${f(p.staminaIdle)},${b(p.sprinting)},${f(p.attackCd)},${p.prevButtons},${f(p.respawnIn)},` +
-          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)}`,
+          `${f(p.downedFor)},${f(p.reviveProgress)},${b(p.dragging)},${b(p.flashlight)},${f(p.shield)},` +
+          `${f(p.food)},${f(p.water)},${f(p.infection)},${f(p.maxHp)},${f(p.healLeft)},${f(p.healRate)},` +
+          `${f(p.stillFor)},${p.weapon},${p.weaponRarity},${p.magPistol},${p.magRifle},${p.reloadGun},` +
+          `${f(p.reloadLeft)},${p.reloadAmount},${f(p.recoil)},${p.shots},${p.armorHead},${p.armorBody},` +
+          `${p.armorLegs},${f(p.durHead)},${f(p.durBody)},${f(p.durLegs)}`,
       );
     }
     for (const z of this.zombies) {
@@ -805,7 +859,9 @@ export class SimWorld {
     p.x = at.x;
     p.y = at.y;
     p.shield = PARTY.respawnShieldSec;
-    p.hp = PLAYER.maxHp;
+    respawnSurvival(p);
+    p.hp = p.maxHp;
+    p.healLeft = p.healRate = 0;
     p.stamina = PLAYER.maxStamina;
     p.exhausted = false;
     p.staminaIdle = 0;
@@ -837,8 +893,61 @@ export class SimWorld {
     return this.zombies.some((z) => z.hp > 0 && circleOverlapsTile(z.x, z.y, radiusOf(z), d.x, d.y));
   }
 
-  private attack(p: PlayerState): void {
-    const res = meleeAttack(p, KNIFE, this.zombies, this.blocked);
+  /**
+   * Vị trí zombie ở vài tick trước (bù trễ khi bắn súng): chỉ ghi khi có người cầm súng, giữ SHOT_REWIND_TICKS tick.
+   * Không nằm trong trạng thái/hash: chỉ phụ thuộc chuỗi tick đã chạy (host dựng lại sau đổi host thì bắt đầu trống).
+   */
+  private history: { tick: number; pos: Map<number, { x: number; y: number }> }[] = [];
+
+  private recordHistory(): void {
+    if (![...this.players.values()].some((p) => isGun(p.weapon))) {
+      this.history.length = 0;
+      return;
+    }
+    const pos = new Map<number, { x: number; y: number }>();
+    for (const z of this.zombies) pos.set(z.id, { x: z.x, y: z.y });
+    // = trạng thái sau tick này, snapshot gắn nhãn tick + 1 (tick tăng ngay sau đây)
+    this.history.push({ tick: this.tick + 1, pos });
+    if (this.history.length > SHOT_REWIND_TICKS) this.history.shift();
+  }
+
+  /**
+   * Cầm vũ khí (GĐ 3b, host đã kiểm tra có món trong túi). Đang nạp súng khác thì vẫn nạp tiếp: đạn đã trừ khỏi túi
+   * vào băng súng đó khi hết giờ.
+   */
+  equip(id: PeerId, weapon: WeaponId, rarity: Rarity): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.weapon = weapon;
+    p.weaponRarity = rarity;
+  }
+
+  /**
+   * Nạp đạn (GĐ 3b): súng đang cầm + số viên còn thiếu, hoặc lỗi. Host trừ đúng số đó (hoặc ít hơn nếu túi ít đạn),
+   * rồi khi giao dịch đã xác nhận gọi `beginReload`.
+   */
+  reloadNeed(
+    id: PeerId,
+  ): { gun: GunId; need: number } | { error: 'no_gun' | 'mag_full' | 'reloading' | 'player_not_up' } {
+    const p = this.players.get(id);
+    if (!p || !isUp(p)) return { error: 'player_not_up' };
+    if (!isGun(p.weapon)) return { error: 'no_gun' };
+    if (p.reloadLeft > 0) return { error: 'reloading' };
+    const need = GUNS[p.weapon].magazine - magOf(p, p.weapon);
+    return need > 0 ? { gun: p.weapon, need } : { error: 'mag_full' };
+  }
+
+  beginReload(id: PeerId, gun: GunId, amount: number): void {
+    const p = this.players.get(id);
+    if (p && amount > 0) startReload(p, gun, amount);
+  }
+
+  private attack(p: PlayerState, input: PlayerInput): void {
+    if (isGun(p.weapon)) {
+      this.shoot(p, p.weapon, input);
+      return;
+    }
+    const res = meleeAttack(p, meleeOf(p.weapon, p.weaponRarity), this.zombies, this.blocked);
     if (!res) return;
     this.events.push({ type: 'swing', player: p.id, x: p.x, y: p.y, facing: p.facing });
     if (!res.hit) return;
@@ -858,6 +967,56 @@ export class SimWorld {
     });
   }
 
+  /** Bắn súng: trúng do mô phỏng quyết, vị trí zombie lùi về lúc người bắn nhìn thấy (`input.view`). Súng ồn. */
+  private shoot(p: PlayerState, gun: GunId, input: PlayerInput): void {
+    const pressed = (p.prevButtons & Btn.Attack) === 0;
+    let at: ((z: ZombieState) => { x: number; y: number }) | undefined;
+    if (input.view !== undefined && input.view < this.tick) {
+      const back = Math.max(input.view, this.tick - SHOT_REWIND_TICKS);
+      const h = this.history.find((e) => e.tick >= back);
+      if (h) at = (z) => h.pos.get(z.id) ?? z;
+    }
+    const shot = fireGun(p, gun, p.weaponRarity, this.zombies, this.blocked, pressed, at);
+    if (!shot) return;
+    this.emitNoise(p.x, p.y, GUNS[gun].noise);
+    this.events.push({
+      type: 'shot',
+      player: p.id,
+      x: shot.x,
+      y: shot.y,
+      angle: shot.angle,
+      dist: shot.dist,
+      hit: shot.hits.length > 0,
+    });
+    for (const { zombie: z, killed } of shot.hits) {
+      if (killed && this.horde?.active) this.horde.kills[p.id] = (this.horde.kills[p.id] ?? 0) + 1;
+      this.events.push({
+        type: 'hit',
+        player: p.id,
+        zombie: z.id,
+        x: z.x,
+        y: z.y,
+        killed,
+        assassination: false,
+        silent: false,
+        hp: Math.max(0, z.hp),
+      });
+    }
+  }
+
+  /** Sát thương qua giáp (GĐ 3b): giảm theo bộ đang mặc, giáp mòn; món vỡ → `armorBreaks` (host trừ khỏi túi). */
+  private hurt(p: PlayerState, damage: number, acid = false): number {
+    const r = absorb(p, damage, acid);
+    for (const b of r.broken) this.armorBreaks.push({ player: p.id, ...b });
+    return r.damage;
+  }
+
+  /** Mặc giáp (GĐ 3b, host đã kiểm tra có món trong túi). */
+  wearArmor(id: PeerId, itemId: ItemId, rarity: Rarity): boolean {
+    const p = this.players.get(id);
+    return !!p && wearArmor(p, itemId, rarity);
+  }
+
   private bite(z: ZombieState, p: PlayerState): void {
     if (p.shield > 0) return; // vừa hồi sinh: bất tử
     this.events.push({ type: 'bite', zombie: z.id, player: p.id, x: p.x, y: p.y });
@@ -866,7 +1025,9 @@ export class SimWorld {
       if (p.downedFor === 0) this.die(p);
       return;
     }
-    p.hp = Math.max(0, p.hp - Z.biteDamage * KIND[z.kind].biteDamage);
+    const factor = infectionFactor(p);
+    p.hp = Math.max(0, p.hp - this.hurt(p, Z.biteDamage * KIND[z.kind].biteDamage));
+    infectFromBite(p, KIND[z.kind].biteDamage * factor);
     if (p.hp === 0) this.down(p);
   }
 

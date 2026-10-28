@@ -1,16 +1,21 @@
+import { ClientLoot } from '@net/clientLoot';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
-import { HostElection } from '@net/hostElection';
+import { HostElection, WAIT_HOST_MS } from '@net/hostElection';
+import { isLootPacket } from '@net/lootCodec';
+import { loadPlayerKey, rememberPlayerKey, replacePlayerKey, type KeyStorage } from '@net/playerKey';
 import type { Transport } from '@net/transport';
 import { decodeRoomFull } from '@net/roomFull';
-import { WORLD_BACKUP_MSG, decodeBackup, mergeBackup } from '@net/worldBackup';
+import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
 import { snapshotArea } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
+import type { AttackFx } from '@shared/sim/prediction';
 import { MapgenSource } from '@shared/sim/mapgenSource';
-import type { WorldState } from '@shared/sim/world';
-import type { PeerId } from '@shared/types';
+import { SIM_TICK_HZ, type PeerId } from '@shared/types';
+import type { ItemStack } from '@shared/inventory/inventory';
+import { LOOT_REGIONS, type LootRegion } from '@shared/data/loot';
 import { measureSimMs } from './benchmark';
 
 export type NetRole = 'host' | 'client' | 'waiting';
@@ -19,8 +24,87 @@ export interface NetGameOptions {
   zombieCount?: number;
   /** Chỉ host dùng: thế giới mới bắt đầu ở tick này (thử ban đêm). */
   startTick?: number;
+  /** CHỈ bản dev (`?kit=1`): mình làm host thì túi mới có sẵn đồ thử. */
+  starterKit?: ItemStack[];
+  /** CHỈ bản dev (`?den=police`): mình làm host thì người vào trận đứng cạnh rương của khu này. */
+  devSpawnRegion?: LootRegion;
+  /** CHỈ bản dev (`?dondat=giây`): mình làm host thì đồ trên đất hết hạn sau bấy nhiêu giây (thử tự dọn). */
+  groundExpireSec?: number;
+  /** CHỈ bản dev (`?roido=10`): mình làm host thì zombie rơi đồ nhiều gấp bấy nhiêu lần (thử nhanh). */
+  devDropScale?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
+  /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
+  playerKey?: { key: string; resume: boolean; onKeyInUse?: () => string };
+  /** Nơi lưu playerKey (test truyền bản giả để thử 2 tab cùng trình duyệt). */
+  storage?: { local: KeyStorage | null; session: KeyStorage | null };
+  /** Chỉ cho test (chạy trong Node, không Worker/timer thật): */
+  test?: {
+    now: () => number;
+    /** Chạy host trong cùng tiến trình thay cho Web Worker. */
+    startHost: (onMessage: (m: FromWorker) => void) => HostRunner;
+    simBenchMs?: number;
+  };
+}
+
+/** Nơi chạy HostServer của máy host: Web Worker (trình duyệt) hoặc chạy thẳng (test). */
+export interface HostRunner {
+  postMessage(m: ToWorker): void;
+  terminate(): void;
+}
+
+/** Web Storage của trình duyệt (không có / bị chặn → null: khóa tạm tới khi đóng trang). */
+function browserStorage(): { local: KeyStorage | null; session: KeyStorage | null } {
+  const get = (name: 'localStorage' | 'sessionStorage') => {
+    try {
+      return globalThis[name] ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return { local: get('localStorage'), session: get('sessionStorage') };
+}
+
+/**
+ * playerKey của tab này. Chỉ nhớ vào sessionStorage khi host đã nhận khóa (claim thành công) — xem `loadPlayerKey`.
+ */
+function storedPlayerKey(s: { local: KeyStorage | null; session: KeyStorage | null }) {
+  const { key, resume } = loadPlayerKey(s.local, s.session);
+  return {
+    key,
+    resume,
+    onKeyInUse: () => replacePlayerKey(),
+    onClaimed: (k: string) => rememberPlayerKey(s.session, k),
+  };
+}
+
+/** Tên khu loot hợp lệ (tham số dev `?den=`). */
+export function isLootRegion(s: string): s is LootRegion {
+  return Object.hasOwn(LOOT_REGIONS, s);
+}
+
+/** Báo worker "vẫn nghe người này" tối đa mỗi bấy nhiêu ms mỗi người. */
+const SEEN_EVERY_MS = 500;
+
+/**
+ * Nhớ (sessionStorage của tab) "đang ở phòng X cùng người khác" — tải lại trang trong ROOM_MEMO_MS thì chờ host thật
+ * (`HostElection.expectHostUntil`, tối đa WAIT_HOST_MS) thay vì tự làm host tạm ~0,5 s.
+ */
+export const ROOM_MEMO_STORAGE = 'zombie-coop.lastRoom';
+const ROOM_MEMO_EVERY_MS = 2000;
+const ROOM_MEMO_MS = 60_000;
+
+function readRoomMemo(s: KeyStorage | null): { room: string; at: number; others: number } | null {
+  try {
+    const v = JSON.parse(s?.getItem(ROOM_MEMO_STORAGE) ?? 'null') as unknown;
+    if (!v || typeof v !== 'object') return null;
+    const m = v as { room?: unknown; at?: unknown; others?: unknown };
+    return typeof m.room === 'string' && typeof m.at === 'number' && typeof m.others === 'number'
+      ? { room: m.room, at: m.at, others: m.others }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Điểm làm host = ping trung bình + hệ số × thời gian chạy thử 20 tick mô phỏng (ms). */
@@ -33,6 +117,8 @@ const SIM_MS_WEIGHT = 4;
  */
 export class NetGame {
   readonly sync: ClientSync;
+  /** Túi đồ + rương của mình (lớp dữ liệu loot, UI đọc từ đây — xem docs/loot-online-plan.md "API ClientLoot"). */
+  readonly loot: ClientLoot;
   readonly election: HostElection;
   readonly map: MapgenSource;
   readonly seed: string;
@@ -42,28 +128,59 @@ export class NetGame {
   migrations = 0;
   /** Thời gian chạy thử 20 tick mô phỏng trên máy này (ms) — đo 1 lần lúc vào. */
   readonly simBenchMs: number;
-  /** Bản sao lưu thế giới mới nhất từ host (≤10s tuổi) — dùng khi mình phải lên làm host. */
-  backup: WorldState | null = null;
+  /** Các mẩu sao lưu thế giới từ host (mỗi mẩu ≤10s tuổi) — ghép lại dùng khi mình phải lên làm host. */
+  readonly backup = new BackupParts();
   /** Host báo phòng đã đủ người (số tối đa) — mình chỉ xem, không vào trận được. */
   roomFull: number | null = null;
-  private worker: Worker | null = null;
-  private timer: ReturnType<typeof setInterval>;
+  private worker: HostRunner | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly testHooks: NetGameOptions['test'];
   private zombieCount: number | undefined;
   private startTick: number | undefined;
+  private starterKit: ItemStack[] | undefined;
+  private groundExpireSec: number | undefined;
+  private devDropScale: number | undefined;
+  private devSpawnRegion: LootRegion | undefined;
+  private readonly now: () => number;
+  /** Lần cuối báo worker "vẫn nghe" từng người. */
+  private seenAt = new Map<PeerId, number>();
+  private readonly session: KeyStorage | null;
+  private readonly wallNow: () => number;
+  private memoAt = -Infinity;
 
   constructor(
     private transport: Transport,
-    room: string,
+    private readonly room: string,
     opts: NetGameOptions = {},
   ) {
     this.seed = worldSeedForRoom(room);
+    this.testHooks = opts.test;
+    this.now = opts.test?.now ?? (() => performance.now());
+    // đồng hồ thật (còn đúng sau khi tải lại trang) cho ghi nhớ phòng; test dùng đồng hồ giả chung cả trận
+    this.wallNow = opts.test?.now ?? (() => Date.now());
+    const storage = opts.storage ?? (opts.playerKey ? null : browserStorage());
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
+    this.starterKit = opts.starterKit;
+    this.groundExpireSec = opts.groundExpireSec;
+    this.devDropScale = opts.devDropScale;
+    this.devSpawnRegion = opts.devSpawnRegion;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
-    this.simBenchMs = measureSimMs();
+    this.loot = new ClientLoot({
+      seed: this.seed,
+      ...(opts.playerKey ?? storedPlayerKey(storage ?? { local: null, session: null })),
+      send: (d) => this.sendLoot(d),
+      now: opts.test?.now,
+    });
+    this.simBenchMs = opts.test?.simBenchMs ?? measureSimMs();
     const rttOf = opts.rttOf ?? (() => null);
-    this.election = new HostElection(transport, undefined, {
+    this.session = storage?.session ?? null;
+    const memo = readRoomMemo(this.session);
+    const reloaded =
+      memo !== null && memo.room === room && memo.others > 0 && this.wallNow() - memo.at < ROOM_MEMO_MS;
+    this.election = new HostElection(transport, opts.test?.now, {
+      ...(reloaded && { expectHostUntil: this.now() + WAIT_HOST_MS }),
       getScore: () => {
         const rtts = transport
           .peers()
@@ -77,13 +194,17 @@ export class NetGame {
     transport.onMessage((data, from) => this.onMessage(data, from));
     transport.onMessage((data, from) => {
       if (from !== this.election.hostId) return;
-      if (data[0] === WORLD_BACKUP_MSG) this.backup = decodeBackup(data) ?? this.backup;
+      if (data[0] === WORLD_BACKUP_MSG && this.backup.receive(data)) {
+        // mẩu 0 mang bản loot đầy đủ của host → làm mới bản đang giữ (để lên host)
+        const loot = this.backup.takeLoot();
+        if (loot) this.loot.receiveBackup(loot);
+      }
       const full = decodeRoomFull(data);
       if (full !== null) this.roomFull = full;
     });
     transport.onPeerLeave((id) => this.toWorker({ t: 'leave', peer: id }));
-    // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm
-    this.timer = setInterval(() => this.election.tick(), 250);
+    // tab ẩn: hẹn giờ chậm lại nhưng vẫn chạy; nếu mình là host thì nhịp của worker gọi thêm (test tự gọi)
+    if (!opts.test) this.timer = setInterval(() => this.election.tick(), 250);
     this.election.tick();
   }
 
@@ -96,22 +217,53 @@ export class NetGame {
     return this.election.hostId;
   }
 
-  /** Một tick 20Hz của mình: dự đoán + gửi input cho host. Trả về true nếu vừa chém. */
-  tick(input: PlayerInput): boolean {
-    const { packet, swung } = this.sync.tick(input);
+  /** Một tick 20Hz của mình: dự đoán + gửi input cho host. Trả về vết chém / tia đạn vừa dự đoán (để vẽ ngay). */
+  tick(input: PlayerInput): AttackFx | null {
+    const { packet, fx } = this.sync.tick(input);
     const host = this.election.hostId;
     if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data: packet });
     else if (host) this.transport.send(packet, { to: host, channel: 'unreliable' });
-    return swung;
+    this.loot.tick();
+    this.rememberRoom();
+    return fx;
+  }
+
+  /** Ghi nhớ phòng (mỗi ~2 s, chỉ khi đã có host): tải lại trang lúc đang chơi cùng người khác → chờ host thật. */
+  private rememberRoom(): void {
+    const t = this.now();
+    if (!this.session || this.election.hostId === null || t - this.memoAt < ROOM_MEMO_EVERY_MS) return;
+    this.memoAt = t;
+    try {
+      this.session.setItem(
+        ROOM_MEMO_STORAGE,
+        JSON.stringify({ room: this.room, at: this.wallNow(), others: this.transport.peers().length }),
+      );
+    } catch {
+      // bị chặn lưu trữ: tải lại thì chờ host như vào phòng mới (2 s)
+    }
+  }
+
+  /** Gói loot (intent/ACK) tới host hiện tại: chính mình → worker; người khác → mạng (reliable). */
+  private sendLoot(data: Uint8Array): void {
+    const host = this.election.hostId;
+    if (host === this.transport.selfId) this.toWorker({ t: 'in', from: host, data });
+    else if (host) this.transport.send(data, { to: host, channel: 'reliable' });
   }
 
   dispose(): void {
-    clearInterval(this.timer);
+    if (this.timer) clearInterval(this.timer);
     this.stopHost();
     this.election.dispose();
   }
 
   private onMessage(data: Uint8Array, from: PeerId): void {
+    if (this.worker) this.markSeen(from);
+    if (isLootPacket(data)) {
+      // mình là host: intent/ACK của người khác → worker; còn lại chỉ nghe host hiện tại
+      if (this.role === 'host') this.toWorker({ t: 'in', from, data: data.slice() });
+      else if (from === this.election.hostId) this.loot.receive(data);
+      return;
+    }
     switch (data[0]) {
       case GameMsg.Input:
         this.toWorker({ t: 'in', from, data: data.slice() });
@@ -125,6 +277,14 @@ export class NetGame {
     }
   }
 
+  /** Mình là host: gói bất kỳ (ping, điểm host…) của người này → báo worker họ còn sống (tab ẩn không gửi input). */
+  private markSeen(from: PeerId): void {
+    const t = this.now();
+    if (t - (this.seenAt.get(from) ?? -Infinity) < SEEN_EVERY_MS) return;
+    this.seenAt.set(from, t);
+    this.toWorker({ t: 'seen', peer: from });
+  }
+
   private onHostChanged(host: PeerId | null): void {
     const self = this.transport.selfId;
     if (host === self) this.startHost();
@@ -132,6 +292,7 @@ export class NetGame {
     if (this.sync.latest) this.migrations++;
     this.roomFull = null;
     this.sync.resetHost();
+    this.loot.resetHost();
   }
 
   private startHost(): void {
@@ -142,33 +303,47 @@ export class NetGame {
     const latest = this.sync.latest;
     const area = latest ? snapshotArea(latest) : null;
     const restore =
-      mergeBackup(this.backup, this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
-    this.backup = null;
-    const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = (e: MessageEvent<FromWorker>) => {
-      const m = e.data;
+      mergeBackup(this.backup.assemble(), this.sync.toWorldState(this.seed, keep), area, keep) ?? undefined;
+    this.backup.clear();
+    const onMessage = (m: FromWorker) => {
       if (m.t === 'out') {
         for (const item of m.items) {
-          if (item.to === self) this.sync.receive(item.data);
-          else this.transport.send(item.data, { to: item.to, channel: item.channel });
+          if (item.to === self) {
+            if (isLootPacket(item.data)) this.loot.receive(item.data);
+            else this.sync.receive(item.data);
+          } else this.transport.send(item.data, { to: item.to, channel: item.channel });
         }
       } else {
         this.hostStats = m.stats;
         this.election.tick();
       }
     };
-    w.onerror = (e) => console.error('[host] worker lỗi:', e.message);
-    this.worker = w;
+    if (this.testHooks) this.worker = this.testHooks.startHost(onMessage);
+    else {
+      const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
+      w.onmessage = (e: MessageEvent<FromWorker>) => onMessage(e.data);
+      w.onerror = (e) => console.error('[host] worker lỗi:', e.message);
+      this.worker = w;
+    }
     this.toWorker({
       t: 'init',
       seed: this.seed,
       zombieCount: this.zombieCount,
       startTick: this.startTick,
       restore,
+      devSpawnRegion: this.devSpawnRegion,
+      devDropScale: this.devDropScale,
+      // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
+      loot: {
+        recover: { expected: [...keep] },
+        starterKit: this.starterKit,
+        ...(this.groundExpireSec ? { groundExpireTicks: this.groundExpireSec * SIM_TICK_HZ } : {}),
+      },
     });
   }
 
   private stopHost(): void {
+    this.seenAt.clear();
     this.worker?.terminate();
     this.worker = null;
     this.hostStats = null;

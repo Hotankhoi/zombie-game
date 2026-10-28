@@ -26,3 +26,27 @@ export const KNIFE: MeleeWeapon = {
   staminaCost: 8,
   canAssassinate: true,
 };
+
+/** Gậy bóng chày (GĐ 3b, A): đau hơn, với xa hơn, quạt rộng, chậm, tốn sức; không ám sát được. */
+export const BAT: MeleeWeapon = {
+  id: 'bat',
+  name: 'Gậy bóng chày',
+  damage: 55,
+  range: 1.4,
+  arcDeg: 110,
+  cooldownSec: 0.75,
+  staminaCost: 14,
+  canAssassinate: false,
+};
+
+/** Tay không (không còn vũ khí nào trong túi). */
+export const FISTS: MeleeWeapon = {
+  id: 'fists',
+  name: 'Tay không',
+  damage: 12,
+  range: 0.9,
+  arcDeg: 80,
+  cooldownSec: 0.5,
+  staminaCost: 6,
+  canAssassinate: false,
+};

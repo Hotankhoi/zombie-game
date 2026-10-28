@@ -1,0 +1,76 @@
+/* Lớp panel túi/rương trong trận (client/loot/lootUi.ts). Panel bên trong là của B (client/ui). */
+.loot-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  padding: 24px 16px;
+  overflow: auto;
+  background: rgb(5 8 6 / 0.35);
+  pointer-events: auto;
+}
+.loot-ui[hidden] {
+  display: none;
+}
+.loot-ui-panels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  /* giữa màn hình, nhưng panel cao hơn màn hình thì cuộn được từ mép trên (không bị cắt) */
+  margin: auto;
+}
+.loot-ui-panels .loot-panel {
+  width: min(460px, 100%);
+}
+.loot-ui-panels .inventory {
+  width: min(760px, 100%);
+}
+.loot-ui-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.loot-ui-toast {
+  padding: 6px 14px;
+  border: 1px solid #3c4a41;
+  border-radius: 8px;
+  background: rgb(14 18 15 / 0.9);
+  color: #e6ebe7;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: loot-ui-toast 2.6s ease-out forwards;
+}
+.loot-ui-toast-error {
+  border-color: #c62828;
+  color: #ffb4ab;
+}
+@keyframes loot-ui-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  8%,
+  80% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loot-ui-toast {
+    animation: none;
+  }
+}

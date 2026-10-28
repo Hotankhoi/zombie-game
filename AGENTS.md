@@ -77,7 +77,7 @@ Mục tiêu hiệu năng: 4 người + 500 zombie trong đợt tràn, ≤ 25 KB/
 
 - Mũi tên mép màn hình (tên, khoảng cách, màu riêng), viền xuyên tường, minimap có đồng đội, điểm hẹn trên bản đồ lớn, khung trạng thái đội.
 - Ping, vòng câu nói nhanh ("Cần đạn", "Theo tôi", "Rút lui", "Cứu tôi", "Có đồ ngon").
-- Gục thay vì chết, 30s để đồng đội cứu, kéo người gục đi. Chết → sau một lúc thành zombie mặc nguyên đồ của mình. Hồi sinh ở giường căn cứ (mất đồ trên người, giữ đồ trong rương).
+- Gục thay vì chết, 30s để đồng đội cứu, kéo người gục đi. Chết → xác thành zombie sau 8s. Hồi sinh sau 3s ở ô đường an toàn gần đội, bất tử 4s, không mất đồ (phạt nhẹ).
 - Hành động cần 2 người (két sắt, cửa cuốn, kho quân sự, nâng trèo tường). Kéo thả đồ lên tên đồng đội để đưa. Đánh dấu giữ đồ trong rương.
 - Tinh thần đồng đội: đứng gần nhau hồi stamina nhanh hơn. Vai trò: Y tá, Thợ máy, Trinh sát, Lính.
 - Súng pháo sáng, dụ zombie (ném chai, đồng hồ báo thức), ca gác đêm, nhiệm vụ giữ vị trí.
@@ -143,18 +143,23 @@ Cần sửa file trong vùng của người kia: làm thay đổi nhỏ nhất c
 
 ## 8. Trạng thái
 
-- Giai đoạn hiện tại: **0 – xong hẳn** (đã đạt cả 3 tiêu chí "Xong khi"). Đang làm 1a (A) và 1b (B).
+- Giai đoạn hiện tại: 0, 1a, 1b, 2 (trừ 2b'), 4, 5 (đợt tràn), 6 (phần A), 7 (phần A) **đã vào `main`**. GĐ 3: túi đồ + rương + loot online (#16, #29–#37) và **GĐ 3b (A, B đồng ý) đã vào `main` (2026-10-26)**: sửa 2 lỗi loot (#40 cướp túi 2 tab, #41 tab tải lại tự làm host), hợp đồng use/reload/equip (#42), đói/khát/nhiễm trùng (#43), dùng đồ phím 1–4 (#44), vũ khí gậy/súng lục/súng trường + X/Q (#45), giáp mũ/áo/quần + bảng loot (#46). Báo cáo: `docs/bao-cao-3b.md`. Chưa thử 2 máy thật. Chờ bàn A↔B: file save (`docs/save-format.md`, PR #21), hành động 2 người, 2b', chế tạo/căn cứ.
 - Repo: https://github.com/Hotankhoi/zombie-game · Game: https://hotankhoi.github.io/zombie-game/
   - Đã kiểm tra: 2 tab cùng `?room=` thấy nhau, có ping/pong; trễ 150ms ở cả 2 tab → ping ≈ 300ms.
   - Đã kiểm tra: **2 máy khác mạng** thấy nhau qua link GitHub Pages (ping ≈ 240ms, có TURN). `&relay=1` (chỉ đi qua TURN) cũng kết nối được.
   - Nhánh `main` được bảo vệ: phải qua Pull Request và CI `check` phải qua.
+  - **Số test (`npm test`) trên `main` sau #46: 385** (47 file). Mốc 3b: 334 sau #40 → 342 sau #41/#42 → 350 sau #43 → 367 sau #44 → 378 sau #45 → 385 sau #46. Mốc cũ: 330 sau #37 (39 file). Mốc: 315 sau #33 → 320 sau #34 (+5, rương gần nhất; 38 file) → 327 sau #36 (+7, panel/lỗi tiếng Việt; 39 file) → 330 sau #37 (+3, HUD/thông báo). Mốc cũ: 271 sau #16 → 279 sau #29 (+8, codec loot) → 287 sau #30 (+8, loot ở host) → 293 sau #31 (+6, ClientLoot) → 310 sau #32 (+17, đổi host/playerKey; 36 file) → 315 sau #33 (+5, 4 người trễ 150ms). Mốc cũ: 186 sau #19 → 194 sau #20 (+8) → 199 sau #23 (+5) → 201 sau #24 (+2) → 204 sau #25 (+3) → 208 sau #26 (+4) → 271 sau #16 (+63, túi đồ/rương/loot authority của B). Báo cáo trước ghi 194 (đúng ở `main` sau #20); máy reviewer đếm 186 vì chạy ở `main` trước khi merge #20. `npm test` không gồm `tools/*.loadtest.ts` (chạy riêng bằng `npm run loadtest`).
 - Ai đang làm gì:
-  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13); đang merge 7b relay dự phòng (#14, xem `docs/relay.md`); phần còn lại theo thứ tự ở `docs/progress-A.md`.
-  - B: 1b (sinh map theo seed/chunk, renderer riêng, minimap, tile Kenney CC0) đã merge vào `main` (PR #3); hợp đồng loot online + giao thức v3 đã vào `main` (PR #15).
+  - A: đã vào `main`: 1a (#4), 2a (#6), 2b (#8), 2c (#9), GĐ 4 (#10), GĐ 5 (#11), GĐ 6 (#12), GĐ 7 (#13), relay dự phòng (#14, `docs/relay.md`), điểm xuất phát theo map B (#17), tường che tầm nhìn (#18), hồi sinh an toàn (#19), khổng lồ phá tường (#20), chặn khác phiên bản (#23), chừa băng thông cho loot (#24, đợt tràn tối đa 19.7 KB/s), mã bí mật relay (#25), rải bản sao lưu + gộp sự kiện cắn (#26, đỉnh 5s đợt tràn tối đa 19.7 KB/s). Mở chờ B góp ý: đề xuất file save (#21). Chi tiết ở `docs/progress-A.md`.
+  - A — **nối loot phần 2A** (B giao, chỉ logic + test, kế hoạch đầu `docs/loot-online-plan.md`): bước 1 codec 110–113 (#29), bước 2 loot ở host + `PROTOCOL_VERSION` 4 (#30), bước 3 `NetGame.loot` = ClientLoot, API ở `docs/loot-online-plan.md` (#31), bước 4 đồng bộ + đổi host + playerKey, `PROTOCOL_VERSION` 5, gói 125 v6 (#32), bước 5 test 4 người trễ 150ms + mất 5% và bot loadtest mở rương (#33; đợt tràn tối đa đỉnh 5s 1 người 20.8 KB/s, loot 0.13–0.34 KB/s). **Phần 2A xong.** **Phần 2B xong** (máy thật, Browser pane): vẽ rương (#34), phím F/I/Esc + panel của B (#36), HUD túi + thông báo nhặt (#37), thử 2 tab (cùng lấy 1 món → 1 người được; tải lại tab → túi còn; đóng tab host → túi + rương đúng). Lỗi 2A tìm thấy: `docs/loot-online-plan.md` mục "Điều kiện hoàn thành".
+  - **Quyết định (A): playerKey** = bí mật trong trình duyệt, chỉ gửi cho host (`claim`); túi/save khóa theo `ownerId = sha256(key)` công khai (`docs/save-format.md` mục 4, PR #21).
+  - **Quyết định (A): chết = phạt nhẹ (không mất đồ, hồi sinh an toàn gần đội sau 3s, bất tử 4s). Không làm hồi sinh ở giường căn cứ.**
+  - B: nhánh `b/hotbar-drop` từ main sau #47: hotbar 5 ô (1–5), thả/nhặt đồ online, bỏ trang bị khi ô trống/mất đồ; hợp đồng riêng #48 (v10). Giữ hệ sinh tồn/súng/giáp và mạng của A. 393 test/typecheck/lint/build đạt; PR triển khai #49 chờ A review.
 - Ghi chú:
   - Map (B): API tại `shared/mapgen/world.ts`; `WorldMap.isSolid(tileX, tileY)` trả va chạm nền. `client/render/mapRenderer.ts`: gọi `preloadMapTiles(scene)` trong preload, rồi tạo `MapRenderer(scene)` và truyền các chunk; không điều khiển camera. Xem thử bằng `?map=1&room=MAP001`; A ghép renderer vào scene 1a.
+  - Túi đồ (B): bảng vật phẩm ở `shared/data/items.ts`, reducer ở `shared/inventory`, UI ở `client/ui/inventory`. Xem mẫu bằng `?inventory=1`; authority/mạng ghép sau GĐ 2. Chưa có hiệu ứng dùng/trang bị/trao đồ.
   - Mạng: `net/transport.ts` là interface duy nhất game được dùng. `net/loopback.ts` = mạng giả cho test, `net/conditions.ts` = giả lập trễ/giật/mất gói (bảng F3 trong game).
-  - Trystero hiện chỉ có kênh reliable; kênh unreliable thật (DataChannel unordered) làm ở GĐ 2.
+  - Kênh unreliable thật (DataChannel unordered) đã có (GĐ 2b). `PROTOCOL_VERSION` hiện **9** (bảng ở `shared/types/loot-protocol.md`). Gói riêng của A: 124 phòng đầy, 125 sao lưu thế giới (có byte phiên bản, hiện 10; chia 10 mẩu, 1 mẩu/giây; mẩu 0 kèm loot đầy đủ), 126 điểm host; gói trong trận 16–21 (21 = `MapDelta`, ô map đã đổi). Loot: 110–113 (hợp đồng B, codec/host/client A: `net/lootCodec.ts`, `host/hostLoot.ts`, `net/clientLoot.ts`).
   - **TURN** (relay khi router/4G chặn nối thẳng): Metered Open Relay, URL lấy từ biến `VITE_TURN_URL` (GitHub secret khi deploy; `.env.local` khi chạy máy mình — không commit). Cloudflare TURN bắt nhập thẻ nên không dùng. Thử relay: thêm `&relay=1` vào link (ép đi qua TURN).
   - **Giới hạn TURN**: đang dùng gói Metered **500 MB/tháng** (gói 20 GB đòi thẻ). Đủ cho phòng chờ/test, nhưng khi chơi thật (~25 KB/s/người) chỉ đủ vài giờ relay mỗi tháng → GĐ 2/7 (A) cần relay dự phòng không thẻ (Cloudflare Workers/Durable Objects free) hoặc TURN miễn phí khác.
   - Asset bản đồ (B): Kenney Roguelike Modern City 2.0 đã có trong `assets/kenney/roguelike-modern-city/`, kèm giấy phép CC0 và nguồn trong `CREDITS.md`.

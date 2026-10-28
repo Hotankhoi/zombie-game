@@ -1,21 +1,35 @@
 import {
   decodeGame,
   encodeGame,
+  FAR_ZOMBIE_TILES,
   GameMsg,
   TileChange,
   type SnapshotMsg,
   type WireEvent,
   type WireHorde,
   type WirePlayer,
+  type WireVitals,
+  VITAL_FIELDS,
 } from '@net/gameCodec';
+import { isLootPacket } from '@net/lootCodec';
 import { encodeRoomFull } from '@net/roomFull';
-import { encodeBackup } from '@net/worldBackup';
+import { BACKUP_PARTS, encodeBackupPart } from '@net/worldBackup';
+import { hasLineOfSight } from '@shared/sim/collision';
 import type { MapSource } from '@shared/sim/grid';
 import { radToAim, type PlayerInput } from '@shared/sim/input';
-import type { PlayerState } from '@shared/sim/player';
+import { isUp, type PlayerState } from '@shared/sim/player';
+import { isWeaponId, weaponCode } from '@shared/sim/guns';
+import { isArmor, armorAt } from '@shared/sim/armor';
+import { GUNS, type GunId } from '@shared/data/guns';
 import type { ZombieState } from '@shared/sim/zombie';
 import { SimWorld, type SimEvent, type WorldState } from '@shared/sim/world';
 import { MAX_PLAYERS, type Channel, type PeerId } from '@shared/types';
+import type { LootReplicaWire } from '@shared/types/loot';
+import { HostLoot } from './hostLoot';
+import { chestLocations } from '@shared/mapgen/chests';
+import { CHUNK_SIZE, generateChunk } from '@shared/mapgen/world';
+import type { LootRegion } from '@shared/data/loot';
+import { removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -25,15 +39,18 @@ export const SNAPSHOT_EVERY = 2;
  */
 export const INTEREST_RADIUS = 32;
 /**
- * Ngân sách zombie mỗi snapshot (giữ ≤ 25 KB/s mỗi người khi đợt tràn 500 con quây sát): luôn gửi
- * ZOMBIE_NEAR_ALWAYS con gần nhất, phần còn lại gửi xoay vòng trong số chỗ trống. Client giữ vị trí cũ
+ * Ngân sách zombie mỗi snapshot (đợt tràn tối đa ≤ 20 KB/s mỗi người, chừa ~5 KB/s cho loot): luôn gửi
+ * ZOMBIE_NEAR_ALWAYS con gần nhất, phần còn lại gửi xoay vòng trong số chỗ trống — ưu tiên con trên màn hình,
+ * con ngoài màn hình (> FAR_ZOMBIE_TILES ô) chỉ được tối đa ZOMBIE_OFFSCREEN_ROOM chỗ. Client giữ vị trí cũ
  * của con vắng mặt một lúc (net/clientSync.ts). Cách làm triệt để (delta + zombie tất định) để GĐ 2b'.
  */
-export const ZOMBIE_BUDGET = 200;
+export const ZOMBIE_BUDGET = 165;
 export const ZOMBIE_NEAR_ALWAYS = 130;
+export const ZOMBIE_OFFSCREEN_ROOM = 8;
 /**
- * Mỗi người nhận bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
- * trạng thái. Gửi so le (mỗi BACKUP_EVERY / số người tick gửi cho 1 người) để không dồn cùng một tick.
+ * Mỗi người nhận đủ bản sao lưu toàn thế giới mỗi bấy nhiêu tick (200 tick = 10s) — để chuyển host không mất
+ * trạng thái. Chia BACKUP_PARTS mẩu, mỗi BACKUP_EVERY / BACKUP_PARTS tick (1s) gửi 1 mẩu cho mọi người: băng thông
+ * đều (~2 KB/s lúc đợt tràn tối đa) thay vì ~23 KB dồn 1 lần làm vọt đỉnh.
  */
 export const BACKUP_EVERY = 200;
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
@@ -55,6 +72,22 @@ export interface HostServerOptions {
   startTick?: number;
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
+  /** CHỈ bản dev (`?den=police`): người vào trận đứng cạnh rương gần nhất của khu này (thử nhặt súng nhanh). */
+  devSpawnRegion?: LootRegion;
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
+  devDropScale?: number;
+  /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
+  loot?: {
+    restore?: LootReplicaWire;
+    epoch?: number;
+    /** Lên thay host cũ: thu bản replica của những người này trước khi nhận ghi (host/hostLoot.ts). */
+    recover?: { expected: readonly PeerId[]; timeoutTicks?: number };
+    random?: () => string;
+    /** CHỈ bản dev (`?kit=1`): đồ có sẵn trong túi mới. */
+    starterKit?: readonly ItemStack[];
+    /** CHỈ bản dev (`?dondat=`). */
+    groundExpireTicks?: number;
+  };
 }
 
 interface Client {
@@ -64,6 +97,8 @@ interface Client {
   queue: PlayerInput[];
   /** seq của input cuối cùng đã chạy — gửi lại cho client để reconcile. */
   ack: number;
+  /** Tick nhận input gần nhất (loot: kết nối im lâu = tab cũ đã đóng). */
+  heardAt: number;
 }
 
 /**
@@ -73,11 +108,17 @@ interface Client {
  */
 export class HostServer {
   readonly world: SimWorld;
+  /** Túi đồ + rương (gói 110–113, reliable). */
+  readonly loot: HostLoot;
   private clients = new Map<PeerId, Client>();
   private out: Outgoing[] = [];
   private rosterDirty = false;
-  /** Lượt gửi bản sao lưu (xoay vòng người nhận). */
+  /** Mẩu sao lưu gửi lần tới (xoay vòng 0..BACKUP_PARTS-1). */
   private backupTurn = 0;
+  private readonly devKit: boolean;
+  private readonly seed: string;
+  private readonly devRegion: LootRegion | undefined;
+  private devChest: { x: number; y: number } | null | undefined;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
@@ -87,16 +128,109 @@ export class HostServer {
       map: opts.map,
       zombieCount: opts.zombieCount,
       restore: opts.restore,
+      dropChanceScale: opts.devDropScale,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
+    this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
+    this.devRegion = opts.devSpawnRegion;
+    this.seed = opts.seed;
+    this.loot = new HostLoot({
+      seed: opts.seed,
+      ...opts.loot,
+      world: {
+        inMatch: (id) => this.clients.has(id),
+        position: (id) => {
+          const p = this.world.players.get(id);
+          return p ? { x: p.x, y: p.y, up: isUp(p) } : null;
+        },
+        sees: (from, chest) => hasLineOfSight(from, chest, this.world.blocked),
+        idleTicks: (id) => {
+          const c = this.clients.get(id);
+          return c ? this.world.tick - c.heardAt : null;
+        },
+        checkUse: (id, item, target) => this.world.checkItemUse(id, item.itemId, target),
+        applyUse: (id, item, target) => this.world.applyItemUse(id, item.itemId, item.rarity, target),
+        dropPoint: (id) => {
+          const p = this.world.players.get(id);
+          if (!p || !isUp(p)) return null;
+          for (const turn of [0, 0.6, -0.6, 1.2, -1.2, Math.PI]) {
+            const x = p.x + Math.cos(p.facing + turn) * 0.8,
+              y = p.y + Math.sin(p.facing + turn) * 0.8;
+            if (
+              !this.world.blocked(Math.floor(x), Math.floor(y)) &&
+              hasLineOfSight(p, { x, y }, this.world.blocked)
+            )
+              return { x, y };
+          }
+          return null;
+        },
+        seesGround: (id, point) => {
+          const p = this.world.players.get(id);
+          return !!p && hasLineOfSight(p, point, this.world.blocked);
+        },
+        dropRefund: (id, item) => {
+          const p = this.world.players.get(id);
+          if (!p || (item.itemId !== 'pistol' && item.itemId !== 'rifle')) return undefined;
+          const code = item.itemId === 'pistol' ? 1 : 2;
+          const quantity =
+            (code === 1 ? p.magPistol : p.magRifle) + (p.reloadGun === code ? p.reloadAmount : 0);
+          return quantity > 0 ? { itemId: GUNS[item.itemId].ammo, quantity, rarity: 'common' } : undefined;
+        },
+        dropped: (id, item) => {
+          const p = this.world.players.get(id);
+          if (!p) return;
+          if (item.itemId === 'pistol' || item.itemId === 'rifle') {
+            const code = item.itemId === 'pistol' ? 1 : 2;
+            if (code === 1) p.magPistol = 0;
+            else p.magRifle = 0;
+            if (p.reloadGun === code) {
+              p.reloadGun = 0;
+              p.reloadLeft = 0;
+              p.reloadAmount = 0;
+            }
+          }
+          const owner = this.loot.ownerOf(id),
+            bag = owner ? this.loot.authority.inventory(owner) : null;
+          if (bag?.slots.some((i) => i?.itemId === item.itemId && i.rarity === item.rarity)) return;
+          if (p.weapon === item.itemId && p.weaponRarity === item.rarity)
+            this.world.equip(id, 'fists', 'common');
+          if (item.itemId === 'helmet' && armorAt(p, 'head') === item.rarity) p.armorHead = 0;
+          if (item.itemId === 'vest' && armorAt(p, 'body') === item.rarity) p.armorBody = 0;
+          if (item.itemId === 'pants' && armorAt(p, 'legs') === item.rarity) p.armorLegs = 0;
+        },
+        unequip: (id) => this.world.equip(id, 'fists', 'common'),
+        equip: (id, item) => {
+          if (isArmor(item.itemId))
+            return this.world.wearArmor(id, item.itemId, item.rarity) ? null : 'not_equippable';
+          if (!isWeaponId(item.itemId)) return 'not_equippable';
+          this.world.equip(id, item.itemId, item.rarity);
+          return null;
+        },
+        reloadNeed: (id) => {
+          const r = this.world.reloadNeed(id);
+          return 'error' in r ? r : { ammo: GUNS[r.gun].ammo, need: r.need };
+        },
+        // đạn của súng lúc yêu cầu (đổi sang súng khác trước khi xác nhận vẫn vào đúng băng)
+        beginReload: (id, ammo, amount) => {
+          const gun = (Object.keys(GUNS) as GunId[]).find((g) => GUNS[g].ammo === ammo);
+          if (gun) this.world.beginReload(id, gun, amount);
+        },
+      },
+    });
   }
 
   /** Gói từ mạng (hoặc từ chính máy host). Người gửi input lần đầu = vào trận. */
   receive(from: PeerId, data: Uint8Array): void {
+    if (isLootPacket(data)) {
+      this.heard(from);
+      this.loot.receive(from, data);
+      return;
+    }
     const msg = decodeGame(data);
     if (!msg || msg.type !== GameMsg.Input) return;
     const c = this.client(from);
     if (!c) return;
+    c.heardAt = this.world.tick;
     // gói kèm 3 input gần nhất → lấy những cái chưa chạy và chưa có, chèn đúng thứ tự seq
     // (gói tới sai thứ tự vẫn ghép lại được; input cũ hơn cái đã chạy thì bỏ)
     for (const i of msg.inputs) {
@@ -109,8 +243,16 @@ export class HostServer {
     while (c.queue.length > MAX_QUEUE) c.ack = (c.queue.shift() as PlayerInput).seq;
   }
 
+  /** Vừa nghe người này (gói bất kỳ: ping, điểm host…) — còn sống dù tab ẩn không gửi input (loot: chống lấy túi). */
+  heard(id: PeerId): void {
+    const c = this.clients.get(id);
+    if (c) c.heardAt = this.world.tick;
+  }
+
   removePeer(id: PeerId): void {
     this.rejectedAt.delete(id);
+    // cả người chưa vào trận: host mới đang thu bản loot thì khỏi chờ người đã rời
+    this.loot.removePeer(id);
     if (!this.clients.delete(id)) return;
     this.world.removePlayer(id);
     this.rosterDirty = true;
@@ -122,6 +264,26 @@ export class HostServer {
 
   /** Chạy 1 tick, trả về các gói cần gửi. */
   tick(): Outgoing[] {
+    // Loot can be newer than the ten-second world backup during migration.
+    // Never keep using equipment which the recovered inventory no longer owns.
+    for (const c of this.clients.values()) {
+      const owner = this.loot.ownerOf(c.id);
+      const bag = owner ? this.loot.authority.inventory(owner) : null;
+      const p = this.world.players.get(c.id);
+      if (!bag || !p) continue;
+      const owns = (id: string) => bag.slots.some((s) => s?.itemId === id);
+      if (
+        p.weapon !== 'fists' &&
+        !bag.slots.some((s) => s?.itemId === p.weapon && s.rarity === p.weaponRarity)
+      )
+        this.world.equip(c.id, 'fists', 'common');
+      if (!owns('pistol')) p.magPistol = 0;
+      if (!owns('rifle')) p.magRifle = 0;
+      if ((p.reloadGun === 1 && !owns('pistol')) || (p.reloadGun === 2 && !owns('rifle'))) {
+        p.reloadGun = 0;
+        p.reloadLeft = p.reloadAmount = 0;
+      }
+    }
     const inputs = new Map<PeerId, PlayerInput>();
     for (const c of this.clients.values()) {
       const input = this.nextInput(c);
@@ -136,9 +298,13 @@ export class HostServer {
     if (this.rosterDirty) this.sendRoster();
     this.sendEvents(this.world.events);
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
+    this.breakArmor();
+    this.placeZombieDrops();
+    // loot trước sao lưu: mẩu 0 mang đúng bản vừa phát cho mọi người
+    this.loot.flush(this.world.tick);
+    for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
     if (this.world.tick % SNAPSHOT_EVERY === 0) this.sendSnapshots();
-    const every = Math.max(1, Math.floor(BACKUP_EVERY / Math.max(1, this.clients.size)));
-    if (this.world.tick % every === 0) this.sendBackup();
+    if (this.world.tick % (BACKUP_EVERY / BACKUP_PARTS) === 0) this.sendBackup();
 
     const out = this.out;
     this.out = [];
@@ -161,15 +327,78 @@ export class HostServer {
       const used = new Set([...this.clients.values()].map((x) => x.slot));
       let slot = 0;
       while (used.has(slot)) slot++;
-      c = { id, slot, queue: [], ack: 0 };
+      c = { id, slot, queue: [], ack: 0, heardAt: this.world.tick };
       this.clients.set(id, c);
-      this.world.addPlayer(id);
+      const p = this.world.addPlayer(id);
+      // CHỈ bản dev (`?kit=1`): vào trận đã đói/khát, bị thương, nhiễm trùng để thử dùng đồ ngay
+      const spot = this.devSpot();
+      if (spot) {
+        p.x = spot.x;
+        p.y = spot.y;
+      }
+      if (this.devKit) {
+        p.food = Math.min(p.food, 30);
+        p.water = Math.min(p.water, 20);
+        p.hp = Math.min(p.hp, 45);
+        p.infection = Math.max(p.infection, 40);
+      }
+      this.loot.admit(id);
       this.rosterDirty = true;
       // người mới (hoặc mọi người khi host mới dựng lại thế giới): gửi cả danh sách ô map đã đổi
       const changed = this.world.brokenWallList();
       if (changed.length > 0) this.sendMapDelta(changed, [id]);
     }
     return c;
+  }
+
+  /** Giáp vỡ trong tick (GĐ 3b): host trừ 1 món đó (đúng độ hiếm) khỏi túi người mặc — giao dịch do host tạo. */
+  private breakArmor(): void {
+    for (const b of this.world.armorBreaks) {
+      const owner = this.loot.ownerOf(b.player);
+      if (!owner) continue;
+      this.loot.hostUpdate(owner, (s) => {
+        const slot = s.slots.findIndex((x) => x?.itemId === b.item && x.rarity === b.rarity);
+        return slot < 0
+          ? { ok: false, state: s, error: 'empty_slot' }
+          : removeFromSlot(s, slot, 1, s.revision);
+      });
+    }
+  }
+
+  /**
+   * Zombie chết rơi đồ: đặt xuống đất (gộp với đống cùng loại gần đó). Món thứ 2+ rải quanh chỗ chết (0.4 ô) nếu ô đó
+   * đi được. Hết chỗ (đủ 128 đống) → bỏ món đó, không đẩy đồ người chơi thả.
+   */
+  private placeZombieDrops(): void {
+    for (const d of this.world.zombieDrops) {
+      d.items.forEach((item, i) => {
+        let at = { x: d.x, y: d.y };
+        if (i > 0) {
+          const a = (i * Math.PI * 2) / d.items.length;
+          const p = { x: d.x + Math.cos(a) * 0.4, y: d.y + Math.sin(a) * 0.4 };
+          if (!this.world.blocked(Math.floor(p.x), Math.floor(p.y))) at = p;
+        }
+        this.loot.spawnGround(item, at);
+      });
+    }
+  }
+
+  /** Rương gần điểm xuất phát nhất của khu `devRegion` (tìm 1 lần, trong 7×7 chunk). */
+  private devSpot(): { x: number; y: number } | null {
+    if (!this.devRegion) return null;
+    if (this.devChest !== undefined) return this.devChest;
+    const s = this.world.map.spawn;
+    const cx0 = Math.floor(s.x / CHUNK_SIZE);
+    const cy0 = Math.floor(s.y / CHUNK_SIZE);
+    let best: { x: number; y: number } | null = null;
+    for (let cy = cy0 - 3; cy <= cy0 + 3; cy++)
+      for (let cx = cx0 - 3; cx <= cx0 + 3; cx++)
+        for (const c of chestLocations(generateChunk(this.seed, cx, cy))) {
+          if (c.region !== this.devRegion) continue;
+          if (!best || Math.hypot(c.x - s.x, c.y - s.y) < Math.hypot(best.x - s.x, best.y - s.y)) best = c;
+        }
+    this.devChest = best;
+    return best;
   }
 
   /** Danh sách ô tường đã vỡ → người nhận (reliable, không lọc theo vùng quan tâm: map dùng chung). */
@@ -206,18 +435,29 @@ export class HostServer {
     if (list.length <= ZOMBIE_BUDGET) return list.map((e) => e.z);
     list.sort((a, b) => a.d - b.d || a.z.id - b.z.id);
     const out = list.slice(0, ZOMBIE_NEAR_ALWAYS).map((e) => e.z);
-    const rest = list.slice(ZOMBIE_NEAR_ALWAYS);
+    const onScreen: ZombieState[] = [];
+    const offScreen: ZombieState[] = [];
+    for (const e of list.slice(ZOMBIE_NEAR_ALWAYS)) (e.d > FAR_ZOMBIE_TILES ? offScreen : onScreen).push(e.z);
     const room = ZOMBIE_BUDGET - ZOMBIE_NEAR_ALWAYS;
-    const start = (round * room) % rest.length;
-    for (let i = 0; i < room; i++) out.push((rest[(start + i) % rest.length] as { z: ZombieState }).z);
+    const roomOff = Math.min(offScreen.length, Math.max(ZOMBIE_OFFSCREEN_ROOM, room - onScreen.length));
+    rotate(out, onScreen, room - roomOff, round);
+    rotate(out, offScreen, roomOff, round);
     return out;
   }
 
   private sendBackup(): void {
     const list = [...this.clients.values()].sort((a, b) => a.slot - b.slot);
     if (list.length === 0) return;
-    const c = list[this.backupTurn++ % list.length] as Client;
-    this.out.push({ to: c.id, data: encodeBackup(this.world.state()), channel: 'reliable' });
+    // mã hóa 1 lần, cùng một gói cho mọi người
+    const part = this.backupTurn++ % BACKUP_PARTS;
+    // mẩu 0 kèm bản loot đầy đủ (túi + rương) — mỗi người có lại nguyên bản ≤ 10s một lần
+    const data = encodeBackupPart(
+      this.world.state(),
+      part,
+      BACKUP_PARTS,
+      part === 0 ? this.loot.backupBlock() : null,
+    );
+    for (const c of list) this.out.push({ to: c.id, data, channel: 'reliable' });
   }
 
   private sendRoster(): void {
@@ -233,7 +473,11 @@ export class HostServer {
     return this.clients.get(id)?.slot ?? 255;
   }
 
-  private sendEvents(events: readonly SimEvent[]): void {
+  private sendEvents(all: readonly SimEvent[]): void {
+    // bị cả bầy cắn cùng lúc: máy khách chỉ vẽ 1 vệt máu ở chỗ người bị cắn + rung màn hình (máu đã trừ trong mô phỏng,
+    // gửi qua snapshot) → mỗi người chỉ gửi 1 sự kiện cắn mỗi tick (đợt tràn tối đa: ~8 → 1, bớt ~2 KB/s mỗi người)
+    const bitten = new Set<PeerId>();
+    const events = all.filter((e) => e.type !== 'bite' || (!bitten.has(e.player) && !!bitten.add(e.player)));
     if (events.length === 0) return;
     const wire = events.map((e) => this.toWire(e));
     for (const c of this.clients.values()) {
@@ -241,8 +485,8 @@ export class HostServer {
       if (!me) continue;
       const mine = wire.filter((e, i) => {
         const src = events[i] as SimEvent;
-        // vết chém của chính mình client đã tự vẽ (dự đoán)
-        if (src.type === 'swing' && src.player === c.id) return false;
+        // vết chém / tia đạn của chính mình client đã tự vẽ (dự đoán)
+        if ((src.type === 'swing' || src.type === 'shot') && src.player === c.id) return false;
         if (!('x' in e)) return true;
         return near(me, e.x, e.y);
       });
@@ -279,7 +523,39 @@ export class HostServer {
         return { kind: 'death', slot: this.slotOf(e.player) };
       case 'respawn':
         return { kind: 'respawn', slot: this.slotOf(e.player) };
+      case 'shot':
+        return {
+          kind: 'shot',
+          slot: this.slotOf(e.player),
+          x: e.x,
+          y: e.y,
+          angle: e.angle,
+          dist: e.dist,
+          hit: e.hit,
+        };
     }
+  }
+
+  /**
+   * Chỉ số sinh tồn gửi cho người nhận `c`: của chính họ (dự đoán + HUD) + 1 đồng đội xoay vòng theo số thứ tự snapshot
+   * (mỗi đồng đội ≤ 0,6 s một lần — đủ để lên host thay mà không mất chỉ số).
+   */
+  private vitalsFor(c: Client, round: number): WireVitals[] {
+    const out: WireVitals[] = [];
+    const add = (id: PeerId, slot: number) => {
+      const p = this.world.players.get(id);
+      if (!p) return;
+      const v = { slot } as WireVitals;
+      for (const f of VITAL_FIELDS) v[f] = p[f];
+      out.push(v);
+    };
+    add(c.id, c.slot);
+    // đồng đội: mỗi 2 snapshot 1 người (≤ 0,6 s tuổi với 3 đồng đội) — chỉ dùng khi phải lên host thay
+    if (round % 2 !== 0) return out;
+    const others = [...this.clients.values()].filter((o) => o !== c).sort((a, b) => a.slot - b.slot);
+    const o = others[(round / 2) % Math.max(1, others.length)];
+    if (o) add(o.id, o.slot);
+    return out;
   }
 
   private sendSnapshots(): void {
@@ -308,6 +584,7 @@ export class HostServer {
           })),
         }
       : null;
+    const round = w.tick / SNAPSHOT_EVERY;
     for (const c of this.clients.values()) {
       const me = w.players.get(c.id);
       if (!me) continue;
@@ -345,6 +622,7 @@ export class HostServer {
               arming: p.armIn > 0,
               ttl: p.ttl,
             })),
+          vitals: this.vitalsFor(c, round),
         }),
         channel: 'unreliable',
       });
@@ -366,6 +644,16 @@ export function snapshotArea(s: SnapshotMsg): { x: number; y: number; radius: nu
   // gốc gói = vị trí người nhận làm tròn (lệch ≤ 0.5 ô) → lùi thêm 1 ô cho chắc
   area.zombieRadius = Math.max(0, (d[ZOMBIE_NEAR_ALWAYS - 1] ?? 0) - 1);
   return area;
+}
+
+/** Thêm `room` con từ `from` vào `out`, lượt sau lấy tiếp chỗ lượt trước dừng (xoay vòng); đủ chỗ thì lấy hết. */
+function rotate(out: ZombieState[], from: readonly ZombieState[], room: number, round: number): void {
+  if (room >= from.length) {
+    out.push(...from);
+    return;
+  }
+  const start = (round * room) % from.length;
+  for (let i = 0; i < room; i++) out.push(from[(start + i) % from.length] as ZombieState);
 }
 
 function near(p: { x: number; y: number }, x: number, y: number): boolean {
@@ -390,5 +678,6 @@ function wirePlayer(slot: number, p: PlayerState): WirePlayer {
     reviveProgress: p.reviveProgress,
     dragging: p.dragging,
     flashlight: p.flashlight,
+    weapon: weaponCode(p.weapon, p.weaponRarity),
   };
 }

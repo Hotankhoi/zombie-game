@@ -1,0 +1,100 @@
+.hotbar {
+  position: fixed;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 32;
+  pointer-events: auto;
+  padding: 7px;
+  background: #101912e8;
+  border: 1px solid #57644d;
+  border-radius: 10px;
+}
+.hotbar-slot {
+  position: relative;
+  width: 70px;
+  height: 64px;
+  padding: 15px 4px 12px;
+  background: #202a20;
+  color: var(--item-color, #a6b09c);
+  border: 1px solid #65705c;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 11px system-ui;
+}
+.hotbar-slot small {
+  position: absolute;
+  left: 5px;
+  top: 3px;
+  color: #c1c8b5;
+}
+.hotbar-slot strong {
+  position: absolute;
+  bottom: 3px;
+  right: 5px;
+  font-size: 11px;
+}
+.hotbar-slot.selected {
+  border: 2px solid #e9cc76;
+  background: #3a412b;
+}
+.hotbar-slot.assigning {
+  outline: 1px dashed #e9cc76;
+}
+.hotbar-slot:focus-visible {
+  outline: 2px solid white;
+}
+.hotbar-slot:hover {
+  background: #3b4833;
+}
+@media (max-width: 420px) {
+  .hotbar-slot {
+    width: calc((100vw - 62px) / 5);
+    height: 60px;
+    font-size: 10px;
+  }
+  .hotbar {
+    gap: 4px;
+  }
+}
+.hotbar-slot svg {
+  width: 25px;
+  height: 25px;
+  display: block;
+  margin: auto;
+}
+.hotbar-slot > span:not(.inv-icon) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.ground-pickup {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 31;
+  padding: 10px 15px;
+  background: #18251d;
+  color: #f1e3b6;
+  border: 1px solid #b3a979;
+  border-radius: 6px;
+  font: 13px system-ui;
+  cursor: pointer;
+}
+.ground-pickup[hidden] {
+  display: none;
+}
+@media (max-width: 600px) {
+  .hotbar {
+    bottom: 90px;
+  }
+  .ground-pickup {
+    bottom: 180px;
+    max-width: 90vw;
+  }
+}
