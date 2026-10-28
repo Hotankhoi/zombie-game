@@ -321,6 +321,11 @@ export class SimWorld {
     return p;
   }
 
+  /** GĐ 5 (nạp save): mọi người trong file đã vào lại → trả cờ tính lại flow field như lúc lưu (chạy tiếp y hệt). */
+  setFlowDirty(dirty: boolean): void {
+    this.flowDirty = dirty;
+  }
+
   removePlayer(id: PeerId): void {
     this.players.delete(id);
     this.flowDirty = true;

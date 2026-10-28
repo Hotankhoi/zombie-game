@@ -107,6 +107,8 @@ là bản **trên đĩa**: không chia mẩu, không sai số. Hai thứ dùng c
 - Tự lưu: **mỗi 30 s**, ngay khi đợt tràn kết thúc, và khi tab host bị ẩn/đóng (`visibilitychange`/`pagehide`, cố gắng
   hết sức). Chỉ lưu loot đã được mọi người xác nhận (chưa → thử lại tick sau).
 - Đổi host: host mới tự lưu theo nhịp 30 s vào IndexedDB của máy mình.
+- Mở một phòng (kể cả **tải lại trang**) mà máy mình có bản lưu của phòng đó và phòng chưa chạy (chưa có host) → máy mình
+  lên host với thế giới đã lưu. Muốn thế giới mới: "Tạo phòng mới".
 - Phòng chờ (nút do A thêm vào bảng của B, `client/save/saveMenu.ts`):
   - **Tiếp tục thế giới đã lưu** (bản mới nhất, hiện phòng + ngày + giờ lưu): mở đúng phòng đó; máy mình lên host thì nạp
     bản lưu. Phòng đang có người chơi (đã có host) → không nạp, báo lỗi.

@@ -71,6 +71,8 @@ export interface LootWorld {
   /** GĐ 3b — nạp đạn: loại đạn + số viên còn thiếu, hoặc lỗi; `beginReload` khi giao dịch trừ đạn đã xác nhận. */
   reloadNeed?(peer: PeerId): { ammo: ItemId; need: number } | { error: string };
   beginReload?(peer: PeerId, ammo: ItemId, amount: number): void;
+  /** Người này vừa nhận túi `owner` (claim thành công) — GĐ 5: trả nhân vật đã lưu. */
+  claimed?(peer: PeerId, owner: string): void;
 }
 
 export interface HostLootOptions {
@@ -569,6 +571,7 @@ export class HostLoot {
         this._authority.update(owner, (s) => addItems(s, item, s.revision));
     this.owners.set(from, owner);
     this.claimIds.set(from, requestId);
+    this.opts.world.claimed?.(from, owner);
     return { ok: true, inventory: this._authority.inventory(owner)! };
   }
 

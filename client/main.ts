@@ -19,6 +19,11 @@ import { HudScene } from './scenes/HudScene';
 import { WorldScene } from './scenes/WorldScene';
 import { mountDebugPanel } from './ui/debugPanel';
 import { mountLobbyPanel } from './ui/lobbyPanel';
+import { buildSave, restoreSave, type SaveFile } from '@shared/save/save';
+import { dayClock } from '@shared/sim/dayNight';
+import type { SaveParts } from '@host/hostServer';
+import { latestSave, putSave, takeResume } from './save/store';
+import { mountSaveMenu } from './save/saveMenu';
 
 // ---- Mã phòng: lấy từ link (?room=XXXXXX) hoặc tạo mới ----
 const url = new URL(window.location.href);
@@ -108,6 +113,23 @@ const devDropScale = import.meta.env.DEV && roido > 0 ? roido : undefined;
 // ?tran=5 (chỉ bản dev): đợt tràn chỉ 5 zombie, không Boss (thử thắng đợt tràn → thùng thưởng)
 const tran = Math.floor(Number(url.searchParams.get('tran')));
 const devHordeQuota = import.meta.env.DEV && tran >= 1 ? tran : undefined;
+// ---- GĐ 5: lưu game. "Tiếp tục thế giới đã lưu" / nhập file → nạp bản lưu mới nhất của phòng này nếu mình lên host
+// khi phòng chưa chạy. Host tự lưu (30 s, hết đợt tràn, tab ẩn/đóng) vào IndexedDB của máy mình. ----
+// tải lại trang / mở lại đúng phòng cũng tự nạp (GĐ 5: "tải lại trang vẫn còn căn cứ") — chỉ khi phòng chưa chạy
+const resumeAsked = takeResume(room);
+const resumeFile = await latestSave(room);
+const saveWaiters: ((f: SaveFile) => void)[] = [];
+let saveMenu: ReturnType<typeof mountSaveMenu> | null = null;
+function onSave(parts: SaveParts) {
+  const names: Record<string, string> = {};
+  for (const [peer, owner] of parts.owners) {
+    const n = peer === net.selfId ? name : session.peers.get(peer)?.name;
+    if (n) names[owner] = n;
+  }
+  const file = buildSave(parts.world, parts.loot, { room: room!, savedAt: new Date().toISOString(), names });
+  void putSave(file).then((ok) => ok && saveMenu?.saved(file));
+  for (const w of saveWaiters.splice(0)) w(file);
+}
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
@@ -116,6 +138,8 @@ const game = new NetGame(session.game, room, {
   groundExpireSec,
   devDropScale,
   devHordeQuota,
+  saved: resumeFile ? restoreSave(resumeFile) : undefined,
+  onSave,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 
@@ -132,7 +156,24 @@ phaser.scene.add('hud', HudScene, true);
 
 // ---- Giao diện HTML ----
 const hud = document.getElementById('hud')!;
+saveMenu = mountSaveMenu({
+  room,
+  isHost: () => game.role === 'host',
+  saveNow: () =>
+    new Promise((resolve) => {
+      if (!game.requestSave()) return resolve(null);
+      saveWaiters.push(resolve);
+      setTimeout(() => resolve(null), 3000);
+    }),
+});
+if (resumeAsked && !resumeFile) saveMenu.say('Không tìm thấy bản lưu của phòng này.', true);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') game.requestSave();
+});
+window.addEventListener('pagehide', () => game.requestSave());
+let savedLoadShown = false;
 const lobby = mountLobbyPanel(hud, {
+  extra: saveMenu.el,
   room,
   maxPlayers: MAX_PLAYERS,
   getName: () => name,
@@ -152,6 +193,14 @@ const debug = mountDebugPanel(hud, conditioned);
 const versionNotice = mountVersionNotice(document.body);
 
 function render() {
+  if (!savedLoadShown && resumeFile && (game.savedLoad === 'loaded' || game.savedLoad === 'rejected')) {
+    savedLoadShown = true;
+    if (game.savedLoad === 'loaded')
+      saveMenu?.say(
+        `Đã nạp thế giới đã lưu: ngày ${dayClock(resumeFile.tick).day}, lưu lúc ${new Date(resumeFile.savedAt).toLocaleTimeString('vi-VN')}.`,
+      );
+    else saveMenu?.say('Phòng này đang có người chơi (đã có host) — không nạp đè thế giới đã lưu.', true);
+  }
   lobby.update(session, netError);
   versionNotice.update(session.updateNotice);
   net.update();

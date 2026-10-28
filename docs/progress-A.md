@@ -294,6 +294,23 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   409 test. Browser pane (`?room=RWD002&ngay=15&gio=0.799&tran=3&zombies=0`): sống qua đêm tới sáng → thắng, thùng ở
   12 ô, đi tới, F → túi nhận 4 món, thùng biến mất, không lỗi console.
 
+- Việc 4: PR #52 mở. PR #21 (`docs/save-format.md`): merge `main`, **A chốt** định dạng (B chưa góp ý), trả lời mục 7 →
+  merge.
+- Việc 5 (`a/save-game`): `shared/save/save.ts` (A, mới) — `rekeyWorld` (PeerId ↔ ownerId cho người chơi, zombie đuổi,
+  zombie từ xác, xác, bảng thành tích), `buildSave` (cửa/tường → `map.changes` sắp xếp tất định), `parseSave` (kiểm tra
+  định dạng/phiên bản/map/seed/loot, lỗi tiếng Việt), `restoreSave`. Host: `HostServer.saved` (dựng thế giới từ file,
+  người nhận lại túi → `adoptSaved` trả nhân vật + đổi tham chiếu; người cuối về → `flowDirty` như lúc lưu),
+  `saveParts`/`pollSave`/`requestSave` (lưu mỗi 600 tick, khi hết đợt tràn, khi được yêu cầu; chỉ khi loot đã được mọi
+  người ACK); hook `claimed` trong HostLoot; worker `{t:'save'}` hai chiều. Client: `client/save/store.ts` (IndexedDB
+  `zombie-coop/saves`, khóa `room#0..2`, giữ 3 bản), `client/save/saveMenu.ts` (Tiếp tục / Xuất / Nhập), `main.ts` (mở
+  phòng có bản lưu mà phòng chưa chạy → nạp, kể cả tải lại trang; lưu khi tab ẩn/`pagehide`), `NetGame.saved/onSave/
+savedLoad`. Vùng B: `client/ui/lobbyPanel.ts` (+ tùy chọn `extra`, 2 dòng). 412 test. Test: lưu → JSON → nạp →
+  `world.hash()` khớp + loot giống hệt + lưu lại ra đúng file; người chưa vào lại vẫn có trong lần lưu sau; file hỏng/
+  sai seed/map/phiên bản bị từ chối; 2 NetGame trễ 150 ms + mất 5%: host tự lưu, trận mới nạp → người vào lại có túi +
+  vị trí cũ. Browser pane: `?room=SAV101&kit=1` đi, thả 2 đồ → tự lưu sau 30 s (3,9 KB) → tải lại (bỏ `kit`) → vị trí,
+  máu 45, túi, 2 đồ trên đất còn nguyên, "Đã nạp thế giới đã lưu"; nhập file hỏng → "Seed thế giới không khớp mã phòng";
+  xóa IndexedDB, nhập file đúng ở phòng khác → tự mở SAV101 và nạp. Chưa bấm thử "Xuất file save" (tải file).
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.

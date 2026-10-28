@@ -9,6 +9,8 @@ import { decodeRoomFull } from '@net/roomFull';
 import { BackupParts, WORLD_BACKUP_MSG, mergeBackup } from '@net/worldBackup';
 import { snapshotArea } from '@host/hostServer';
 import type { FromWorker, HostStats, ToWorker } from '@host/workerProtocol';
+import type { SaveParts } from '@host/hostServer';
+import type { SavedWorld } from '@shared/save/save';
 import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
 import type { AttackFx } from '@shared/sim/prediction';
@@ -34,6 +36,13 @@ export interface NetGameOptions {
   devDropScale?: number;
   /** CHỈ bản dev (`?tran=5`): mình làm host thì đợt tràn chỉ bấy nhiêu zombie, không Boss (thử thắng nhanh). */
   devHordeQuota?: number;
+  /**
+   * GĐ 5: thế giới đã lưu của phòng này ("Tiếp tục thế giới đã lưu" / nhập file). Chỉ dùng nếu mình lên host khi
+   * phòng chưa chạy (không có bản sao lưu/snapshot của host khác); phòng đang có host → bỏ (`savedLoad = 'rejected'`).
+   */
+  saved?: SavedWorld;
+  /** GĐ 5: mình là host — phần thế giới để ghép file save (mỗi 30 s, hết đợt tràn, `requestSave`). */
+  onSave?: (parts: SaveParts) => void;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
   /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
@@ -143,6 +152,10 @@ export class NetGame {
   private groundExpireSec: number | undefined;
   private devDropScale: number | undefined;
   private devHordeQuota: number | undefined;
+  private saved: SavedWorld | undefined;
+  private onSave: ((parts: SaveParts) => void) | undefined;
+  /** GĐ 5: thế giới đã lưu — chờ lên host / đã nạp / bị bỏ vì phòng đang chạy. */
+  savedLoad: 'none' | 'pending' | 'loaded' | 'rejected' = 'none';
   private devSpawnRegion: LootRegion | undefined;
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
@@ -168,6 +181,9 @@ export class NetGame {
     this.groundExpireSec = opts.groundExpireSec;
     this.devDropScale = opts.devDropScale;
     this.devHordeQuota = opts.devHordeQuota;
+    this.saved = opts.saved;
+    this.onSave = opts.onSave;
+    if (opts.saved) this.savedLoad = 'pending';
     this.devSpawnRegion = opts.devSpawnRegion;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
@@ -293,6 +309,11 @@ export class NetGame {
     const self = this.transport.selfId;
     if (host === self) this.startHost();
     else this.stopHost();
+    // GĐ 5: phòng đã có host khác (đang chạy) → không nạp thế giới đã lưu đè lên
+    if (host && host !== self && this.saved) {
+      this.saved = undefined;
+      this.savedLoad = 'rejected';
+    }
     if (this.sync.latest) this.migrations++;
     this.roomFull = null;
     this.sync.resetHost();
@@ -317,11 +338,16 @@ export class NetGame {
             else this.sync.receive(item.data);
           } else this.transport.send(item.data, { to: item.to, channel: item.channel });
         }
-      } else {
+      } else if (m.t === 'save') this.onSave?.(m);
+      else {
         this.hostStats = m.stats;
         this.election.tick();
       }
     };
+    // GĐ 5: thế giới đã lưu chỉ nạp khi phòng chưa chạy (không có gì của host trước)
+    const saved = this.saved && !restore ? this.saved : undefined;
+    if (this.saved) this.savedLoad = saved ? 'loaded' : 'rejected';
+    this.saved = undefined;
     if (this.testHooks) this.worker = this.testHooks.startHost(onMessage);
     else {
       const w = new Worker(new URL('../../host/worker.ts', import.meta.url), { type: 'module' });
@@ -335,16 +361,25 @@ export class NetGame {
       zombieCount: this.zombieCount,
       startTick: this.startTick,
       restore,
+      ...(saved ? { saved: saved.world } : {}),
       devSpawnRegion: this.devSpawnRegion,
       devDropScale: this.devDropScale,
       devHordeQuota: this.devHordeQuota,
       // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
       loot: {
         recover: { expected: [...keep] },
+        ...(saved ? { restore: saved.loot } : {}),
         starterKit: this.starterKit,
         ...(this.groundExpireSec ? { groundExpireTicks: this.groundExpireSec * SIM_TICK_HZ } : {}),
       },
     });
+  }
+
+  /** GĐ 5: mình là host → lưu ngay (worker gửi phần thế giới qua `onSave` khi loot đã xác nhận). */
+  requestSave(): boolean {
+    if (!this.worker) return false;
+    this.toWorker({ t: 'save' });
+    return true;
   }
 
   private stopHost(): void {

@@ -1,4 +1,4 @@
-import { NetGame, type HostRunner } from '@client/net/netGame';
+import { NetGame, type HostRunner, type NetGameOptions } from '@client/net/netGame';
 import { ConditionedTransport, type NetConditions } from '@net/conditions';
 import { LoopbackHub } from '@net/loopback';
 import { FakeTimers } from '@net/testTimers';
@@ -26,17 +26,21 @@ export class InProcessHost implements HostRunner {
         zombieCount: m.zombieCount,
         startTick: m.startTick,
         restore: m.restore,
+        saved: m.saved,
         devSpawnRegion: m.devSpawnRegion,
         loot: m.loot,
       });
     else if (m.t === 'in') this.server?.receive(m.from, m.data);
     else if (m.t === 'seen') this.server?.heard(m.peer);
+    else if (m.t === 'save') this.server?.requestSave();
     else this.server?.removePeer(m.peer);
   }
   step(): void {
     if (this.dead || !this.server) return;
     const items = this.server.tick();
     if (items.length > 0) this.onMessage({ t: 'out', items });
+    const save = this.server.pollSave();
+    if (save) this.onMessage({ t: 'save', ...save });
   }
   terminate(): void {
     this.dead = true;
@@ -94,6 +98,8 @@ export class TestMatch {
     resume = false,
     /** Chưa nối được ai trong bấy nhiêu ms (WebRTC sau khi tải lại nối chậm): không gửi/nhận gì. */
     connectAfterMs = 0,
+    /** Tùy chọn NetGame thêm (GĐ 5: `saved`, `onSave`). */
+    extra: Partial<NetGameOptions> = {},
   ): MatchNode {
     const blindUntil = this.timers.now() + connectAfterMs;
     const blind = () => this.timers.now() < blindUntil;
@@ -124,6 +130,7 @@ export class TestMatch {
     };
     node.game = new NetGame(transport, this.room, {
       zombieCount: 0,
+      ...extra,
       ...(typeof key === 'string' ? { playerKey: { key, resume } } : { storage: key }),
       test: {
         now: this.timers.now,
