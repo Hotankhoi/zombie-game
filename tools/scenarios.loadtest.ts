@@ -51,6 +51,27 @@ it('đo tải 4 người', { timeout: 30 * 60_000 }, () => {
       immortal: true,
       loot: [60, 120],
     }),
+    // giao thức 11: 128 đống đồ trên đất, ~1 đống hết hạn + 1 đống mới mỗi giây
+    // ngày 2: tick thế giới > 5 phút để rải được tick rơi
+    runLoadTest({
+      name: 'Bình thường + 128 đồ trên đất',
+      zombieCount: 200,
+      seconds: 60,
+      startDay: 2,
+      ground: 128,
+    }),
+    runLoadTest({ name: 'Bình thường ngày 2 (đối chứng)', zombieCount: 200, seconds: 60, startDay: 2 }),
+    runLoadTest({
+      name: 'Đợt tràn tối đa + 128 đồ trên đất',
+      zombieCount: 200,
+      seconds: 90,
+      latencyMs: 150,
+      loss: 0.05,
+      startDay: 150,
+      startTime: 0.799,
+      immortal: true,
+      ground: 128,
+    }),
   ];
   console.table(
     reports.map((r) => ({

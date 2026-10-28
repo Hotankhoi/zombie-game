@@ -11,8 +11,11 @@
  * 9: GĐ 3b giáp — mũ/áo/quần (danh mục vật phẩm thêm 3 món), `LOOT_VERSION` 2, giáp trong khối chỉ số, bản lưu 125 v10.
  * 8: GĐ 3b vũ khí — host xử lý `equip`/`reload`, sự kiện bắn, khối trang bị, input có tick đang xem, bản lưu 125 v9.
  * 7: GĐ 3b dùng đồ — host xử lý `use`, mã lỗi loot mới, khối chỉ số thêm hồi máu dần/đứng yên, bản lưu 125 v8 (A).
+ * 10: thanh nhanh + thả/nhặt đồ (B, #48/#49).
+ * 11: đồ trên đất có tick rơi `t` (tự dọn sau 5 phút, gộp đồ gần nhau), vị trí 1/32 ô, phần đổi 112 chỉ mang đồ rơi
+ *     đã đổi/đã mất thay vì cả danh sách (A).
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

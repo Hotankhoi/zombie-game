@@ -1,5 +1,5 @@
 import type { GroundItemWire } from '../types/loot';
-import { isGroundItems } from './ground';
+import { isGroundItems, placeGround, sweepGround } from './ground';
 import type { ItemStack } from '../inventory/inventory';
 import { LOOT_INTERACTION } from '../data/lootInteraction';
 import {
@@ -175,6 +175,8 @@ export class LootAuthority {
     expectedRevision: number,
     at: { x: number; y: number },
     refund?: ItemStack,
+    /** Tick thế giới lúc thả (A, giao thức 11: đồ tự dọn sau GROUND.expireTicks). */
+    tick = 0,
   ): AuthorityResult {
     const bag = this.inventory(actor.id);
     if (!bag) return { ok: false, error: 'unknown_player' };
@@ -186,9 +188,12 @@ export class LootAuthority {
     if (!stack) return { ok: false, error: 'empty_slot' };
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity)
       return { ok: false, error: 'invalid_quantity' };
-    if (this.drops.length >= 128 || !this.canAdvance()) return { ok: false, error: 'state_limit' };
+    if (!this.canAdvance()) return { ok: false, error: 'state_limit' };
     if (!Number.isFinite(at.x) || !Number.isFinite(at.y) || Math.hypot(at.x - actor.x, at.y - actor.y) > 2)
       return { ok: false, error: 'out_of_reach' };
+    // A (giao thức 11): gộp vào đống cùng loại gần đó; chỉ hết chỗ khi cần đống mới mà đã đủ GROUND.max
+    const placed = placeGround(this.drops, { ...stack, quantity }, at, tick, 'd' + (this.revision + 1));
+    if (!placed) return { ok: false, error: 'state_limit' };
     const slots = [...bag.slots];
     slots[slot] = stack.quantity === quantity ? null : { ...stack, quantity: stack.quantity - quantity };
     let next = { ...bag, slots, revision: bag.revision + 1 };
@@ -199,8 +204,29 @@ export class LootAuthority {
     }
     this.revision++;
     this.inventories.set(actor.id, next);
-    this.drops.push({ id: 'd' + this.revision, x: at.x, y: at.y, stack: { ...stack, quantity } });
+    this.drops = placed;
     return { ok: true, inventory: clone(next) };
+  }
+  /**
+   * Host-only (A, giao thức 11): đặt đồ xuống đất không qua túi ai (zombie rơi đồ…), gộp như `drop`. false = hết chỗ.
+   */
+  spawnGround(stack: ItemStack, at: { x: number; y: number }, tick: number): boolean {
+    if (!this.canAdvance() || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return false;
+    if (!Number.isSafeInteger(tick) || tick < 0) return false;
+    const placed = placeGround(this.drops, stack, at, tick, 'd' + (this.revision + 1));
+    if (!placed) return false;
+    this.drops = placed;
+    this.revision++;
+    return true;
+  }
+  /** Host-only (A, giao thức 11): bỏ đồ nằm quá GROUND.expireTicks, gộp đống gần nhau. true = có đổi (revision + 1). */
+  sweepGround(tick: number, expireTicks?: number): boolean {
+    if (!this.canAdvance()) return false;
+    const next = sweepGround(this.drops, tick, expireTicks);
+    if (!next) return false;
+    this.drops = next;
+    this.revision++;
+    return true;
   }
   pickup(
     actor: LootActor,

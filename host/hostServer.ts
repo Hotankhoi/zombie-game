@@ -83,6 +83,8 @@ export interface HostServerOptions {
     random?: () => string;
     /** CHỈ bản dev (`?kit=1`): đồ có sẵn trong túi mới. */
     starterKit?: readonly ItemStack[];
+    /** CHỈ bản dev (`?dondat=`). */
+    groundExpireTicks?: number;
   };
 }
 

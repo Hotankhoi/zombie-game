@@ -20,7 +20,7 @@ describe('ground item atomic state', () => {
       revision: state.revision + 1,
       inventories: [],
       chests: [],
-      drops: [],
+      dropsRemoved: [state.drops![0]!.id],
     });
     expect(merged?.drops ?? []).toEqual([]);
     expect(isGroundItems([{ ...state.drops![0], x: NaN }])).toBe(false);

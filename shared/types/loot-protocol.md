@@ -1,4 +1,4 @@
-# Hợp đồng loot online (từ v3; hiện tại v9 — xem mục "Tương thích")
+# Hợp đồng loot online (từ v3; hiện tại v11 — xem mục "Tương thích")
 
 PR này chỉ khai báo hợp đồng và tăng `PROTOCOL_VERSION` lên 3 (A dùng v2 ở PR #6). Chưa có codec hay kết nối gameplay. Khi tích hợp các PR xếp chồng, giữ phiên bản 3; v1/v2 không được vào cùng phòng v3.
 
@@ -60,3 +60,15 @@ Thêm 3 hành động vào `LootAction` (mã 8, 9, 10 trong `net/lootCodec.ts`, 
 - `equip` không sửa túi → áp ngay; host chỉ kiểm tra món có trong túi của người gửi.
 - `ChestWire.version` nhận `1 | 2`: bảng sinh rương mới (giáp) tăng `LOOT_VERSION` lên 2 ở PR giáp.
 - Ở PR hợp đồng host còn trả `invalid_command` cho 3 hành động này; các PR 3b sau mới xử lý (và tăng `PROTOCOL_VERSION`).
+
+## v11 — đồ trên đất tự dọn + gộp (A, PR `a/ground-cleanup`)
+
+- `GroundItemWire.t`: tick thế giới lúc đống đồ rơi / được gộp thêm gần nhất. Host (`HostLoot.flush`, mỗi
+  `GROUND.sweepEveryTicks` = 20 tick) bỏ đống có `tick - t ≥ GROUND.expireTicks` (6000 = 5 phút) và gộp đống cùng
+  `itemId` + `rarity` cách nhau ≤ `GROUND.mergeRadius` (0.5 ô) tới `maxStack` (đống id nhỏ nhận, `t` lấy mới hơn).
+  Thả/rơi đồ cũng gộp ngay vào đống gần đó. Số cân bằng: `shared/data/ground.ts`.
+- Vị trí đống làm tròn 1/32 ô khi host tạo (`snapGround`); trên dây: id = varint số sau chữ `d`, x/y = zigzag varint
+  ×32, `t` varint, ô đồ như túi (~10–17 byte/đống thay vì ~30).
+- Phần đổi 112 (`LootPatch`): `dropsSet` (đống thêm/đổi, thay theo id) + `dropsRemoved` (id đã mất) thay cho
+  `drops` (cả danh sách). Bên nhận ghép rồi sắp theo số id (host luôn giữ thứ tự đó). Bản đầy đủ giữ cả danh sách.
+- `LootAuthority.spawnGround(stack, at, tick)` (host đặt đồ không qua túi — zombie rơi đồ) và `sweepGround(tick)`.

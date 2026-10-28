@@ -13,7 +13,7 @@ import { worldSeedForRoom } from '@shared/mapgen/world';
 import type { PlayerInput } from '@shared/sim/input';
 import type { AttackFx } from '@shared/sim/prediction';
 import { MapgenSource } from '@shared/sim/mapgenSource';
-import type { PeerId } from '@shared/types';
+import { SIM_TICK_HZ, type PeerId } from '@shared/types';
 import type { ItemStack } from '@shared/inventory/inventory';
 import { LOOT_REGIONS, type LootRegion } from '@shared/data/loot';
 import { measureSimMs } from './benchmark';
@@ -28,6 +28,8 @@ export interface NetGameOptions {
   starterKit?: ItemStack[];
   /** CHỈ bản dev (`?den=police`): mình làm host thì người vào trận đứng cạnh rương của khu này. */
   devSpawnRegion?: LootRegion;
+  /** CHỈ bản dev (`?dondat=giây`): mình làm host thì đồ trên đất hết hạn sau bấy nhiêu giây (thử tự dọn). */
+  groundExpireSec?: number;
   /** Ping (ms) tới một người, null nếu chưa đo — để tính điểm làm host. */
   rttOf?: (id: PeerId) => number | null;
   /** playerKey cố định (test). Không có thì đọc/ghi `storage` (mặc định localStorage + sessionStorage). */
@@ -134,6 +136,7 @@ export class NetGame {
   private zombieCount: number | undefined;
   private startTick: number | undefined;
   private starterKit: ItemStack[] | undefined;
+  private groundExpireSec: number | undefined;
   private devSpawnRegion: LootRegion | undefined;
   private readonly now: () => number;
   /** Lần cuối báo worker "vẫn nghe" từng người. */
@@ -156,6 +159,7 @@ export class NetGame {
     this.zombieCount = opts.zombieCount;
     this.startTick = opts.startTick;
     this.starterKit = opts.starterKit;
+    this.groundExpireSec = opts.groundExpireSec;
     this.devSpawnRegion = opts.devSpawnRegion;
     this.map = new MapgenSource(this.seed);
     this.sync = new ClientSync(transport.selfId, this.map);
@@ -325,7 +329,11 @@ export class NetGame {
       restore,
       devSpawnRegion: this.devSpawnRegion,
       // loot: thu bản replica của mọi người (cả mình — ClientLoot tự gửi) rồi chọn bản mới nhất trước khi nhận ghi
-      loot: { recover: { expected: [...keep] }, starterKit: this.starterKit },
+      loot: {
+        recover: { expected: [...keep] },
+        starterKit: this.starterKit,
+        ...(this.groundExpireSec ? { groundExpireTicks: this.groundExpireSec * SIM_TICK_HZ } : {}),
+      },
     });
   }
 

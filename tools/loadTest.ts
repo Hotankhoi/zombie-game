@@ -2,6 +2,7 @@ import { ClientLoot } from '@net/clientLoot';
 import { ClientSync } from '@net/clientSync';
 import { GameMsg } from '@net/gameCodec';
 import { isLootPacket } from '@net/lootCodec';
+import { GROUND } from '@shared/data/ground';
 import { WORLD_BACKUP_MSG, decodeBackupPart } from '@net/worldBackup';
 import { HostServer } from '@host/hostServer';
 import { worldSeedForRoom } from '@shared/mapgen/world';
@@ -35,6 +36,11 @@ export interface LoadTestOptions {
    * tiếng súng kéo bầy.
    */
   guns?: boolean;
+  /**
+   * Giao thức 11: giữ bấy nhiêu đống đồ trên đất quanh điểm xuất phát (≤ GROUND.max). Tick rơi rải đều để ~1 đống hết
+   * hạn mỗi giây (đi đúng đường tự dọn của host), mỗi giây rơi thêm 1 đống mới bù vào → phần đổi + bản đầy đủ đều có đồ.
+   */
+  ground?: number;
 }
 
 export interface LoadReport {
@@ -188,6 +194,7 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
         toHost.splice(i, 1);
       } else i++;
     }
+    if (opts.ground) groundChurn(host, opts.ground, t);
 
     const h0 = performance.now();
     const out = host.tick();
@@ -325,4 +332,32 @@ export function runLoadTest(opts: LoadTestOptions): LoadReport {
 function statusOf(p: { respawnIn: number; downedFor: number } | null): string {
   if (!p) return 'none';
   return p.respawnIn > 0 ? 'dead' : p.downedFor > 0 ? 'downed' : 'up';
+}
+
+const GROUND_ITEMS = ['bandage', 'water', 'canned_food', 'pistol_ammo', 'scrap', 'rifle_ammo'] as const;
+const GROUND_RARITIES = ['common', 'uncommon', 'rare'] as const;
+let groundNext = 0;
+/** Đồ trên đất cho đo tải (LoadTestOptions.ground): ô lưới 2×2 quanh điểm xuất phát, không đống nào gộp với nhau. */
+function groundChurn(host: HostServer, count: number, t: number): void {
+  const a = host.loot.authority;
+  const s = host.world.map.spawn;
+  const tick = host.world.tick;
+  const put = (born: number) => {
+    const i = groundNext++;
+    const cell = i % 256;
+    a.spawnGround(
+      {
+        itemId: GROUND_ITEMS[i % GROUND_ITEMS.length]!,
+        rarity: GROUND_RARITIES[i % GROUND_RARITIES.length]!,
+        quantity: 1 + (i % 5),
+      },
+      { x: s.x - 16 + (cell % 16) * 2 + 0.5, y: s.y - 16 + Math.floor(cell / 16) * 2 + 0.5 },
+      born,
+    );
+  };
+  if (t === 40) {
+    groundNext = 0;
+    // đống thứ k hết hạn sau k giây
+    for (let k = 0; k < count; k++) put(Math.max(0, tick - GROUND.expireTicks + (k + 1) * 20));
+  } else if (t > 40 && t % 20 === 0 && a.groundItems().length < count) put(tick);
 }

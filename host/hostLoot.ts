@@ -16,8 +16,15 @@ import {
   type ItemStack,
 } from '@shared/inventory/inventory';
 import type { ItemId } from '@shared/data/items';
+import { GROUND } from '@shared/data/ground';
 import type { ChestLocation } from '@shared/mapgen/chests';
-import { LootMessage, type ChestWire, type LootReplicaWire, type LootRequest } from '@shared/types/loot';
+import {
+  LootMessage,
+  type ChestWire,
+  type GroundItemWire,
+  type LootReplicaWire,
+  type LootRequest,
+} from '@shared/types/loot';
 import type { PeerId } from '@shared/types';
 
 /** Mỗi người tối đa bấy nhiêu yêu cầu loot mỗi giây (gom dồn tối đa LOOT_BURST). Thao tác bằng tay ~2–5/giây. */
@@ -81,6 +88,8 @@ export interface HostLootOptions {
   random?: () => string;
   /** CHỈ bản dev (`?kit=1`): túi vừa tạo được thêm sẵn những món này để thử dùng đồ. */
   starterKit?: readonly ItemStack[];
+  /** CHỈ bản dev (`?dondat=`): đồ trên đất hết hạn sau bấy nhiêu tick thay vì GROUND.expireTicks. */
+  groundExpireTicks?: number;
 }
 
 /** Term = `<epoch>.<ngẫu nhiên>`: khác nhau mỗi lần lên host (kể cả cùng máy), so được lần nào mới hơn. */
@@ -146,6 +155,8 @@ export class HostLoot {
   private dirtyChests = new Set<string>();
   /** Revision của lần phát phần đổi gần nhất. */
   private broadcast = 0;
+  /** Đồ trên đất lúc phát gần nhất (id → đống) — phần đổi chỉ mang đống khác đi / đã mất (giao thức 11). */
+  private sentDrops = new Map<string, GroundItemWire>();
   private out: { to: PeerId; data: Uint8Array }[] = [];
   private tick = 0;
   /** Hiệu ứng mà `apply` vừa chuẩn bị (dùng đồ) — `request` gắn vào kết quả đang chờ xác nhận. */
@@ -241,6 +252,8 @@ export class HostLoot {
     }
     for (const me of this.peers.values())
       me.tokens = Math.min(LOOT_BURST, me.tokens + (dt * LOOT_RATE_PER_SEC) / TICK_HZ);
+    // đồ trên đất: hết hạn / gộp — theo tick thế giới (tất định, đổi host vẫn đúng hạn)
+    if (tick % GROUND.sweepEveryTicks === 0) this._authority.sweepGround(tick, this.opts.groundExpireTicks);
     const rev = this._authority.currentRevision();
     if (rev !== this.broadcast) {
       const patch = this.patch(this.broadcast, rev);
@@ -287,6 +300,15 @@ export class HostLoot {
     return result;
   }
 
+  /**
+   * Host tự đặt đồ xuống đất (zombie rơi đồ…): gộp với đống gần đó; false = hết chỗ (GROUND.max) hoặc đang thu bản
+   * replica. Phát cho mọi người ở `flush` như mọi thay đổi khác.
+   */
+  spawnGround(stack: ItemStack, at: { x: number; y: number }): boolean {
+    if (this.recovery) return false;
+    return this._authority.spawnGround(stack, at, this.tick);
+  }
+
   /** Bản đầy đủ hiện tại. */
   replica(): LootReplicaWire {
     return this._authority.snapshot() as LootReplicaWire;
@@ -306,6 +328,7 @@ export class HostLoot {
     this._epoch = epoch;
     this._term = newTerm(epoch, this.opts.random);
     this.broadcast = this._authority.currentRevision();
+    this.sentDrops = new Map(this._authority.groundItems().map((d) => [d.id, d]));
   }
 
   /** Bản replica một người gửi lúc host mới thu: giữ bản mới nhất theo (epoch của term, revision). */
@@ -391,6 +414,7 @@ export class HostLoot {
           a.expectedRevision,
           at,
           item ? this.opts.world.dropRefund?.(from, item) : undefined,
+          this.tick,
         );
         if (result.ok && item) this.opts.world.dropped?.(from, item);
         return result;
@@ -592,13 +616,38 @@ export class HostLoot {
       const c = this._authority.chest(id);
       if (c) chests.push(c as ChestWire);
     }
-    return { baseRevision: base, revision, inventories, chests, drops: this._authority.groundItems() };
+    // đồ trên đất: so với bản đã phát lần trước
+    const now = this._authority.groundItems();
+    const dropsSet = now.filter((d) => !sameDrop(this.sentDrops.get(d.id), d));
+    const ids = new Set(now.map((d) => d.id));
+    const dropsRemoved = [...this.sentDrops.keys()].filter((id) => !ids.has(id));
+    this.sentDrops = new Map(now.map((d) => [d.id, d]));
+    return {
+      baseRevision: base,
+      revision,
+      inventories,
+      chests,
+      ...(dropsSet.length ? { dropsSet } : {}),
+      ...(dropsRemoved.length ? { dropsRemoved } : {}),
+    };
   }
 
   private push(to: PeerId, data: Uint8Array): void {
     this.stats.bytes += data.length;
     this.out.push({ to, data });
   }
+}
+
+function sameDrop(a: GroundItemWire | undefined, b: GroundItemWire): boolean {
+  return (
+    !!a &&
+    a.x === b.x &&
+    a.y === b.y &&
+    a.t === b.t &&
+    a.stack.itemId === b.stack.itemId &&
+    a.stack.rarity === b.stack.rarity &&
+    a.stack.quantity === b.stack.quantity
+  );
 }
 
 /** Lỗi ở cửa kiểm tra người chơi/tầm với — kết quả không kèm nội dung rương. */

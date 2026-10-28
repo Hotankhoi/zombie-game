@@ -135,7 +135,8 @@ describe('drop/pickup through four real clients with latency', () => {
     const all = m.server().loot.authority.drop(actor, 1, 19, one.inventory.revision, { x: 17, y: 16.5 });
     expect(all.ok).toBe(true);
     const drops = m.server().loot.authority.groundItems();
-    expect(drops.map((d) => d.stack.quantity)).toEqual([1, 19]);
+    // A (giao thức 11): 2 lần thả cùng chỗ, cùng loại + độ hiếm → gộp 1 đống (tổng vẫn đủ 20)
+    expect(drops.map((d) => d.stack.quantity)).toEqual([20]);
     m.server().loot.authority.update(owner, (s) => ({
       ...addItems(s, { itemId: 'knife', rarity: 'epic', quantity: 11 }, s.revision),
     }));
