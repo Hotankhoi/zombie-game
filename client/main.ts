@@ -105,6 +105,9 @@ const groundExpireSec = import.meta.env.DEV && dondat >= 1 ? Math.floor(dondat) 
 // ?roido=10 (chỉ bản dev): zombie rơi đồ nhiều gấp 10 lần (thử nhanh)
 const roido = Number(url.searchParams.get('roido'));
 const devDropScale = import.meta.env.DEV && roido > 0 ? roido : undefined;
+// ?tran=5 (chỉ bản dev): đợt tràn chỉ 5 zombie, không Boss (thử thắng đợt tràn → thùng thưởng)
+const tran = Math.floor(Number(url.searchParams.get('tran')));
+const devHordeQuota = import.meta.env.DEV && tran >= 1 ? tran : undefined;
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
@@ -112,6 +115,7 @@ const game = new NetGame(session.game, room, {
   devSpawnRegion,
   groundExpireSec,
   devDropScale,
+  devHordeQuota,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 

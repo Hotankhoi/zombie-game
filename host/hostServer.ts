@@ -78,6 +78,8 @@ export interface HostServerOptions {
   devSpawnRegion?: LootRegion;
   /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
   devDropScale?: number;
+  /** CHỈ bản dev (`?tran=`): đợt tràn chỉ bấy nhiêu zombie, không Boss. */
+  devHordeQuota?: number;
   /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
   loot?: {
     restore?: LootReplicaWire;
@@ -133,6 +135,7 @@ export class HostServer {
       zombieCount: opts.zombieCount,
       restore: opts.restore,
       dropChanceScale: opts.devDropScale,
+      devHordeQuota: opts.devHordeQuota,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
     const h = opts.restore?.horde;

@@ -140,6 +140,8 @@ export interface SimWorldOptions {
   restore?: WorldState;
   /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
   dropChanceScale?: number;
+  /** CHỈ bản dev (`?tran=`): đợt tràn chỉ bấy nhiêu zombie, không Boss (thử thắng đợt tràn nhanh). */
+  devHordeQuota?: number;
 }
 
 /** Bắn súng: lùi vị trí zombie tối đa bấy nhiêu tick (500 ms) về lúc người bắn nhìn thấy (bù trễ). */
@@ -183,6 +185,7 @@ export class SimWorld {
   /** Zombie chết trong tick rơi đồ (host đặt xuống đất — hệ thả/nhặt của B). */
   zombieDrops: ZombieDrop[] = [];
   private dropChanceScale: number;
+  private devHordeQuota: number | undefined;
   /** Tiếng ồn phát ra trong tick, zombie nghe ở đầu pha zombie (cùng tick hoặc tick sau). */
   private noises: Noise[] = [];
   /** Đợt tràn đang diễn ra hoặc đợt gần nhất (GĐ 5). */
@@ -220,6 +223,7 @@ export class SimWorld {
     this.map = opts.map;
     this.zombieCount = opts.zombieCount ?? Z.population;
     this.dropChanceScale = opts.dropChanceScale ?? 1;
+    this.devHordeQuota = opts.devHordeQuota;
     const s = opts.restore;
     if (!s) {
       this.rng = new Rng(opts.seed);
@@ -469,7 +473,8 @@ export class SimWorld {
     const due = clock.day % HORDE.everyDays === 0 && clock.time >= DAY.nightStart;
     const number = Math.floor(clock.day / HORDE.everyDays);
     if (due && (!this.horde || this.horde.number < number) && alive.length > 0) {
-      const quota = Math.min(HORDE.maxCount, HORDE.baseCount + HORDE.perHorde * (number - 1));
+      const quota =
+        this.devHordeQuota ?? Math.min(HORDE.maxCount, HORDE.baseCount + HORDE.perHorde * (number - 1));
       const endTick =
         tickOfDay(clock.day + 1) + Math.round((DAY.dawnEnd * DAY.lengthSec * 1000) / SIM_TICK_MS);
       this.horde = {
@@ -479,7 +484,7 @@ export class SimWorld {
         endTick,
         quota,
         spawned: 0,
-        bosses: Math.min(HORDE.maxBosses, number),
+        bosses: this.devHordeQuota !== undefined ? 0 : Math.min(HORDE.maxBosses, number),
         bossesSpawned: 0,
         spawnBudget: 0,
         survived: null,
