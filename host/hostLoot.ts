@@ -22,6 +22,7 @@ import {
   LootMessage,
   type ChestWire,
   type GroundItemWire,
+  type RewardCrateWire,
   type LootReplicaWire,
   type LootRequest,
 } from '@shared/types/loot';
@@ -157,6 +158,8 @@ export class HostLoot {
   private broadcast = 0;
   /** Đồ trên đất lúc phát gần nhất (id → đống) — phần đổi chỉ mang đống khác đi / đã mất (giao thức 11). */
   private sentDrops = new Map<string, GroundItemWire>();
+  /** Thùng thưởng lúc phát gần nhất (JSON) — phần đổi chỉ mang danh sách thùng khi khác. */
+  private sentRewards = '';
   private out: { to: PeerId; data: Uint8Array }[] = [];
   private tick = 0;
   /** Hiệu ứng mà `apply` vừa chuẩn bị (dùng đồ) — `request` gắn vào kết quả đang chờ xác nhận. */
@@ -309,6 +312,12 @@ export class HostLoot {
     return this._authority.spawnGround(stack, at, this.tick);
   }
 
+  /** Đặt thùng thưởng đợt tràn (giao thức 12). false = đang thu bản replica / đã có / quá giới hạn. */
+  addReward(crate: RewardCrateWire): boolean {
+    if (this.recovery) return false;
+    return this._authority.addReward(crate);
+  }
+
   /** Bản đầy đủ hiện tại. */
   replica(): LootReplicaWire {
     return this._authority.snapshot() as LootReplicaWire;
@@ -329,6 +338,7 @@ export class HostLoot {
     this._term = newTerm(epoch, this.opts.random);
     this.broadcast = this._authority.currentRevision();
     this.sentDrops = new Map(this._authority.groundItems().map((d) => [d.id, d]));
+    this.sentRewards = JSON.stringify(this._authority.rewardCrates());
   }
 
   /** Bản replica một người gửi lúc host mới thu: giữ bản mới nhất theo (epoch của term, revision). */
@@ -423,6 +433,13 @@ export class HostLoot {
         return this._authority.pickup(
           actor,
           a.dropId,
+          a.expectedRevision,
+          (p) => this.opts.world.seesGround?.(from, p) ?? false,
+        );
+      case 'reward':
+        return this._authority.takeReward(
+          actor,
+          a.crateId,
           a.expectedRevision,
           (p) => this.opts.world.seesGround?.(from, p) ?? false,
         );
@@ -622,6 +639,10 @@ export class HostLoot {
     const ids = new Set(now.map((d) => d.id));
     const dropsRemoved = [...this.sentDrops.keys()].filter((id) => !ids.has(id));
     this.sentDrops = new Map(now.map((d) => [d.id, d]));
+    const rewards = this._authority.rewardCrates();
+    const rewardsJson = JSON.stringify(rewards);
+    const rewardsChanged = rewardsJson !== this.sentRewards;
+    this.sentRewards = rewardsJson;
     return {
       baseRevision: base,
       revision,
@@ -629,6 +650,7 @@ export class HostLoot {
       chests,
       ...(dropsSet.length ? { dropsSet } : {}),
       ...(dropsRemoved.length ? { dropsRemoved } : {}),
+      ...(rewardsChanged ? { rewards } : {}),
     };
   }
 

@@ -1,6 +1,7 @@
 import type { GroundItemWire } from '@shared/types/loot';
 import { isGroundItems } from '@shared/loot/ground';
 import { GROUND } from '@shared/data/ground';
+import { MAX_REWARD_CRATES, MAX_SHARE_SLOTS, isRewardCrates, rewardCrateId } from '@shared/loot/reward';
 import { BACKPACKS, ITEMS, RARITIES } from '@shared/data/items';
 import { LOOT_REGIONS } from '@shared/data/loot';
 import { LOOT_INTERACTION } from '@shared/data/lootInteraction';
@@ -21,6 +22,7 @@ import {
   type LootReply,
   type LootRequest,
   type LootStackWire,
+  type RewardCrateWire,
 } from '@shared/types/loot';
 import { Reader, Writer } from './gameCodec';
 
@@ -90,6 +92,8 @@ export const LOOT_ERRORS = [
   'mag_full',
   'no_ammo',
   'reloading',
+  // thùng thưởng đợt tràn (giao thức 12)
+  'no_reward',
 ] as const;
 export type LootErrorCode = (typeof LOOT_ERRORS)[number];
 
@@ -118,6 +122,7 @@ const ACTIONS = [
   'unequip',
   'drop',
   'pickup',
+  'reward',
 ] as const;
 const FULL = 0;
 const PATCH = 1;
@@ -130,6 +135,8 @@ export interface LootPatch {
    */
   readonly dropsSet?: readonly GroundItemWire[];
   readonly dropsRemoved?: readonly string[];
+  /** Giao thức 12: cả danh sách thùng thưởng khi có đổi (hiếm); không có = không đổi. */
+  readonly rewards?: readonly RewardCrateWire[];
   readonly baseRevision: number;
   readonly revision: number;
   /** Túi/rương thay thế nguyên khối (thêm mới nếu chưa có). Không bao giờ xóa. */
@@ -402,6 +409,46 @@ function readDrops(r: Reader): GroundItemWire[] {
   if (!isGroundItems(drops)) throw new RangeError('ground');
   return drops;
 }
+// ---------- thùng thưởng (giao thức 12) ----------
+
+function writeRewards(w: Writer, crates: readonly RewardCrateWire[]): void {
+  if (!isRewardCrates(crates)) throw new RangeError('reward crates');
+  w.u8(crates.length);
+  for (const c of crates) {
+    writeVarint(w, c.horde);
+    writeVarint(w, zig(Math.round(c.x * GROUND.grid)));
+    writeVarint(w, zig(Math.round(c.y * GROUND.grid)));
+    w.u8(c.shares.length);
+    for (const s of c.shares) {
+      writeInventoryId(w, s.owner);
+      w.u8(s.slots.length);
+      writeSlots(w, s.slots);
+    }
+  }
+}
+function readRewards(r: Reader): RewardCrateWire[] {
+  const n = r.u8();
+  if (n > MAX_REWARD_CRATES) throw new RangeError('reward count');
+  const crates: RewardCrateWire[] = [];
+  for (let i = 0; i < n; i++) {
+    const horde = readVarint(r);
+    const x = unzig(readVarint(r)) / GROUND.grid;
+    const y = unzig(readVarint(r)) / GROUND.grid;
+    const m = r.u8();
+    if (m > LOOT_INTERACTION.maxInventories) throw new RangeError('reward shares');
+    const shares: { owner: string; slots: (LootStackWire | null)[] }[] = [];
+    for (let k = 0; k < m; k++) {
+      const owner = readInventoryId(r);
+      const count = r.u8();
+      if (count > MAX_SHARE_SLOTS) throw new RangeError('reward slots');
+      shares.push({ owner, slots: readSlots(r, count) });
+    }
+    crates.push({ id: rewardCrateId(horde), x, y, horde, shares });
+  }
+  if (!isRewardCrates(crates)) throw new RangeError('reward');
+  return crates;
+}
+
 function writeDropIds(w: Writer, ids: readonly string[]): void {
   if (ids.length > GROUND.max) throw new RangeError('ground ids');
   w.u8(ids.length);
@@ -483,6 +530,10 @@ function writeAction(w: Writer, a: LootAction): void {
     case 'pickup':
       writeVarint(w, a.expectedRevision);
       writeToken(w, a.dropId);
+      return;
+    case 'reward':
+      writeVarint(w, a.expectedRevision);
+      writeToken(w, a.crateId);
       return;
     case 'sort':
       writeVarint(w, a.expectedRevision);
@@ -571,6 +622,8 @@ function readAction(r: Reader): LootAction {
       return { type, expectedRevision: readRevision(r), slot: readVarint(r), quantity: readQuantity(r) };
     case 'pickup':
       return { type, expectedRevision: readRevision(r), dropId: readToken(r) };
+    case 'reward':
+      return { type, expectedRevision: readRevision(r), crateId: readToken(r) };
     case 'reload':
       return { type, expectedRevision: readRevision(r) };
     case 'equip':
@@ -613,6 +666,8 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         writeEntries(w, d.inventories, d.chests);
         writeDrops(w, d.dropsSet ?? []);
         writeDropIds(w, d.dropsRemoved ?? []);
+        w.u8(d.rewards ? 1 : 0);
+        if (d.rewards) writeRewards(w, d.rewards);
       } else {
         const s = p.state;
         if (s.version !== 1) throw new RangeError('replica version');
@@ -622,6 +677,7 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         writeVarint(w, s.revision);
         writeEntries(w, s.inventories, s.chests);
         writeDrops(w, s.drops ?? []);
+        writeRewards(w, s.rewards ?? []);
       }
       break;
     case LootMessage.Ack:
@@ -673,10 +729,18 @@ export function decodeLoot(buf: Uint8Array): LootWirePacket | null {
           const revision = readRevision(r);
           const entries = readEntries(r);
           const drops = readDrops(r);
+          const rewards = readRewards(r);
           p = {
             type,
             term,
-            state: { ...(drops.length ? { drops } : {}), version: 1, seed, revision, ...entries },
+            state: {
+              ...(drops.length ? { drops } : {}),
+              ...(rewards.length ? { rewards } : {}),
+              version: 1,
+              seed,
+              revision,
+              ...entries,
+            },
           } satisfies LootReplica;
         } else if (form === PATCH) {
           const baseRevision = readRevision(r);
@@ -685,6 +749,9 @@ export function decodeLoot(buf: Uint8Array): LootWirePacket | null {
           const entries = readEntries(r);
           const dropsSet = readDrops(r);
           const dropsRemoved = readDropIds(r);
+          const hasRewards = r.u8();
+          if (hasRewards > 1) return null;
+          const rewards = hasRewards ? readRewards(r) : undefined;
           p = {
             type,
             term,
@@ -694,6 +761,7 @@ export function decodeLoot(buf: Uint8Array): LootWirePacket | null {
               ...entries,
               ...(dropsSet.length ? { dropsSet } : {}),
               ...(dropsRemoved.length ? { dropsRemoved } : {}),
+              ...(rewards ? { rewards } : {}),
             },
           } satisfies LootReplicaPatch;
         } else return null;
@@ -730,7 +798,8 @@ export function applyLootPatch(base: LootReplicaWire, patch: LootPatch): LootRep
   for (const c of patch.chests) chests.set(c.id, c);
   if (inventories.length > LOOT_INTERACTION.maxInventories || chests.size > LOOT_INTERACTION.maxChests)
     return null;
-  const { drops: old, ...rest } = base;
+  const { drops: old, rewards: oldRewards, ...rest } = base;
+  const rewards = patch.rewards ?? oldRewards ?? [];
   const removed = new Set(patch.dropsRemoved ?? []);
   const drops = (old ?? []).filter((d) => !removed.has(d.id));
   for (const d of patch.dropsSet ?? []) {
@@ -744,6 +813,7 @@ export function applyLootPatch(base: LootReplicaWire, patch: LootPatch): LootRep
   return {
     ...rest,
     ...(drops.length ? { drops } : {}),
+    ...(rewards.length ? { rewards } : {}),
     revision: patch.revision,
     inventories,
     chests: [...chests.values()],
@@ -758,6 +828,7 @@ export function isValidReplica(state: LootReplicaWire, seed: string): boolean {
 /** Chỉ kiểm tra phần mới của một phần đổi (phần cũ đã kiểm khi nhận) — rẻ hơn kiểm cả bản. */
 export function isValidPatch(patch: LootPatch, seed: string): boolean {
   if (!isGroundItems(patch.dropsSet ?? [])) return false;
+  if (patch.rewards && !isRewardCrates(patch.rewards)) return false;
   if (!(patch.dropsRemoved ?? []).every((id) => /^d[1-9][0-9]{0,15}$/.test(id))) return false;
   if (!patch.inventories.every((e) => isInventoryState(e.state))) return false;
   return patch.chests.every((c) => {

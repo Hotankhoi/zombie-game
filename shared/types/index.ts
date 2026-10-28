@@ -14,8 +14,9 @@
  * 10: thanh nhanh + thả/nhặt đồ (B, #48/#49).
  * 11: đồ trên đất có tick rơi `t` (tự dọn sau 5 phút, gộp đồ gần nhau), vị trí 1/32 ô, phần đổi 112 chỉ mang đồ rơi
  *     đã đổi/đã mất thay vì cả danh sách (A).
+ * 12: thùng thưởng đợt tràn — replica có `rewards`, intent `reward`, mã lỗi `no_reward` (A).
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

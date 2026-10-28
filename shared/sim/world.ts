@@ -854,6 +854,14 @@ export class SimWorld {
     return best ?? this.freeSpawn(self);
   }
 
+  /**
+   * Chỗ an toàn gần đội (thùng thưởng đợt tràn, A): cùng luật chỗ hồi sinh an toàn — ô đường gần người còn sống,
+   * không zombie trong PARTY.respawnSafeRadius, không trùng chỗ ai đứng.
+   */
+  safeSpot(): Vec2 {
+    return this.safeRespawn('');
+  }
+
   private respawn(p: PlayerState): void {
     const at = this.safeRespawn(p.id);
     p.x = at.x;

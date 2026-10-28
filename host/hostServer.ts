@@ -30,6 +30,8 @@ import { chestLocations } from '@shared/mapgen/chests';
 import { CHUNK_SIZE, generateChunk } from '@shared/mapgen/world';
 import type { LootRegion } from '@shared/data/loot';
 import { removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
+import { rewardCrateId, rollRewardShare } from '@shared/loot/reward';
+import { snapGround } from '@shared/loot/ground';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
 export const SNAPSHOT_EVERY = 2;
@@ -119,6 +121,8 @@ export class HostServer {
   private readonly seed: string;
   private readonly devRegion: LootRegion | undefined;
   private devChest: { x: number; y: number } | null | undefined;
+  /** Đợt tràn đã đặt thùng thưởng (hoặc đã xong trước khi máy này lên host) — không đặt lại. */
+  private rewardedHorde = 0;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
@@ -131,6 +135,8 @@ export class HostServer {
       dropChanceScale: opts.devDropScale,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
+    const h = opts.restore?.horde;
+    if (h && !h.active) this.rewardedHorde = h.number;
     this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
     this.devRegion = opts.devSpawnRegion;
     this.seed = opts.seed;
@@ -300,6 +306,7 @@ export class HostServer {
     if (this.world.mapChanges.length > 0) this.sendMapDelta(this.world.mapChanges, [...this.clients.keys()]);
     this.breakArmor();
     this.placeZombieDrops();
+    this.placeHordeReward();
     // loot trước sao lưu: mẩu 0 mang đúng bản vừa phát cho mọi người
     this.loot.flush(this.world.tick);
     for (const o of this.loot.drain()) this.out.push({ to: o.to, data: o.data, channel: 'reliable' });
@@ -381,6 +388,32 @@ export class HostServer {
         this.loot.spawnGround(item, at);
       });
     }
+  }
+
+  /**
+   * Đợt tràn vừa thắng (`horde.survived === true`): đặt 1 thùng thưởng huyền thoại ở chỗ an toàn gần đội, mỗi người
+   * đang trong trận (đã nhận túi) một phần riêng (giao thức 12). Loot đang thu bản replica → thử lại tick sau.
+   */
+  private placeHordeReward(): void {
+    const h = this.world.horde;
+    if (!h || h.active || h.survived !== true || h.number <= this.rewardedHorde) return;
+    const owners = [...new Set([...this.clients.keys()].map((id) => this.loot.ownerOf(id)))]
+      .filter((o): o is string => !!o)
+      .sort();
+    if (owners.length === 0) {
+      this.rewardedHorde = h.number;
+      return;
+    }
+    const at = this.world.safeSpot();
+    const ok = this.loot.addReward({
+      id: rewardCrateId(h.number),
+      x: snapGround(at.x),
+      y: snapGround(at.y),
+      horde: h.number,
+      shares: owners.map((owner) => ({ owner, slots: rollRewardShare(this.seed, h.number, owner) })),
+    });
+    // chỉ thử lại khi loot đang thu bản replica (đổi host); lỗi khác (đã có thùng, quá giới hạn) → thôi
+    if (ok || !this.loot.recovering) this.rewardedHorde = h.number;
   }
 
   /** Rương gần điểm xuất phát nhất của khu `devRegion` (tìm 1 lần, trong 7×7 chunk). */

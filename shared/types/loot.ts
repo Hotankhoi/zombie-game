@@ -33,8 +33,22 @@ export interface GroundItemWire {
   readonly t: number;
   readonly stack: LootStackWire;
 }
+/**
+ * Giao thức 12 (A): thùng thưởng huyền thoại sau đợt tràn thắng. Mỗi người trong trận lúc thắng có PHẦN RIÊNG (`owner`
+ * = ownerId) — chỉ người đó lấy được (intent `reward`), không tranh nhau. Thùng mất khi mọi phần đã rỗng.
+ */
+export interface RewardCrateWire {
+  /** `r<số đợt>`. */
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly horde: number;
+  readonly shares: readonly { readonly owner: string; readonly slots: readonly (LootStackWire | null)[] }[];
+}
 export interface LootReplicaWire {
   readonly drops?: readonly GroundItemWire[];
+  /** Giao thức 12: thùng thưởng đợt tràn đang nằm trên đất. */
+  readonly rewards?: readonly RewardCrateWire[];
   readonly version: 1;
   readonly seed: string;
   readonly revision: number;
@@ -52,6 +66,8 @@ export type LootAction =
   | { type: 'unequip' }
   | { type: 'drop'; slot: number; quantity: number; expectedRevision: number }
   | { type: 'pickup'; dropId: string; expectedRevision: number }
+  /** Giao thức 12 (A): lấy phần của mình trong thùng thưởng `crateId` (đứng trong tầm với + nhìn thấy). */
+  | { type: 'reward'; crateId: string; expectedRevision: number }
   /**
    * Nhận túi theo playerKey bí mật (v5, A). Host xác minh rồi gắn PeerId người gửi → ownerId = hash(key);
    * replica chỉ chứa ownerId, không bao giờ chứa key. Xem docs/save-format.md mục 4.

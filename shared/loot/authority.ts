@@ -1,4 +1,5 @@
-import type { GroundItemWire } from '../types/loot';
+import type { GroundItemWire, RewardCrateWire } from '../types/loot';
+import { MAX_REWARD_CRATES, isRewardCrates, takeShare } from './reward';
 import { isGroundItems, placeGround, sweepGround } from './ground';
 import type { ItemStack } from '../inventory/inventory';
 import { LOOT_INTERACTION } from '../data/lootInteraction';
@@ -21,6 +22,8 @@ export interface LootActor {
 }
 export interface LootSave {
   readonly drops?: readonly GroundItemWire[];
+  /** Giao thức 12 (A): thùng thưởng đợt tràn. */
+  readonly rewards?: readonly RewardCrateWire[];
   readonly version: 1;
   readonly seed: string;
   readonly revision: number;
@@ -37,6 +40,7 @@ export class LootAuthority {
   private chests = new Map<string, ChestState>();
   private revision = 0;
   private drops: GroundItemWire[] = [];
+  private rewards: RewardCrateWire[] = [];
 
   constructor(
     readonly seed: string,
@@ -48,6 +52,7 @@ export class LootAuthority {
       const saved = clone(restore);
       this.revision = saved.revision;
       this.drops = [...(saved.drops ?? [])];
+      this.rewards = [...(saved.rewards ?? [])];
       for (const entry of saved.inventories) this.inventories.set(entry.id, entry.state);
       for (const chest of saved.chests) this.chests.set(chest.id, chest);
     }
@@ -74,6 +79,7 @@ export class LootAuthority {
   snapshot(): LootSave {
     return clone({
       ...(this.drops.length ? { drops: this.drops } : {}),
+      ...(this.rewards.length ? { rewards: this.rewards } : {}),
       version: 1,
       seed: this.seed,
       revision: this.revision,
@@ -251,6 +257,50 @@ export class LootAuthority {
     this.revision++;
     return { ok: true, inventory: clone(result.state) };
   }
+  rewardCrates(): readonly RewardCrateWire[] {
+    return clone(this.rewards);
+  }
+  /** Host-only (A, giao thức 12): đặt thùng thưởng. false = đã có thùng id này / đủ MAX_REWARD_CRATES / dữ liệu sai. */
+  addReward(crate: RewardCrateWire): boolean {
+    if (!this.canAdvance() || this.rewards.length >= MAX_REWARD_CRATES) return false;
+    if (this.rewards.some((c) => c.id === crate.id) || !isRewardCrates([...this.rewards, crate]))
+      return false;
+    this.rewards.push(clone(crate));
+    this.revision++;
+    return true;
+  }
+  /**
+   * Lấy phần của mình trong thùng thưởng (A, giao thức 12): chỉ phần có `owner` = người gửi; món không vừa túi ở lại.
+   * Thùng mất khi mọi phần đã rỗng.
+   */
+  takeReward(
+    actor: LootActor,
+    crateId: string,
+    expectedRevision: number,
+    visible: (at: { x: number; y: number }) => boolean,
+  ): AuthorityResult {
+    const bag = this.inventories.get(actor.id);
+    if (!bag) return { ok: false, error: 'unknown_player' };
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    if (bag.revision !== expectedRevision) return { ok: false, error: 'stale_revision' };
+    const i = this.rewards.findIndex((c) => c.id === crateId);
+    const crate = this.rewards[i];
+    if (!crate) return { ok: false, error: 'no_reward' };
+    if (Math.hypot(actor.x - crate.x, actor.y - crate.y) > LOOT_INTERACTION.reach)
+      return { ok: false, error: 'out_of_reach' };
+    if (!visible(crate)) return { ok: false, error: 'blocked' };
+    const share = crate.shares.findIndex((s) => s.owner === actor.id);
+    if (share < 0 || crate.shares[share]!.slots.every((s) => !s)) return { ok: false, error: 'no_reward' };
+    if (!this.canAdvance()) return { ok: false, error: 'state_limit' };
+    const r = takeShare(bag, crate.shares[share]!.slots);
+    if (r.moved === 0) return { ok: false, error: 'inventory_full' };
+    const shares = crate.shares.map((s, k) => (k === share ? { owner: s.owner, slots: r.left } : s));
+    if (shares.every((s) => s.slots.every((x) => !x))) this.rewards.splice(i, 1);
+    else this.rewards[i] = { ...crate, shares };
+    this.inventories.set(actor.id, r.inventory);
+    this.revision++;
+    return { ok: true, inventory: clone(r.inventory) };
+  }
   private canAdvance() {
     return this.revision < Number.MAX_SAFE_INTEGER - 1;
   }
@@ -261,6 +311,7 @@ export function isLootSave(value: unknown, seed: string): value is LootSave {
   const s = value as LootSave;
   if (
     !isGroundItems(s.drops ?? []) ||
+    !isRewardCrates(s.rewards ?? []) ||
     s.version !== 1 ||
     s.seed !== seed ||
     !Number.isSafeInteger(s.revision) ||
