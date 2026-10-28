@@ -37,7 +37,7 @@ export function wearArmor(p: PlayerState, itemId: ItemId, rarity: Rarity): boole
   const def = ARMOR[itemId];
   if (!def) return false;
   const slot = def.slot;
-  if (p[CODE[slot]] === 0) p[DUR[slot]] = ARMOR_RULES.durability;
+  if (p[DUR[slot]] <= 0) p[DUR[slot]] = ARMOR_RULES.durability;
   p[CODE[slot]] = RARITY_ORDER.indexOf(rarity) + 1;
   return true;
 }

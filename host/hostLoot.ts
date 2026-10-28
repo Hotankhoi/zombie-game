@@ -54,6 +54,11 @@ export interface LootWorld {
   checkUse?(peer: PeerId, item: ItemStack, target: PeerId | null): string | null;
   applyUse?(peer: PeerId, item: ItemStack, target: PeerId | null): void;
   /** GĐ 3b — cầm vũ khí (món có trong túi). null = được; không có hàm → `not_equippable`. */
+  dropPoint?(peer: PeerId): { x: number; y: number } | null;
+  seesGround?(peer: PeerId, point: { x: number; y: number }): boolean;
+  dropRefund?(peer: PeerId, item: ItemStack): ItemStack | undefined;
+  dropped?(peer: PeerId, item: ItemStack): void;
+  unequip?(peer: PeerId): void;
   equip?(peer: PeerId, item: Omit<ItemStack, 'quantity'>): string | null;
   /** GĐ 3b — nạp đạn: loại đạn + số viên còn thiếu, hoặc lỗi; `beginReload` khi giao dịch trừ đạn đã xác nhận. */
   reloadNeed?(peer: PeerId): { ammo: ItemId; need: number } | { error: string };
@@ -372,6 +377,36 @@ export class HostLoot {
     const actor: LootActor = { id: owner, x: at.x, y: at.y, canInteract: at.up };
     const sees = (c: ChestLocation) => this.opts.world.sees(at, c);
     switch (a.type) {
+      case 'drop': {
+        // A pending reload has removed reserve ammo but has not installed it in
+        // the world yet. Finish that transaction before calculating a refund.
+        if (this.pending.some((p) => p.peer === from && p.effect)) return { ok: false, error: 'busy' };
+        const at = this.opts.world.dropPoint?.(from);
+        if (!at) return { ok: false, error: 'blocked' };
+        const item = this._authority.inventory(owner)?.slots[a.slot];
+        const result = this._authority.drop(
+          actor,
+          a.slot,
+          a.quantity,
+          a.expectedRevision,
+          at,
+          item ? this.opts.world.dropRefund?.(from, item) : undefined,
+        );
+        if (result.ok && item) this.opts.world.dropped?.(from, item);
+        return result;
+      }
+      case 'pickup':
+        return this._authority.pickup(
+          actor,
+          a.dropId,
+          a.expectedRevision,
+          (p) => this.opts.world.seesGround?.(from, p) ?? false,
+        );
+      case 'unequip': {
+        if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+        this.opts.world.unequip?.(from);
+        return { ok: true, inventory: this._authority.inventory(owner)! };
+      }
       case 'inventory': {
         const inventory = this._authority.inventory(owner);
         return inventory ? { ok: true, inventory } : { ok: false, error: 'unknown_player' };
@@ -390,8 +425,11 @@ export class HostLoot {
       case 'reload':
         return this.reload(from, owner, actor, a.expectedRevision);
       case 'equip':
+        if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
         return this.equip(from, owner, a.itemId, a.rarity);
     }
+    // New contract intents become active only with the matching codec/implementation PR.
+    return { ok: false, error: 'invalid_command' };
   }
 
   /**
@@ -554,7 +592,7 @@ export class HostLoot {
       const c = this._authority.chest(id);
       if (c) chests.push(c as ChestWire);
     }
-    return { baseRevision: base, revision, inventories, chests };
+    return { baseRevision: base, revision, inventories, chests, drops: this._authority.groundItems() };
   }
 
   private push(to: PeerId, data: Uint8Array): void {

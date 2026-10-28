@@ -1,3 +1,4 @@
+import { Hotbar } from '../ui/hotbar/hotbar';
 import type { ClientLoot } from '@net/clientLoot';
 import type { ChestLocation } from '@shared/mapgen/chests';
 import { mountInventoryPanel } from '../ui/inventory/inventoryPanel';
@@ -32,6 +33,7 @@ export class LootUi {
   private _chest: ChestLocation | null = null;
   private opening = false;
   /** Dùng đồ (GĐ 3b): phím 1–4, nút "Dùng", sơ cứu đứng yên. */
+  readonly hotbar: Hotbar;
   readonly items: ItemUse;
   /** Vũ khí (GĐ 3b): X / lăn chuột đổi, Q nạp đạn, nút "Cầm". */
   readonly weapons: WeaponControl;
@@ -54,6 +56,15 @@ export class LootUi {
     this.toasts.setAttribute('role', 'status');
     this.toasts.setAttribute('aria-live', 'polite');
     parent.append(this.overlay, this.toasts);
+    this.hotbar = new Hotbar(
+      loot,
+      () => this.open,
+      (slot) => {
+        const stack = loot.inventory?.slots[slot];
+        if (stack) this.items.useSlot(slot, stack);
+      },
+      (s) => this.toast(s),
+    );
     // bấm ra ngoài panel (nền mờ) = đóng hết, không xuyên xuống gameplay
     this.overlay.addEventListener('pointerdown', (e) => {
       if (e.target === this.overlay || e.target === this.slots) this.closeAll();
@@ -165,6 +176,17 @@ export class LootUi {
     this.overlay.hidden = false;
     this.invPanel = mountInventoryPanel(this.slots, {
       initial: inventory,
+      onAssign: (stack) => this.hotbar.assign(stack),
+      onDrop: async (slot, quantity) =>
+        toInventoryResult(
+          await this.loot.request({
+            type: 'drop',
+            slot,
+            quantity,
+            expectedRevision: this.loot.inventory?.revision ?? 0,
+          }),
+          this.loot.inventory ?? inventory,
+        ),
       onCommand: async (cmd) =>
         toInventoryResult(await this.loot.command(cmd), this.loot.inventory ?? inventory),
       describeError: lootErrorText,
@@ -226,6 +248,7 @@ export class LootUi {
 
   private afterClose(): void {
     if (this.open) return;
+    this.hotbar.cancelAssignment();
     this.overlay.hidden = true;
     // trả bàn phím cho game (nút trong panel vừa bị xóa)
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body)

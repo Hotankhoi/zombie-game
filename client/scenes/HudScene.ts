@@ -105,7 +105,7 @@ export class HudScene extends Phaser.Scene {
     this.hintText = this.add.text(
       0,
       0,
-      'WASD đi · Shift chạy · Chuột trái chém/bắn · X/lăn chuột đổi vũ khí · Q nạp đạn · E cửa · F đèn pin/mở rương · I túi · 1–4 dùng nhanh · Esc đóng · R cứu · G kéo · F3 mạng',
+      'WASD đi · Shift chạy · Chuột trái chém/bắn · X đổi vũ khí · cuộn chuột chọn ô · Q nạp đạn · E cửa · F đèn pin/mở rương · I túi · 1–5 thanh nhanh · V nhặt · Esc đóng · R cứu · G kéo · F3 mạng',
       { ...style, fontSize: '12px', color: '#8d9891' },
     );
     this.respawnText = this.add
@@ -483,7 +483,7 @@ export class HudScene extends Phaser.Scene {
     const parts = QUICK_KEYS.map((k) => {
       const item = quickItem(k, me, inv);
       const n = k === 4 ? countOf(inv, 'water') + countOf(inv, 'canned_food') : countOf(inv, item);
-      return `${k} ${QUICK_LABELS[k]} ×${n}`;
+      return `${QUICK_LABELS[k]} ×${n}`;
     });
     this.quickText
       .setText(parts.join('   '))

@@ -21,7 +21,14 @@ export interface ChestWire {
   readonly opened: boolean;
   readonly slots: readonly (LootStackWire | null)[];
 }
+export interface GroundItemWire {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly stack: LootStackWire;
+}
 export interface LootReplicaWire {
+  readonly drops?: readonly GroundItemWire[];
   readonly version: 1;
   readonly seed: string;
   readonly revision: number;
@@ -36,6 +43,9 @@ interface ChestIntent {
 }
 export type LootAction =
   | { type: 'inventory' }
+  | { type: 'unequip' }
+  | { type: 'drop'; slot: number; quantity: number; expectedRevision: number }
+  | { type: 'pickup'; dropId: string; expectedRevision: number }
   /**
    * Nhận túi theo playerKey bí mật (v5, A). Host xác minh rồi gắn PeerId người gửi → ownerId = hash(key);
    * replica chỉ chứa ownerId, không bao giờ chứa key. Xem docs/save-format.md mục 4.

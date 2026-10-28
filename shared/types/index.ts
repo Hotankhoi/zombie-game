@@ -12,7 +12,7 @@
  * 8: GĐ 3b vũ khí — host xử lý `equip`/`reload`, sự kiện bắn, khối trang bị, input có tick đang xem, bản lưu 125 v9.
  * 7: GĐ 3b dùng đồ — host xử lý `use`, mã lỗi loot mới, khối chỉ số thêm hồi máu dần/đứng yên, bản lưu 125 v8 (A).
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /** ID người chơi trong phòng (do Trystero cấp, duy nhất mỗi lần mở trang). */
 export type PeerId = string;

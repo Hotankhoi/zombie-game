@@ -1,3 +1,6 @@
+import type { GroundItemWire } from '../types/loot';
+import { isGroundItems } from './ground';
+import type { ItemStack } from '../inventory/inventory';
 import { LOOT_INTERACTION } from '../data/lootInteraction';
 import {
   addItems,
@@ -17,6 +20,7 @@ export interface LootActor {
   readonly canInteract: boolean;
 }
 export interface LootSave {
+  readonly drops?: readonly GroundItemWire[];
   readonly version: 1;
   readonly seed: string;
   readonly revision: number;
@@ -32,6 +36,7 @@ export class LootAuthority {
   private inventories = new Map<string, InventoryState>();
   private chests = new Map<string, ChestState>();
   private revision = 0;
+  private drops: GroundItemWire[] = [];
 
   constructor(
     readonly seed: string,
@@ -42,6 +47,7 @@ export class LootAuthority {
       if (!isLootSave(restore, seed)) throw new RangeError('Invalid loot save');
       const saved = clone(restore);
       this.revision = saved.revision;
+      this.drops = [...(saved.drops ?? [])];
       for (const entry of saved.inventories) this.inventories.set(entry.id, entry.state);
       for (const chest of saved.chests) this.chests.set(chest.id, chest);
     }
@@ -67,6 +73,7 @@ export class LootAuthority {
   /** Full atomic pair state for replication/save, including emptied chests. No cache eviction. */
   snapshot(): LootSave {
     return clone({
+      ...(this.drops.length ? { drops: this.drops } : {}),
       version: 1,
       seed: this.seed,
       revision: this.revision,
@@ -158,6 +165,66 @@ export class LootAuthority {
     return { ok: true, chest: this.chest(location.id)!, inventory: clone(inventory) };
   }
 
+  groundItems(): readonly GroundItemWire[] {
+    return clone(this.drops);
+  }
+  drop(
+    actor: LootActor,
+    slot: number,
+    quantity: number,
+    expectedRevision: number,
+    at: { x: number; y: number },
+    refund?: ItemStack,
+  ): AuthorityResult {
+    const bag = this.inventory(actor.id);
+    if (!bag) return { ok: false, error: 'unknown_player' };
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    if (bag.revision !== expectedRevision) return { ok: false, error: 'stale_revision' };
+    if (!Number.isInteger(slot) || slot < 0 || slot >= bag.slots.length)
+      return { ok: false, error: 'invalid_slot' };
+    const stack = bag.slots[slot];
+    if (!stack) return { ok: false, error: 'empty_slot' };
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > stack.quantity)
+      return { ok: false, error: 'invalid_quantity' };
+    if (this.drops.length >= 128 || !this.canAdvance()) return { ok: false, error: 'state_limit' };
+    if (!Number.isFinite(at.x) || !Number.isFinite(at.y) || Math.hypot(at.x - actor.x, at.y - actor.y) > 2)
+      return { ok: false, error: 'out_of_reach' };
+    const slots = [...bag.slots];
+    slots[slot] = stack.quantity === quantity ? null : { ...stack, quantity: stack.quantity - quantity };
+    let next = { ...bag, slots, revision: bag.revision + 1 };
+    if (refund) {
+      const r = addItems(next, refund, next.revision);
+      if (!r.ok) return { ok: false, error: r.error };
+      next = { ...r.state, slots: [...r.state.slots] };
+    }
+    this.revision++;
+    this.inventories.set(actor.id, next);
+    this.drops.push({ id: 'd' + this.revision, x: at.x, y: at.y, stack: { ...stack, quantity } });
+    return { ok: true, inventory: clone(next) };
+  }
+  pickup(
+    actor: LootActor,
+    id: string,
+    expectedRevision: number,
+    visible: (at: { x: number; y: number }) => boolean,
+  ): AuthorityResult {
+    const bag = this.inventory(actor.id);
+    if (!bag) return { ok: false, error: 'unknown_player' };
+    if (!actor.canInteract) return { ok: false, error: 'player_not_up' };
+    if (bag.revision !== expectedRevision) return { ok: false, error: 'stale_revision' };
+    const i = this.drops.findIndex((d) => d.id === id),
+      d = this.drops[i];
+    if (!d) return { ok: false, error: 'invalid_item' };
+    if (Math.hypot(actor.x - d.x, actor.y - d.y) > 2) return { ok: false, error: 'out_of_reach' };
+    if (!visible(d)) return { ok: false, error: 'blocked' };
+    if (!this.canAdvance()) return { ok: false, error: 'state_limit' };
+    const result = addItems(bag, d.stack as ItemStack, expectedRevision);
+    if (!result.ok) return { ok: false, error: result.error };
+    this.inventories.set(actor.id, result.state);
+    this.drops.splice(i, 1);
+    this.revision++;
+    return { ok: true, inventory: clone(result.state) };
+  }
   private canAdvance() {
     return this.revision < Number.MAX_SAFE_INTEGER - 1;
   }
@@ -167,6 +234,7 @@ export function isLootSave(value: unknown, seed: string): value is LootSave {
   if (!value || typeof value !== 'object') return false;
   const s = value as LootSave;
   if (
+    !isGroundItems(s.drops ?? []) ||
     s.version !== 1 ||
     s.seed !== seed ||
     !Number.isSafeInteger(s.revision) ||

@@ -1,3 +1,5 @@
+import type { GroundItemWire } from '@shared/types/loot';
+import { isGroundItems } from '@shared/loot/ground';
 import { BACKPACKS, ITEMS, RARITIES } from '@shared/data/items';
 import { LOOT_REGIONS } from '@shared/data/loot';
 import { LOOT_INTERACTION } from '@shared/data/lootInteraction';
@@ -112,12 +114,16 @@ const ACTIONS = [
   'use',
   'reload',
   'equip',
+  'unequip',
+  'drop',
+  'pickup',
 ] as const;
 const FULL = 0;
 const PATCH = 1;
 
 /** Phần đổi của replica so với bản đầy đủ có `revision === baseRevision` (cùng term). */
 export interface LootPatch {
+  readonly drops?: readonly GroundItemWire[];
   readonly baseRevision: number;
   readonly revision: number;
   /** Túi/rương thay thế nguyên khối (thêm mới nếu chưa có). Không bao giờ xóa. */
@@ -331,6 +337,7 @@ function writeEntries(
   w: Writer,
   inventories: readonly { id: string; state: InventoryWire }[],
   chests: readonly ChestWire[],
+  drops: readonly GroundItemWire[] = [],
 ): void {
   if (inventories.length > LOOT_INTERACTION.maxInventories || chests.length > LOOT_INTERACTION.maxChests)
     throw new RangeError('quá nhiều túi/rương');
@@ -341,6 +348,14 @@ function writeEntries(
   }
   writeVarint(w, chests.length);
   for (const c of chests) writeChest(w, c);
+  if (!isGroundItems(drops)) throw new RangeError('ground items');
+  w.u8(drops.length);
+  for (const d of drops) {
+    writeToken(w, d.id);
+    w.f64(d.x);
+    w.f64(d.y);
+    writeSlots(w, [d.stack]);
+  }
 }
 function readEntries(r: Reader) {
   const n = r.u8();
@@ -363,7 +378,19 @@ function readEntries(r: Reader) {
     chestIds.add(c.id);
     chests.push(c);
   }
-  return { inventories, chests };
+  const count = r.u8();
+  if (count > 128) throw new RangeError('ground count');
+  const drops: GroundItemWire[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = readToken(r),
+      x = r.f64(),
+      y = r.f64(),
+      stack = readSlots(r, 1)[0];
+    if (!stack) throw new RangeError('empty drop');
+    drops.push({ id, x, y, stack });
+  }
+  if (!isGroundItems(drops)) throw new RangeError('ground');
+  return { inventories, chests, ...(drops.length ? { drops } : {}) };
 }
 
 // ---------- hành động ----------
@@ -375,6 +402,7 @@ function writeQuantity(w: Writer, q: number): void {
 function writeAction(w: Writer, a: LootAction): void {
   w.u8(code(ACTIONS, a.type));
   switch (a.type) {
+    case 'unequip':
     case 'inventory':
       return;
     case 'view':
@@ -400,6 +428,15 @@ function writeAction(w: Writer, a: LootAction): void {
       w.u8(a.from);
       w.u8(a.to);
       writeQuantity(w, a.quantity);
+      return;
+    case 'drop':
+      writeVarint(w, a.expectedRevision);
+      writeVarint(w, a.slot);
+      writeQuantity(w, a.quantity);
+      return;
+    case 'pickup':
+      writeVarint(w, a.expectedRevision);
+      writeToken(w, a.dropId);
       return;
     case 'sort':
       writeVarint(w, a.expectedRevision);
@@ -433,6 +470,7 @@ function readQuantity(r: Reader): number {
 function readAction(r: Reader): LootAction {
   const type = lookup(ACTIONS, r.u8());
   switch (type) {
+    case 'unequip':
     case 'inventory':
       return { type };
     case 'view':
@@ -483,6 +521,10 @@ function readAction(r: Reader): LootAction {
       if (flag > 1) throw new RangeError('cờ mục tiêu');
       return { type, expectedRevision, slot, target: flag === 1 ? readToken(r) : null };
     }
+    case 'drop':
+      return { type, expectedRevision: readRevision(r), slot: readVarint(r), quantity: readQuantity(r) };
+    case 'pickup':
+      return { type, expectedRevision: readRevision(r), dropId: readToken(r) };
     case 'reload':
       return { type, expectedRevision: readRevision(r) };
     case 'equip':
@@ -522,7 +564,7 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         w.u8(PATCH);
         writeVarint(w, d.baseRevision);
         writeVarint(w, d.revision);
-        writeEntries(w, d.inventories, d.chests);
+        writeEntries(w, d.inventories, d.chests, d.drops);
       } else {
         const s = p.state;
         if (s.version !== 1) throw new RangeError('replica version');
@@ -530,7 +572,7 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         w.u8(s.version);
         writeText(w, s.seed, MAX_SEED, true);
         writeVarint(w, s.revision);
-        writeEntries(w, s.inventories, s.chests);
+        writeEntries(w, s.inventories, s.chests, s.drops);
       }
       break;
     case LootMessage.Ack:
@@ -580,11 +622,11 @@ export function decodeLoot(buf: Uint8Array): LootWirePacket | null {
           if (r.u8() !== 1) return null;
           const seed = readText(r, MAX_SEED, true);
           const revision = readRevision(r);
-          const { inventories, chests } = readEntries(r);
+          const entries = readEntries(r);
           p = {
             type,
             term,
-            state: { version: 1, seed, revision, inventories, chests },
+            state: { version: 1, seed, revision, ...entries },
           } satisfies LootReplica;
         } else if (form === PATCH) {
           const baseRevision = readRevision(r);
@@ -625,7 +667,15 @@ export function applyLootPatch(base: LootReplicaWire, patch: LootPatch): LootRep
   for (const c of patch.chests) chests.set(c.id, c);
   if (inventories.length > LOOT_INTERACTION.maxInventories || chests.size > LOOT_INTERACTION.maxChests)
     return null;
-  return { ...base, revision: patch.revision, inventories, chests: [...chests.values()] };
+  const { drops: _old, ...rest } = base;
+  void _old;
+  return {
+    ...rest,
+    ...(patch.drops?.length ? { drops: patch.drops } : {}),
+    revision: patch.revision,
+    inventories,
+    chests: [...chests.values()],
+  };
 }
 
 /** Bản đầy đủ hợp lệ cho thế giới `seed`: đúng seed, mọi túi/rương hợp lệ, rương có thật trong map, đúng khu. */
@@ -635,6 +685,7 @@ export function isValidReplica(state: LootReplicaWire, seed: string): boolean {
 
 /** Chỉ kiểm tra phần mới của một phần đổi (phần cũ đã kiểm khi nhận) — rẻ hơn kiểm cả bản. */
 export function isValidPatch(patch: LootPatch, seed: string): boolean {
+  if (!isGroundItems(patch.drops ?? [])) return false;
   if (!patch.inventories.every((e) => isInventoryState(e.state))) return false;
   return patch.chests.every((c) => {
     if (!isChestState(c)) return false;
