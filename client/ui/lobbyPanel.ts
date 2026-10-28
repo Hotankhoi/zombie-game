@@ -6,6 +6,8 @@ interface LobbyOptions {
   getName(): string;
   setName(name: string): void;
   newRoom(): void;
+  /** Hàng thêm dưới nút "Tạo phòng mới" (A, GĐ 5: nút lưu game — `client/save/saveMenu.ts`). */
+  extra?: HTMLElement;
 }
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
@@ -28,6 +30,7 @@ export function mountLobbyPanel(root: HTMLElement, opts: LobbyOptions) {
     <ul class="peers"></ul>
     <div class="status"></div>`;
   root.appendChild(el);
+  if (opts.extra) el.querySelector('.peers')!.before(opts.extra);
 
   const preview = new URLSearchParams(window.location.search);
   if (preview.get('loot') === '1') {

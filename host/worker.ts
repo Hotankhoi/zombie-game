@@ -34,6 +34,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
         zombieCount: m.zombieCount,
         startTick: m.startTick,
         restore: m.restore,
+        saved: m.saved,
         devSpawnRegion: m.devSpawnRegion,
         devDropScale: m.devDropScale,
         devHordeQuota: m.devHordeQuota,
@@ -52,6 +53,9 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
     case 'leave':
       server?.removePeer(m.peer);
       break;
+    case 'save':
+      server?.requestSave();
+      break;
   }
 };
 
@@ -67,6 +71,8 @@ function loop() {
     max = Math.max(max, dt);
     count++;
     if (items.length > 0) post({ t: 'out', items });
+    const save = server.pollSave();
+    if (save) post({ t: 'save', ...save });
     nextAt += SIM_TICK_MS;
     n++;
   }

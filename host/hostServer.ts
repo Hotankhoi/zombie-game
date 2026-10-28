@@ -31,6 +31,7 @@ import { CHUNK_SIZE, generateChunk } from '@shared/mapgen/world';
 import type { LootRegion } from '@shared/data/loot';
 import { removeFromSlot, type ItemStack } from '@shared/inventory/inventory';
 import { rewardCrateId, rollRewardShare } from '@shared/loot/reward';
+import { rekeyWorld } from '@shared/save/save';
 import { snapGround } from '@shared/loot/ground';
 
 /** Gửi snapshot mỗi bấy nhiêu tick (2 tick = 10 lần/giây) — đủ mượt nhờ nội suy, tiết kiệm băng thông. */
@@ -55,6 +56,17 @@ export const ZOMBIE_OFFSCREEN_ROOM = 8;
  * đều (~2 KB/s lúc đợt tràn tối đa) thay vì ~23 KB dồn 1 lần làm vọt đỉnh.
  */
 export const BACKUP_EVERY = 200;
+/** Tự lưu (GĐ 5) mỗi bấy nhiêu tick (30 s). */
+export const SAVE_EVERY = 600;
+
+/** Phần thế giới để ghép file save (`shared/save`): WorldState khóa theo ownerId + replica loot đã được mọi người ACK. */
+export interface SaveParts {
+  world: WorldState;
+  loot: LootReplicaWire;
+  /** Người đang trong trận → ownerId (máy host ghép tên người chơi vào file). */
+  owners: [PeerId, string][];
+}
+
 /** Hàng input dài hơn mức này sau 1 tick → chạy bù thêm 1 input (bắt kịp gấp đôi tốc độ). */
 const CATCH_UP_ABOVE = 1;
 /** Hàng input tối đa (1 giây). Dài hơn (máy khách treo rồi gửi dồn) thì bỏ input cũ nhất. */
@@ -74,6 +86,11 @@ export interface HostServerOptions {
   startTick?: number;
   /** Dựng tiếp từ thế giới cũ (chuyển host). */
   restore?: WorldState;
+  /**
+   * GĐ 5: dựng từ file save — WorldState có người chơi/tham chiếu khóa theo ownerId (`shared/save`). Người vào lại và
+   * nhận đúng túi (claim) thì lấy lại nhân vật đã lưu. Loot của file đi qua `loot.restore`.
+   */
+  saved?: WorldState;
   /** CHỈ bản dev (`?den=police`): người vào trận đứng cạnh rương gần nhất của khu này (thử nhặt súng nhanh). */
   devSpawnRegion?: LootRegion;
   /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
@@ -125,20 +142,34 @@ export class HostServer {
   private devChest: { x: number; y: number } | null | undefined;
   /** Đợt tràn đã đặt thùng thưởng (hoặc đã xong trước khi máy này lên host) — không đặt lại. */
   private rewardedHorde = 0;
+  /** GĐ 5: nhân vật trong file save chưa ai nhận lại (ownerId → trạng thái) + mọi ownerId có trong file. */
+  private savedPlayers = new Map<string, PlayerState>();
+  private savedOwners = new Set<string>();
+  private savedFlow: { dirty: boolean; players: number } | null = null;
+  private saveDue = false;
+  private hordeWasActive = false;
   /** Người bị từ chối vì phòng đầy: tick báo gần nhất. */
   private rejectedAt = new Map<PeerId, number>();
 
   constructor(opts: HostServerOptions) {
+    if (opts.saved) {
+      for (const p of opts.saved.players) this.savedPlayers.set(p.id, { ...p });
+      this.savedOwners = new Set(this.savedPlayers.keys());
+      for (const z of opts.saved.zombies)
+        for (const id of [z.target, z.turnedFrom]) if (id) this.savedOwners.add(id);
+      for (const c of opts.saved.corpses ?? []) this.savedOwners.add(c.player);
+      this.savedFlow = { dirty: opts.saved.flowDirty, players: opts.saved.players.length };
+    }
     this.world = new SimWorld({
       seed: opts.seed,
       map: opts.map,
       zombieCount: opts.zombieCount,
-      restore: opts.restore,
+      restore: opts.saved ? { ...opts.saved, players: [] } : opts.restore,
       dropChanceScale: opts.devDropScale,
       devHordeQuota: opts.devHordeQuota,
     });
-    if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
-    const h = opts.restore?.horde;
+    if (!opts.restore && !opts.saved && opts.startTick) this.world.tick = opts.startTick;
+    const h = (opts.saved ?? opts.restore)?.horde;
     if (h && !h.active) this.rewardedHorde = h.number;
     this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
     this.devRegion = opts.devSpawnRegion;
@@ -208,6 +239,7 @@ export class HostServer {
           if (item.itemId === 'pants' && armorAt(p, 'legs') === item.rarity) p.armorLegs = 0;
         },
         unequip: (id) => this.world.equip(id, 'fists', 'common'),
+        claimed: (peer, owner) => this.adoptSaved(peer, owner),
         equip: (id, item) => {
           if (isArmor(item.itemId))
             return this.world.wearArmor(id, item.itemId, item.rarity) ? null : 'not_equippable';
@@ -299,6 +331,9 @@ export class HostServer {
       if (input) inputs.set(c.id, input);
     }
     this.world.step(inputs);
+    const hordeActive = !!this.world.horde?.active;
+    if ((this.hordeWasActive && !hordeActive) || this.world.tick % SAVE_EVERY === 0) this.saveDue = true;
+    this.hordeWasActive = hordeActive;
     for (const c of this.clients.values()) {
       const extra = c.queue.length > CATCH_UP_ABOVE ? this.nextInput(c) : null;
       if (extra) this.world.catchUp(c.id, extra);
@@ -319,6 +354,75 @@ export class HostServer {
     const out = this.out;
     this.out = [];
     return out;
+  }
+
+  /**
+   * GĐ 5 — người vừa nhận túi `owner`: nếu file save có nhân vật của họ thì trả lại (vị trí, máu, chỉ số, trang bị…),
+   * và đổi mọi tham chiếu ownerId → PeerId (zombie đang đuổi, zombie từ xác họ, xác, bảng thành tích).
+   */
+  private adoptSaved(peer: PeerId, owner: string): void {
+    if (!this.savedOwners.has(owner)) return;
+    const saved = this.savedPlayers.get(owner);
+    if (saved && this.world.players.has(peer)) {
+      this.world.players.set(peer, { ...saved, id: peer });
+      this.savedPlayers.delete(owner);
+      // người cuối cùng trong file đã về (không có ai mới): flow field như lúc lưu
+      const f = this.savedFlow;
+      if (f && this.savedPlayers.size === 0 && this.world.players.size === f.players) {
+        this.world.setFlowDirty(f.dirty);
+        this.savedFlow = null;
+      }
+    }
+    for (const z of this.world.zombies) {
+      if (z.target === owner) z.target = peer;
+      if (z.turnedFrom === owner) z.turnedFrom = peer;
+    }
+    for (const c of this.world.corpses) if (c.player === owner) c.player = peer;
+    const h = this.world.horde;
+    if (h)
+      for (const r of [h.kills, h.downs])
+        if (owner in r) {
+          r[peer] = (r[peer] ?? 0) + (r[owner] ?? 0);
+          delete r[owner];
+        }
+    if (!this.savedPlayers.has(owner)) this.savedOwners.delete(owner);
+  }
+
+  /** GĐ 5: lưu ngay ở tick tới (tab host bị ẩn/đóng, nút "Xuất file save"). */
+  requestSave(): void {
+    this.saveDue = true;
+  }
+
+  /**
+   * Gọi mỗi tick (worker): tới hạn lưu (30 s, hết đợt tràn, `requestSave`) và loot đã được mọi người xác nhận → phần để
+   * ghép file save; chưa được → null (thử lại tick sau).
+   */
+  pollSave(): SaveParts | null {
+    if (!this.saveDue) return null;
+    const parts = this.saveParts();
+    if (parts) this.saveDue = false;
+    return parts;
+  }
+
+  /** WorldState khóa theo ownerId (gồm nhân vật trong file chưa ai nhận lại) + replica loot đã xác nhận; null = chưa được. */
+  saveParts(): SaveParts | null {
+    const loot = this.loot;
+    if (loot.recovering || loot.confirmedRevision() < loot.authority.currentRevision()) return null;
+    const keyed = rekeyWorld(this.world.state(), (id) =>
+      this.world.players.has(id) || this.clients.has(id)
+        ? loot.ownerOf(id)
+        : this.savedOwners.has(id)
+          ? id
+          : null,
+    );
+    const have = new Set(keyed.players.map((p) => p.id));
+    for (const [owner, p] of this.savedPlayers) if (!have.has(owner)) keyed.players.push({ ...p });
+    keyed.players.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const owners = [...this.clients.keys()].flatMap((id): [PeerId, string][] => {
+      const o = loot.ownerOf(id);
+      return o ? [[id, o]] : [];
+    });
+    return { world: keyed, loot: loot.replica(), owners };
   }
 
   /** Người chơi đã vào trận, hoặc thêm mới; phòng đủ MAX_PLAYERS thì từ chối (null) và báo cho họ. */

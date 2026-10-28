@@ -1,4 +1,5 @@
 import type { WorldState } from '@shared/sim/world';
+import type { SaveParts } from './hostServer';
 import type { Channel, PeerId } from '@shared/types';
 import type { LootReplicaWire } from '@shared/types/loot';
 import type { ItemStack } from '@shared/inventory/inventory';
@@ -13,6 +14,8 @@ export type ToWorker =
       zombieCount?: number;
       startTick?: number;
       restore?: WorldState;
+      /** GĐ 5: thế giới từ file save (khóa theo ownerId) — `shared/save`. */
+      saved?: WorldState;
       /** CHỈ bản dev (`?den=`). */
       devSpawnRegion?: LootRegion;
       /** CHỈ bản dev (`?roido=`). */
@@ -33,7 +36,9 @@ export type ToWorker =
   | { t: 'in'; from: PeerId; data: Uint8Array }
   /** Vừa nhận gói bất kỳ của người này (≤ 2 lần/giây) — tab ẩn vẫn còn sống (host/hostLoot.ts LOOT_TAKEOVER_IDLE_TICKS). */
   | { t: 'seen'; peer: PeerId }
-  | { t: 'leave'; peer: PeerId };
+  | { t: 'leave'; peer: PeerId }
+  /** GĐ 5: lưu ngay (tab host bị ẩn/đóng, nút xuất file). */
+  | { t: 'save' };
 
 export interface HostStats {
   /** Thời gian chạy 1 tick (ms): trung bình và lớn nhất trong 1 giây vừa qua. */
@@ -48,4 +53,6 @@ export interface HostStats {
 export type FromWorker =
   | { t: 'out'; items: { to: PeerId; data: Uint8Array; channel: Channel }[] }
   /** Nhịp 1 giây: worker không bị dừng khi tab ẩn → luồng chính dựa vào đây để vẫn nhắc "tôi là host". */
-  | { t: 'beat'; stats: HostStats };
+  | { t: 'beat'; stats: HostStats }
+  /** GĐ 5: phần thế giới để ghép file save (mỗi 30 s, hết đợt tràn, khi được yêu cầu). */
+  | ({ t: 'save' } & SaveParts);

@@ -170,3 +170,18 @@ button:hover {
 .hidden {
   display: none;
 }
+
+/* GĐ 5: nút lưu game trong bảng phòng chờ (client/save/saveMenu.ts) */
+.save-menu .row button[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+.save-status {
+  min-height: 1.2em;
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: #b9c7bd;
+}
+.save-status.bad {
+  color: #ffb4ab;
+}
