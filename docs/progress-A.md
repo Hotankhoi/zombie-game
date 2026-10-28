@@ -271,6 +271,17 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
 
   128 đống, ~1 đống hết hạn + 1 đống mới mỗi giây. Cách cũ (cả danh sách ~3.9 KB mỗi lần đổi, 2 lần/s) ước ~7.7 KB/s.
 
+- Việc 2: PR #50 đã merge.
+- Việc 3 (`a/zombie-drops`): `shared/data/zombieDrops.ts` (vùng B, mới) — zombie thường (mọi loại trừ Boss) ngày 4% /
+  đêm 8%, 1 món lặt vặt (băng gạc/nước/đồ hộp 25, đạn lục 15 [3–8], phế liệu 10 [1–3]; Thường 80/Tốt 20); từ xác đồng đội
+  (`turnedFrom`) 60% / 80%, 2 món (+ đạn trường [5–10] 10, kháng sinh 8; Thường 55/Tốt 35/Hiếm 10); Boss 100%, 1 món
+  (súng lục 15/súng trường 20/mũ 15/áo 20/quần 15/sơ cứu 15; Hiếm 60/Sử thi 30/Huyền thoại 10) + 1 đống đạn [10–20].
+  `shared/sim/zombieDrops.ts` quay số bằng `Rng` gieo từ (id zombie, tick chết) — tất định, không xáo dãy RNG chính;
+  `SimWorld.reapZombies` ghi `zombieDrops`, `HostServer.placeZombieDrops` → `HostLoot.spawnGround` (gộp, đủ 128 → bỏ).
+  Bản dev `?roido=10` (nhân tỉ lệ). 404 test. Browser pane (`?room=DRP003&kit=1&gio=0.93&zombies=80&roido=12`): chém
+  ban đêm 11 s → 3 đống đồ rơi đúng chỗ zombie chết, nút "V · Nhặt Phế liệu ×2". Loadtest: không đổi đáng kể (đợt tràn
+  tối đa + bắn súng 18.87 · 21.11 · 21.59; bot giết ~90 con/90 s → ~7 đống).
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.

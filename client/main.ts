@@ -102,12 +102,16 @@ const devSpawnRegion = import.meta.env.DEV && denParam && isLootRegion(denParam)
 // ?dondat=15 (chỉ bản dev): đồ trên đất hết hạn sau 15 giây thay vì 5 phút (thử tự dọn)
 const dondat = Number(url.searchParams.get('dondat'));
 const groundExpireSec = import.meta.env.DEV && dondat >= 1 ? Math.floor(dondat) : undefined;
+// ?roido=10 (chỉ bản dev): zombie rơi đồ nhiều gấp 10 lần (thử nhanh)
+const roido = Number(url.searchParams.get('roido'));
+const devDropScale = import.meta.env.DEV && roido > 0 ? roido : undefined;
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
   starterKit,
   devSpawnRegion,
   groundExpireSec,
+  devDropScale,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 

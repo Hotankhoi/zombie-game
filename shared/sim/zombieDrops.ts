@@ -43,10 +43,12 @@ export function rollZombieDrop(
   z: { id: number; kind: ZombieKind; turnedFrom?: string | null },
   tick: number,
   night: boolean,
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ rơi để thử nhanh. */
+  chanceScale = 1,
 ): DropStack[] {
   const rng = new Rng(hashString(`zombie-drop:${z.id}:${tick}`));
   const table = dropTableOf(z);
-  if (!rng.chance(night ? table.chance.night : table.chance.day)) return [];
+  if (!rng.chance((night ? table.chance.night : table.chance.day) * chanceScale)) return [];
   const rarities = Object.entries(table.rarity) as [Rarity, number][];
   const out: DropStack[] = [];
   for (let i = 0; i < table.rolls; i++) {

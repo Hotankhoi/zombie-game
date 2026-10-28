@@ -74,6 +74,8 @@ export interface HostServerOptions {
   restore?: WorldState;
   /** CHỈ bản dev (`?den=police`): người vào trận đứng cạnh rương gần nhất của khu này (thử nhặt súng nhanh). */
   devSpawnRegion?: LootRegion;
+  /** CHỈ bản dev (`?roido=`): nhân tỉ lệ zombie rơi đồ. */
+  devDropScale?: number;
   /** Loot: dựng tiếp từ bản replica của host cũ + số thứ tự lần lên host (nằm trong term). */
   loot?: {
     restore?: LootReplicaWire;
@@ -126,6 +128,7 @@ export class HostServer {
       map: opts.map,
       zombieCount: opts.zombieCount,
       restore: opts.restore,
+      dropChanceScale: opts.devDropScale,
     });
     if (!opts.restore && opts.startTick) this.world.tick = opts.startTick;
     this.devKit = (opts.loot?.starterKit?.length ?? 0) > 0;
