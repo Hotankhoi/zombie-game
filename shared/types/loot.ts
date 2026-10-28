@@ -23,8 +23,14 @@ export interface ChestWire {
 }
 export interface GroundItemWire {
   readonly id: string;
+  /** Vị trí (ô), làm tròn 1/32 ô khi host tạo (giao thức 11). */
   readonly x: number;
   readonly y: number;
+  /**
+   * Giao thức 11 (A): tick thế giới lúc đồ rơi / được gộp thêm gần nhất. Host bỏ đồ khi `tick - t ≥ GROUND.expireTicks`
+   * (5 phút không ai nhặt) — tính theo tick thế giới nên đổi host / nạp save vẫn đúng hạn.
+   */
+  readonly t: number;
   readonly stack: LootStackWire;
 }
 export interface LootReplicaWire {

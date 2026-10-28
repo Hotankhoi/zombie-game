@@ -99,11 +99,15 @@ const starterKit =
 // ?den=police (chỉ bản dev): vào trận cạnh rương đồn cảnh sát gần nhất (residential/market/hospital/police/military)
 const denParam = url.searchParams.get('den');
 const devSpawnRegion = import.meta.env.DEV && denParam && isLootRegion(denParam) ? denParam : undefined;
+// ?dondat=15 (chỉ bản dev): đồ trên đất hết hạn sau 15 giây thay vì 5 phút (thử tự dọn)
+const dondat = Number(url.searchParams.get('dondat'));
+const groundExpireSec = import.meta.env.DEV && dondat >= 1 ? Math.floor(dondat) : undefined;
 const game = new NetGame(session.game, room, {
   zombieCount,
   startTick,
   starterKit,
   devSpawnRegion,
+  groundExpireSec,
   rttOf: (id) => session.peers.get(id)?.rttMs ?? null,
 });
 

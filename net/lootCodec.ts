@@ -1,5 +1,6 @@
 import type { GroundItemWire } from '@shared/types/loot';
 import { isGroundItems } from '@shared/loot/ground';
+import { GROUND } from '@shared/data/ground';
 import { BACKPACKS, ITEMS, RARITIES } from '@shared/data/items';
 import { LOOT_REGIONS } from '@shared/data/loot';
 import { LOOT_INTERACTION } from '@shared/data/lootInteraction';
@@ -123,7 +124,12 @@ const PATCH = 1;
 
 /** Phần đổi của replica so với bản đầy đủ có `revision === baseRevision` (cùng term). */
 export interface LootPatch {
-  readonly drops?: readonly GroundItemWire[];
+  /**
+   * Giao thức 11: CHỈ đồ trên đất vừa thêm/đổi (gộp thêm, số lượng) — thay theo id — và id đồ vừa mất (nhặt hết, hết
+   * hạn, bị gộp vào đống khác). Trước đây mỗi phần đổi mang lại cả danh sách (128 đống ≈ 4 KB mỗi lần).
+   */
+  readonly dropsSet?: readonly GroundItemWire[];
+  readonly dropsRemoved?: readonly string[];
   readonly baseRevision: number;
   readonly revision: number;
   /** Túi/rương thay thế nguyên khối (thêm mới nếu chưa có). Không bao giờ xóa. */
@@ -337,7 +343,6 @@ function writeEntries(
   w: Writer,
   inventories: readonly { id: string; state: InventoryWire }[],
   chests: readonly ChestWire[],
-  drops: readonly GroundItemWire[] = [],
 ): void {
   if (inventories.length > LOOT_INTERACTION.maxInventories || chests.length > LOOT_INTERACTION.maxChests)
     throw new RangeError('quá nhiều túi/rương');
@@ -348,14 +353,67 @@ function writeEntries(
   }
   writeVarint(w, chests.length);
   for (const c of chests) writeChest(w, c);
+}
+
+// ---------- đồ trên đất (giao thức 11: ~10–15 byte/đống) ----------
+
+const dropNumber = (id: string): number => {
+  const n = Number(id.slice(1));
+  if (!/^d[1-9][0-9]{0,15}$/.test(id) || !Number.isSafeInteger(n)) throw new RangeError(`id đồ: ${id}`);
+  return n;
+};
+const zig = (v: number) => (v < 0 ? -2 * v - 1 : 2 * v);
+const unzig = (v: number) => (v % 2 === 1 ? -(v + 1) / 2 : v / 2);
+function writeDropId(w: Writer, id: string): void {
+  writeVarint(w, dropNumber(id));
+}
+function readDropId(r: Reader): string {
+  const n = readVarint(r);
+  if (n < 1) throw new RangeError('id đồ');
+  return 'd' + n;
+}
+/** Vị trí theo lưới 1/GROUND.grid ô (host đã làm tròn khi tạo → không mất gì). */
+function writeDrop(w: Writer, d: GroundItemWire): void {
+  writeDropId(w, d.id);
+  writeVarint(w, zig(Math.round(d.x * GROUND.grid)));
+  writeVarint(w, zig(Math.round(d.y * GROUND.grid)));
+  writeVarint(w, d.t);
+  writeSlots(w, [d.stack]);
+}
+function readDrop(r: Reader): GroundItemWire {
+  const id = readDropId(r),
+    x = unzig(readVarint(r)) / GROUND.grid,
+    y = unzig(readVarint(r)) / GROUND.grid,
+    t = readVarint(r),
+    stack = readSlots(r, 1)[0];
+  if (!stack) throw new RangeError('empty drop');
+  return { id, x, y, t, stack };
+}
+function writeDrops(w: Writer, drops: readonly GroundItemWire[]): void {
   if (!isGroundItems(drops)) throw new RangeError('ground items');
   w.u8(drops.length);
-  for (const d of drops) {
-    writeToken(w, d.id);
-    w.f64(d.x);
-    w.f64(d.y);
-    writeSlots(w, [d.stack]);
-  }
+  for (const d of drops) writeDrop(w, d);
+}
+function readDrops(r: Reader): GroundItemWire[] {
+  const count = r.u8();
+  if (count > GROUND.max) throw new RangeError('ground count');
+  const drops: GroundItemWire[] = [];
+  for (let i = 0; i < count; i++) drops.push(readDrop(r));
+  if (!isGroundItems(drops)) throw new RangeError('ground');
+  return drops;
+}
+function writeDropIds(w: Writer, ids: readonly string[]): void {
+  if (ids.length > GROUND.max) throw new RangeError('ground ids');
+  w.u8(ids.length);
+  for (const id of ids) writeDropId(w, id);
+}
+function readDropIds(r: Reader): string[] {
+  const count = r.u8();
+  if (count > GROUND.max) throw new RangeError('ground ids');
+  const ids: string[] = [];
+  for (let i = 0; i < count; i++) ids.push(readDropId(r));
+  if (new Set(ids).size !== ids.length) throw new RangeError('trùng id đồ');
+  return ids;
 }
 function readEntries(r: Reader) {
   const n = r.u8();
@@ -378,19 +436,7 @@ function readEntries(r: Reader) {
     chestIds.add(c.id);
     chests.push(c);
   }
-  const count = r.u8();
-  if (count > 128) throw new RangeError('ground count');
-  const drops: GroundItemWire[] = [];
-  for (let i = 0; i < count; i++) {
-    const id = readToken(r),
-      x = r.f64(),
-      y = r.f64(),
-      stack = readSlots(r, 1)[0];
-    if (!stack) throw new RangeError('empty drop');
-    drops.push({ id, x, y, stack });
-  }
-  if (!isGroundItems(drops)) throw new RangeError('ground');
-  return { inventories, chests, ...(drops.length ? { drops } : {}) };
+  return { inventories, chests };
 }
 
 // ---------- hành động ----------
@@ -564,7 +610,9 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         w.u8(PATCH);
         writeVarint(w, d.baseRevision);
         writeVarint(w, d.revision);
-        writeEntries(w, d.inventories, d.chests, d.drops);
+        writeEntries(w, d.inventories, d.chests);
+        writeDrops(w, d.dropsSet ?? []);
+        writeDropIds(w, d.dropsRemoved ?? []);
       } else {
         const s = p.state;
         if (s.version !== 1) throw new RangeError('replica version');
@@ -572,7 +620,8 @@ export function encodeLoot(p: LootWirePacket): Uint8Array {
         w.u8(s.version);
         writeText(w, s.seed, MAX_SEED, true);
         writeVarint(w, s.revision);
-        writeEntries(w, s.inventories, s.chests, s.drops);
+        writeEntries(w, s.inventories, s.chests);
+        writeDrops(w, s.drops ?? []);
       }
       break;
     case LootMessage.Ack:
@@ -623,16 +672,30 @@ export function decodeLoot(buf: Uint8Array): LootWirePacket | null {
           const seed = readText(r, MAX_SEED, true);
           const revision = readRevision(r);
           const entries = readEntries(r);
+          const drops = readDrops(r);
           p = {
             type,
             term,
-            state: { version: 1, seed, revision, ...entries },
+            state: { ...(drops.length ? { drops } : {}), version: 1, seed, revision, ...entries },
           } satisfies LootReplica;
         } else if (form === PATCH) {
           const baseRevision = readRevision(r);
           const revision = readRevision(r);
           if (revision <= baseRevision) return null;
-          p = { type, term, patch: { baseRevision, revision, ...readEntries(r) } } satisfies LootReplicaPatch;
+          const entries = readEntries(r);
+          const dropsSet = readDrops(r);
+          const dropsRemoved = readDropIds(r);
+          p = {
+            type,
+            term,
+            patch: {
+              baseRevision,
+              revision,
+              ...entries,
+              ...(dropsSet.length ? { dropsSet } : {}),
+              ...(dropsRemoved.length ? { dropsRemoved } : {}),
+            },
+          } satisfies LootReplicaPatch;
         } else return null;
         break;
       }
@@ -667,11 +730,20 @@ export function applyLootPatch(base: LootReplicaWire, patch: LootPatch): LootRep
   for (const c of patch.chests) chests.set(c.id, c);
   if (inventories.length > LOOT_INTERACTION.maxInventories || chests.size > LOOT_INTERACTION.maxChests)
     return null;
-  const { drops: _old, ...rest } = base;
-  void _old;
+  const { drops: old, ...rest } = base;
+  const removed = new Set(patch.dropsRemoved ?? []);
+  const drops = (old ?? []).filter((d) => !removed.has(d.id));
+  for (const d of patch.dropsSet ?? []) {
+    const i = drops.findIndex((x) => x.id === d.id);
+    if (i >= 0) drops[i] = d;
+    else drops.push(d);
+  }
+  // host luôn giữ danh sách tăng dần theo số id (đống mới = revision mới) → mọi máy cùng thứ tự
+  drops.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+  if (drops.length > GROUND.max) return null;
   return {
     ...rest,
-    ...(patch.drops?.length ? { drops: patch.drops } : {}),
+    ...(drops.length ? { drops } : {}),
     revision: patch.revision,
     inventories,
     chests: [...chests.values()],
@@ -685,7 +757,8 @@ export function isValidReplica(state: LootReplicaWire, seed: string): boolean {
 
 /** Chỉ kiểm tra phần mới của một phần đổi (phần cũ đã kiểm khi nhận) — rẻ hơn kiểm cả bản. */
 export function isValidPatch(patch: LootPatch, seed: string): boolean {
-  if (!isGroundItems(patch.drops ?? [])) return false;
+  if (!isGroundItems(patch.dropsSet ?? [])) return false;
+  if (!(patch.dropsRemoved ?? []).every((id) => /^d[1-9][0-9]{0,15}$/.test(id))) return false;
   if (!patch.inventories.every((e) => isInventoryState(e.state))) return false;
   return patch.chests.every((c) => {
     if (!isChestState(c)) return false;

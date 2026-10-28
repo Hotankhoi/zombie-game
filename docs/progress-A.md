@@ -249,6 +249,28 @@ gậy/súng lục/súng trường, X đổi vũ khí, Q nạp đạn, trúng do 
   zombie, file save (#21), hành động 2 người, 2b' (delta snapshot — băng thông đợt tràn còn ~0.6 KB/s tới ngưỡng 22);
   người dùng tự thử 2–4 máy thật.
 
+## Phiên 2026-10-28: merge #49 + đồ trên đất, zombie rơi đồ, thùng thưởng, lưu game (kế hoạch đã duyệt)
+
+- Việc 1: PR #49 của B (thanh nhanh 5 ô + thả/nhặt, chứa #48) đã cập nhật với `main`, `npm run check` 393 test → merge
+  commit; #48 tự "merged". #35, #39 (đã đóng sẵn) thêm bình luận "đã được thay thế". `main` ở `PROTOCOL_VERSION` 10.
+- Việc 2 (`a/ground-cleanup`): `GroundItemWire.t` (tick rơi), `shared/data/ground.ts` (hết hạn 300 s, gộp ≤ 0.5 ô, tối đa
+  128, quét mỗi 20 tick, lưới 1/32 ô); `shared/loot/ground.ts` `placeGround`/`sweepGround`/`snapGround`, authority
+  `drop(..., tick)` gộp ngay + `spawnGround` + `sweepGround` (vùng B, tối thiểu); HostLoot quét ở `flush` theo tick thế
+  giới; codec: đồ rơi ~10–17 B/đống, phần đổi 112 chỉ mang `dropsSet` + `dropsRemoved` (trước: cả danh sách mỗi lần đổi).
+  Bản dev `?dondat=20` (hết hạn 20 s). `PROTOCOL_VERSION` 11. 400 test. Test B sửa: `host/dropOnline.test.ts` (2 lần thả
+  cùng chỗ → 1 đống 20), `net/ground.test.ts` (patch mới). Browser pane: thả 2 lần băng gạc → 1 đống ×2, 20.6 s sau tự
+  biến mất, không lỗi console (ảnh `docs/anh-ground/`). Loadtest (KB/s mỗi người, TB · đỉnh 5s nhóm · đỉnh 5s 1 người;
+  loot TB · đỉnh 1 người):
+
+  | Kịch bản                          | Nhận                  | Loot        |
+  | --------------------------------- | --------------------- | ----------- |
+  | Bình thường ngày 2 (đối chứng)    | 11.82 · 15.85 · 16.09 | 0.04 · 0.14 |
+  | Bình thường + 128 đồ trên đất     | 12.02 · 16.16 · 16.40 | 0.25 · 0.46 |
+  | Đợt tràn tối đa (đối chứng)       | 18.50 · 20.96 · 21.40 | 0.04 · 0.13 |
+  | Đợt tràn tối đa + 128 đồ trên đất | 18.72 · 21.34 · 21.78 | 0.26 · 0.49 |
+
+  128 đống, ~1 đống hết hạn + 1 đống mới mỗi giây. Cách cũ (cả danh sách ~3.9 KB mỗi lần đổi, 2 lần/s) ước ~7.7 KB/s.
+
 ## Việc còn lại của A (sau phiên 2026-10-25)
 
 - Nối loot vào trận (A làm tiếp theo đồng ý của B), theo `docs/loot-online-plan.md`.

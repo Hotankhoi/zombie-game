@@ -22,6 +22,8 @@ export type ToWorker =
         recover?: { expected: PeerId[] };
         /** CHỈ bản dev (`?kit=1`). */
         starterKit?: ItemStack[];
+        /** CHỈ bản dev (`?dondat=`). */
+        groundExpireTicks?: number;
       };
     }
   | { t: 'in'; from: PeerId; data: Uint8Array }
